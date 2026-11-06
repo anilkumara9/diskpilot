@@ -96,6 +96,12 @@ based on Keep a Changelog, and the project follows semantic versioning.
   permanently deleted items are counted as skipped, and the restore
   itself is recorded in History. Runs recorded before this version
   explain that they predate restore support.
+- **Guided first run** — the first launch opens a short setup
+  instead of the empty app: what DiskPilot does, the folder it
+  should watch, and the Watch schedule and alert thresholds. The
+  choices are held as drafts until **Start first scan** applies
+  them, or the whole setup is skipped in one click; a failed
+  settings load can never trap the user in it.
 - **Startup manager** — a System page lists every program that runs
   at sign-in: the per-user and machine-wide registry `Run` / `RunOnce`
   entries and the Startup-folder items, each with its target file,
@@ -225,6 +231,18 @@ based on Keep a Changelog, and the project follows semantic versioning.
   batch cannot stall every other command; changes under
   folders the scan itself excluded are skipped, matching what
   the scan would have seen.
+- **Interface honesty** — Quick Search refreshes its context
+  every time it is shown (focus, visibility, scan-finished), so
+  a scan completed after launch is searchable instead of the
+  window insisting there is no scan yet; pages that fail to
+  load now show a real error state with a retry instead of
+  masquerading as empty; cleanup results and History report
+  failures as failures (a partial cleanup is never a success);
+  dialogs trap focus and the app root carries an error
+  boundary; settings and welcome save failures surface instead
+  of pretending the change stuck; muted text meets contrast
+  targets in the light theme; duplicate totals no longer count
+  hard-linked copies as reclaimable.
 
 ## [0.5.1] — 2026-11-06 — Windows release
 

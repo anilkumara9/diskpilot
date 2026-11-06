@@ -146,6 +146,13 @@ drill in. Selecting any file opens an **inspector**: its facts, its
 classification, image dimensions and camera EXIF where the file
 carries them, and its download source where one is recorded.
 
+A **Types** tab ranks the whole scan by file extension — allocated
+bytes and file counts per type, extensionless files grouped together —
+and expands any type in place to its largest files, so "what kind of
+data is eating the disk?" and "show me those files" are one gesture
+apart. The figures are aggregated from the same scan index as every
+other view, so they can never disagree with them.
+
 ### Quick Search
 
 Press **Ctrl+Shift+Space** anywhere in Windows and a compact search
@@ -185,6 +192,13 @@ hashing. Look-alikes can't be byte-verified by definition, so that tab
 is review-only — one copy always stays, and deletion stays with the
 byte-verified flow.
 
+Reviewing groups one by one is optional: a **smart-select** bar picks
+the keeper in every group at once — keep the newest copy, the oldest,
+or the shortest path — and selects every other copy, with the
+reclaimable total updating live. The rule only saves the clicking:
+the selection still goes through the review dialog and the same
+byte-for-byte re-verification before anything moves.
+
 ### Media
 
 Photos and videos usually hold the space that matters, so they get
@@ -213,6 +227,18 @@ warnings, and any items the safety gate rejected. Plans are single-use
 and expire after 10 minutes. The default action is *Move to Recycle
 Bin*; *Permanently delete* is offered only when every item in the plan
 is regenerable, and card plans are Recycle-Bin-only by construction.
+And the result tells the whole truth: if part of a cleanup fails, the
+outcome says what succeeded, what failed and why — a partial cleanup
+is never reported as a success, and History records the failure.
+
+Deleting is not the only way to win space back. **Compress & save**
+offers big folders nothing has touched in at least 90 days for NTFS
+compression: Windows compresses the folder in place with
+`compact.exe`, nothing is deleted, the folder keeps working, and the
+action is reversible from the same section. System-classified and
+report-only folders are never offered, already-compressed folders are
+filtered out, and the folder is re-validated through the safety gate
+at action time.
 
 ### Games
 
@@ -245,6 +271,19 @@ before it runs. Volumes are never removed. A WSL2 diagnostic compares
 the Docker virtual disk's file size with Docker's own reclaimable
 figure and shows the manual compaction steps; it never runs them for
 you.
+
+### Startup
+
+Everything that opens when you sign in to Windows, in one list: the
+per-user and machine-wide registry `Run` / `RunOnce` entries and the
+Startup-folder items, each with its target file, whether that file
+still exists, and its size. Entries can be disabled and re-enabled
+reversibly — nothing is deleted: registry values move to a
+`…-DisabledByDiskPilot` sibling key with their data preserved
+exactly, folder items move to a `Disabled by DiskPilot` subfolder,
+and disabled entries stay listed. Changing machine-wide entries asks
+for DiskPilot to run as administrator, and every change is recorded
+in History.
 
 ### Assistant (optional, off by default)
 
@@ -341,7 +380,10 @@ Three layers, one direction:
 - **One measuring rule.** Every size in the product is *allocated*
   bytes — what a file occupies on disk and what a cleanup actually
   frees — measured through a single helper (`GetCompressedFileSizeW`
-  on Windows), so the same file shows the same size on every page.
+  on Windows). The scanner measures every file through its path on
+  Windows, so even the standard walk reports allocated bytes, never
+  logical lengths, and the same file shows the same size on every
+  page.
 
 See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the full data
 flow, [docs/DESIGN.md](docs/DESIGN.md) for the design system, and
