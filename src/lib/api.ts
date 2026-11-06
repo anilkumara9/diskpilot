@@ -20,8 +20,10 @@ import type {
   EmptyRecycleBinProgress,
   EnvironmentInfo,
   FreeUpResult,
+  GamesReport,
   HistoryEntry,
   MediaInfo,
+  MediaSummary,
   PageId,
   ProvenanceGroup,
   RecentFile,
@@ -309,6 +311,29 @@ export async function getDownloadProvenance(): Promise<ProvenanceGroup[]> {
     return await invoke<ProvenanceGroup[]>("get_download_provenance");
   } catch {
     return [];
+  }
+}
+
+/** Media totals for the current scan (photos, videos, screenshots,
+    and the biggest files of each kind); null until a scan has run. */
+export async function getMediaSummary(): Promise<MediaSummary | null> {
+  if (!inDesktopApp()) return null;
+  try {
+    return await invoke<MediaSummary | null>("get_media_summary");
+  } catch {
+    return null;
+  }
+}
+
+/** Installed Steam and Epic games with their disk usage, read from
+    the launchers' manifest files at call time — no scan needed. A
+    machine with neither launcher gets an empty report, not an error. */
+export async function getGames(): Promise<GamesReport> {
+  if (!inDesktopApp()) return { libraries: [], totalBytes: 0, totalGames: 0 };
+  try {
+    return await invoke<GamesReport>("get_games");
+  } catch {
+    return { libraries: [], totalBytes: 0, totalGames: 0 };
   }
 }
 

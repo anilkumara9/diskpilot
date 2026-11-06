@@ -3,6 +3,7 @@ import type {
   AppSettings,
   CandidateGroup,
   DiskInfo,
+  DuplicatesMode,
   EnvironmentInfo,
   PageId,
   Recommendation,
@@ -44,6 +45,10 @@ interface AppState {
   banner: StatusBannerState;
   recycleBinOpen: boolean;
   highlightedRecommendationIds: string[];
+  /** Which Duplicates view shows. In the store (not page-local) so
+      other pages can deep-link — Media sends readers to the
+      look-alike photos view. */
+  duplicatesMode: DuplicatesMode;
 
   init: () => Promise<void>;
   navigate: (page: PageId) => void;
@@ -56,6 +61,7 @@ interface AppState {
   setBanner: (banner: StatusBannerState) => void;
   setRecycleBinOpen: (open: boolean) => void;
   setHighlighted: (ids: string[]) => void;
+  setDuplicatesMode: (mode: DuplicatesMode) => void;
   handleTrayNavigate: (target: PageId | "emptyRecycleBin") => void;
   applyScanProgress: (p: ScanProgress) => void;
   applyScanFinished: (s: ScanSummary) => void;
@@ -79,6 +85,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   banner: null,
   recycleBinOpen: false,
   highlightedRecommendationIds: [],
+  duplicatesMode: "exact",
 
   init: async () => {
     const inDesktop = api.inDesktopApp();
@@ -171,6 +178,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   setBanner: (banner) => set({ banner }),
   setRecycleBinOpen: (open) => set({ recycleBinOpen: open }),
   setHighlighted: (ids) => set({ highlightedRecommendationIds: ids }),
+  setDuplicatesMode: (mode) => set({ duplicatesMode: mode }),
 
   handleTrayNavigate: (target) => {
     if (target === "emptyRecycleBin") {

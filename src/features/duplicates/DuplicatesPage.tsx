@@ -3,7 +3,13 @@ import { Copy, FolderOpen, Images, ShieldCheck } from "lucide-react";
 import * as api from "@/lib/api";
 import { useAppStore } from "@/lib/store";
 import { basename, displayPath, formatBytes, formatCount, formatDate } from "@/lib/format";
-import type { CleanupFailure, CleanupResult, DuplicateGroup, SimilarGroup } from "@/lib/types";
+import type {
+  CleanupFailure,
+  CleanupResult,
+  DuplicateGroup,
+  DuplicatesMode,
+  SimilarGroup,
+} from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { Button } from "@/components/ui/button";
@@ -52,7 +58,7 @@ export function groupWastedBytes(group: DuplicateGroup, keeperPath: string | und
   return inodeFreed + rest;
 }
 
-export type DuplicatesMode = "exact" | "similar";
+export type { DuplicatesMode };
 
 /** Segmented control switching the exact-copies and look-alikes
     views; same pattern as the Storage tabs. Rendered in each view's
@@ -550,7 +556,10 @@ function SimilarImagesView({
 }
 
 export function DuplicatesPage() {
-  const [mode, setMode] = useState<DuplicatesMode>("exact");
+  /* The mode lives in the store so the Media page can deep-link
+     straight to the look-alike photos view. */
+  const mode = useAppStore((s) => s.duplicatesMode);
+  const setMode = useAppStore((s) => s.setDuplicatesMode);
   return mode === "exact" ? (
     <ExactDuplicatesView mode={mode} onModeChange={setMode} />
   ) : (

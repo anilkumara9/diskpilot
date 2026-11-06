@@ -8,9 +8,12 @@ import { PageHeader } from "@/components/layout/PageHeader";
 import { Button } from "@/components/ui/button";
 import { SkeletonRows } from "@/components/ui/skeleton";
 import { OverviewPage } from "@/features/overview/OverviewPage";
+import { HealthPage } from "@/features/health/HealthPage";
 import { StoragePage } from "@/features/storage/StoragePage";
+import { MediaPage } from "@/features/media/MediaPage";
 import { DuplicatesPage } from "@/features/duplicates/DuplicatesPage";
 import { ApplicationsPage } from "@/features/applications/ApplicationsPage";
+import { GamesPage } from "@/features/games/GamesPage";
 import { DeveloperToolsPage } from "@/features/developer/DeveloperToolsPage";
 import { DockerPage } from "@/features/docker/DockerPage";
 import { DownloadsPage } from "@/features/downloads/DownloadsPage";
@@ -30,9 +33,12 @@ const AssistantPage = lazy(() =>
 
 const PAGE_COMPONENTS: Record<Exclude<PageId, "assistant">, () => React.JSX.Element> = {
   overview: OverviewPage,
+  health: HealthPage,
   storage: StoragePage,
+  media: MediaPage,
   duplicates: DuplicatesPage,
   applications: ApplicationsPage,
+  games: GamesPage,
   developer: DeveloperToolsPage,
   docker: DockerPage,
   downloads: DownloadsPage,

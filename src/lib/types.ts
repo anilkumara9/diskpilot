@@ -595,11 +595,72 @@ export interface AssistantMessage extends ChatMessage {
   sentAtMs?: number;
 }
 
+/* ---------- Media summary & games (core `media` / `games` modules) ---------- */
+
+/** Byte total (allocated) and file count for one media kind. */
+export interface MediaBucket {
+  bytes: number;
+  count: number;
+}
+
+/** One file in a biggest-media list. */
+export interface MediaItem {
+  path: string;
+  name: string;
+  bytes: number;
+  modifiedMs: number;
+}
+
+/** Media totals for the current scan, from `get_media_summary`.
+    Null until a scan has run. `screenshots` is a subset of
+    `photos` — screenshots are photos that also match the
+    screenshot rule. Biggest lists carry at most 15 entries,
+    largest first. */
+export interface MediaSummary {
+  photos: MediaBucket;
+  videos: MediaBucket;
+  screenshots: MediaBucket;
+  biggestVideos: MediaItem[];
+  biggestPhotos: MediaItem[];
+}
+
+/** One installed game, from the launcher's own manifest. */
+export interface GameEntry {
+  name: string;
+  bytes: number;
+  path: string;
+  appId: string;
+}
+
+/** One library folder (Steam) or install-folder group (Epic). */
+export interface GameLibrary {
+  source: "Steam" | "Epic";
+  path: string;
+  games: GameEntry[];
+  bytes: number;
+}
+
+/** Every installed Steam/Epic game found on this machine, from
+    `get_games`. Libraries is empty when neither launcher is found. */
+export interface GamesReport {
+  libraries: GameLibrary[];
+  totalBytes: number;
+  totalGames: number;
+}
+
+/** Which Duplicates view is showing: verified identical files, or
+    look-alike photos. Lives in the store so other pages (Media) can
+    deep-link to a view. */
+export type DuplicatesMode = "exact" | "similar";
+
 export type PageId =
   | "overview"
+  | "health"
   | "storage"
+  | "media"
   | "duplicates"
   | "applications"
+  | "games"
   | "developer"
   | "docker"
   | "downloads"

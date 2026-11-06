@@ -6,8 +6,11 @@ import {
   Copy,
   Download,
   FolderTree,
+  Gamepad2,
   Gauge,
+  HeartPulse,
   History,
+  Images,
   Settings,
   Sparkles,
   type LucideIcon,
@@ -24,20 +27,28 @@ interface NavEntry {
   icon: LucideIcon;
 }
 
-const OVERVIEW: NavEntry = { id: "overview", label: "Overview", icon: Gauge };
+const TOP_ENTRIES: NavEntry[] = [
+  { id: "overview", label: "Overview", icon: Gauge },
+  { id: "health", label: "Health", icon: HeartPulse },
+];
 
 function analyzeEntries(assistantEnabled: boolean): NavEntry[] {
   const entries: NavEntry[] = [
     { id: "storage", label: "Storage", icon: FolderTree },
+    { id: "media", label: "Media", icon: Images },
     { id: "duplicates", label: "Duplicates", icon: Copy },
-    { id: "applications", label: "Applications", icon: AppWindow },
-    { id: "developer", label: "Developer Tools", icon: Code2 },
-    { id: "docker", label: "Docker", icon: Box },
     { id: "downloads", label: "Downloads", icon: Download },
   ];
   if (assistantEnabled) entries.push({ id: "assistant", label: "Assistant", icon: Bot });
   return entries;
 }
+
+const SYSTEM_ENTRIES: NavEntry[] = [
+  { id: "applications", label: "Applications", icon: AppWindow },
+  { id: "games", label: "Games", icon: Gamepad2 },
+  { id: "developer", label: "Developer Tools", icon: Code2 },
+  { id: "docker", label: "Docker", icon: Box },
+];
 
 function NavButton({
   entry,
@@ -140,11 +151,22 @@ export function Sidebar() {
       </div>
 
       <div className="min-h-0 flex-1 overflow-y-auto px-2 pb-2">
-        <NavButton entry={OVERVIEW} active={page === "overview"} onNavigate={navigate} />
+        <div className="space-y-px">
+          {TOP_ENTRIES.map((entry) => (
+            <NavButton key={entry.id} entry={entry} active={page === entry.id} onNavigate={navigate} />
+          ))}
+        </div>
 
         <p className="px-2 pb-1.5 pt-5 text-[11px] font-medium leading-[14px] text-subtle">Analyze</p>
         <div className="space-y-px">
           {analyzeEntries(assistantEnabled).map((entry) => (
+            <NavButton key={entry.id} entry={entry} active={page === entry.id} onNavigate={navigate} />
+          ))}
+        </div>
+
+        <p className="px-2 pb-1.5 pt-5 text-[11px] font-medium leading-[14px] text-subtle">System</p>
+        <div className="space-y-px">
+          {SYSTEM_ENTRIES.map((entry) => (
             <NavButton key={entry.id} entry={entry} active={page === entry.id} onNavigate={navigate} />
           ))}
         </div>
