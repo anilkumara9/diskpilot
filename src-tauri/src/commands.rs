@@ -1114,48 +1114,6 @@ pub fn cancel_empty_recycle_bin(state: State<'_, ShellState>) -> CmdResult<()> {
     Ok(())
 }
 
-/// Outcome of emptying the entire Recycle Bin at once.
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct EmptyRecycleBinResult {
-    pub items_removed: u32,
-    pub bytes_freed: u64,
-}
-
-/// Empty the entire Recycle Bin on the system drive in one shell
-/// operation (`SHEmptyRecycleBinW`), instead of the item-by-item
-/// removal `empty_recycle_bin` performs over a listed selection.
-/// The counts come from the listing taken just before the empty and
-/// the result is recorded to History.
-#[tauri::command]
-pub async fn empty_entire_recycle_bin(
-    state: State<'_, ShellState>,
-) -> CmdResult<EmptyRecycleBinResult> {
-    let (items_removed, bytes_freed) = blocking_value(crate::recycle_bin::empty_all).await??;
-    let result = CleanupResult {
-        plan_id: "recycle-bin".to_string(),
-        succeeded: Vec::new(),
-        failed: Vec::new(),
-        reclaimed_bytes: bytes_freed,
-        finished_at_ms: now_ms(),
-    };
-    let _ = with_history(&state, |history| {
-        history
-            .record_cleanup(
-                "empty-recycle-bin",
-                &result,
-                Some(&format!(
-                    "Emptied the entire Recycle Bin ({items_removed} items)"
-                )),
-            )
-            .map(|_| ())
-    });
-    Ok(EmptyRecycleBinResult {
-        items_removed,
-        bytes_freed,
-    })
-}
-
 /// Restore one Recycle Bin item (by the id `get_recycle_bin_items`
 /// returned) to its original location. Refuses when the destination
 /// already exists; recreates the original folder when it is gone.

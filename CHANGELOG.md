@@ -41,10 +41,9 @@ based on Keep a Changelog, and the project follows semantic versioning.
   its on-disk footprint read from the scan; selected files and
   folders can be marked online-only ("free up space"), asking
   OneDrive to evict the local copies without deleting anything.
-- **Recycle Bin restore + whole-bin empty** — a recycled item can be
-  restored to its original location (refused when something already
-  sits there), and the whole bin can be emptied in one shell
-  operation alongside the existing item-by-item removal.
+- **Recycle Bin restore** — a recycled item can be restored to its
+  original location (refused when something already sits there),
+  alongside the existing item-by-item emptying.
 - **Tray digest** — once a scan exists, the tray menu is headed by a
   "{reclaimable} can be cleaned" readout from the last scan.
 - **Report export** — a standalone HTML storage report can be saved

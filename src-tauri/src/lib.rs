@@ -337,7 +337,6 @@ pub fn run() {
             commands::get_applications,
             commands::get_recycle_bin_items,
             commands::empty_recycle_bin,
-            commands::empty_entire_recycle_bin,
             commands::restore_recycle_item,
             commands::cancel_empty_recycle_bin,
             commands::get_cloud_status,
