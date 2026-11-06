@@ -43,6 +43,45 @@ fn ctx(root: &Path) -> SafetyContext {
 }
 
 #[test]
+fn deep_tree_scans_and_the_depth_cap_reports_skips() {
+    // 300 levels: classification is memoized per directory, so a
+    // deep chain scans in linear-ish time and finds the file at
+    // the bottom (a per-entry full-path rebuild made this take
+    // seconds; an unbounded walk risks the stack).
+    let dir = tempfile::tempdir().unwrap();
+    let mut deep = dir.path().to_path_buf();
+    for i in 0..300 {
+        deep = deep.join(format!("d{i:03}"));
+    }
+    write_file(&deep.join("leaf.txt"), 1234);
+    let (summary, index) = Scanner::new(dir.path()).scan();
+    assert!(
+        index.files.iter().any(|f| f.path.ends_with("leaf.txt")),
+        "the leaf file at depth 300 must be indexed"
+    );
+    assert!(summary.total_bytes >= 1234);
+
+    // Beyond the 512 cap the walk stops descending and says so in
+    // the summary's skipped list instead of overflowing the stack.
+    let dir2 = tempfile::tempdir().unwrap();
+    let mut deep2 = dir2.path().to_path_buf();
+    for i in 0..600 {
+        deep2 = deep2.join(format!("d{i:03}"));
+    }
+    write_file(&deep2.join("too-deep.txt"), 10);
+    let (summary2, index2) = Scanner::new(dir2.path()).scan();
+    assert!(
+        !index2.files.iter().any(|f| f.path.ends_with("too-deep.txt")),
+        "files below the depth cap are not indexed"
+    );
+    assert!(
+        !summary2.skipped.is_empty(),
+        "the cap surfaces in the skipped list: {:?}",
+        summary2.skipped
+    );
+}
+
+#[test]
 fn scanner_totals_equal_category_totals() {
     let dir = tempfile::tempdir().unwrap();
     write_file(&dir.path().join("proj/node_modules/pkg/a.js"), 5000);
@@ -351,16 +390,17 @@ fn recommendations_and_planner_single_use_and_expiry() {
         .unwrap()
         .clone();
     let c = ctx(dir.path());
+    let (_summary, index) = Scanner::new(dir.path()).scan();
     let mut planner = Planner::new();
     let now = 1_000_000i64;
-    let plan = planner.build_plan(std::slice::from_ref(&rec.id), &recs, &c, now);
+    let plan = planner.build_plan(std::slice::from_ref(&rec.id), &recs, &index, &c, now);
     assert_eq!(plan.items.len(), 1);
     assert!(plan.allow_permanent, "node_modules is regenerable");
     // Single use.
     assert!(planner.take_plan(&plan.id, now + 1000).is_ok());
     assert!(planner.take_plan(&plan.id, now + 1000).is_err());
     // Expiry on a fresh plan.
-    let plan2 = planner.build_plan(std::slice::from_ref(&rec.id), &recs, &c, now);
+    let plan2 = planner.build_plan(std::slice::from_ref(&rec.id), &recs, &index, &c, now);
     assert!(planner
         .take_plan(
             &plan2.id,
@@ -405,7 +445,7 @@ fn windows_old_at_root_is_a_guided_only_recommendation() {
     // naming the guidance, and permanent deletion stays off.
     let c = ctx(dir.path());
     let mut planner = Planner::new();
-    let plan = planner.build_plan(&["windows-old".to_string()], &recs, &c, 7_000_000);
+    let plan = planner.build_plan(&["windows-old".to_string()], &recs, &index, &c, 7_000_000);
     assert!(plan.items.is_empty());
     assert!(!plan.allow_permanent);
     assert_eq!(plan.rejected.len(), 1);
@@ -437,9 +477,10 @@ fn executor_uses_mock_and_records() {
         .unwrap()
         .clone();
     let c = ctx(dir.path());
+    let (_summary, index) = Scanner::new(dir.path()).scan();
     let mut planner = Planner::new();
     let now = 2_000_000i64;
-    let plan = planner.build_plan(std::slice::from_ref(&rec.id), &recs, &c, now);
+    let plan = planner.build_plan(std::slice::from_ref(&rec.id), &recs, &index, &c, now);
     let taken = planner.take_plan(&plan.id, now + 10).unwrap();
     let ops = MockFileOps::default();
     let result = execute_plan(&taken, ExecuteMode::MoveToTrash, &c, &ops).unwrap();
