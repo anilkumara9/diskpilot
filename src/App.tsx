@@ -1,10 +1,12 @@
-import { useEffect } from "react";
+import { lazy, Suspense, useEffect } from "react";
 import { AlertTriangle, CheckCircle2, Info, MonitorX, X } from "lucide-react";
 import { useAppStore } from "@/lib/store";
 import { watchSystemTheme } from "@/lib/theme";
 import type { PageId } from "@/lib/types";
 import { Sidebar } from "@/components/layout/Sidebar";
+import { PageHeader } from "@/components/layout/PageHeader";
 import { Button } from "@/components/ui/button";
+import { SkeletonRows } from "@/components/ui/skeleton";
 import { OverviewPage } from "@/features/overview/OverviewPage";
 import { StoragePage } from "@/features/storage/StoragePage";
 import { DuplicatesPage } from "@/features/duplicates/DuplicatesPage";
@@ -12,13 +14,21 @@ import { ApplicationsPage } from "@/features/applications/ApplicationsPage";
 import { DeveloperToolsPage } from "@/features/developer/DeveloperToolsPage";
 import { DockerPage } from "@/features/docker/DockerPage";
 import { DownloadsPage } from "@/features/downloads/DownloadsPage";
-import { AssistantPage } from "@/features/assistant/AssistantPage";
 import { RecommendationsPage } from "@/features/recommendations/RecommendationsPage";
 import { HistoryPage } from "@/features/history/HistoryPage";
 import { SettingsPage } from "@/features/settings/SettingsPage";
 import { EmptyRecycleBinDialog } from "@/features/trash/EmptyRecycleBinDialog";
 
-const PAGE_COMPONENTS: Record<PageId, () => React.JSX.Element> = {
+/**
+ * The Assistant page is loaded on demand: it carries the markdown
+ * renderer, which would otherwise add ~170 KB to the startup bundle
+ * for a page many sessions never open.
+ */
+const AssistantPage = lazy(() =>
+  import("@/features/assistant/AssistantPage").then((m) => ({ default: m.AssistantPage })),
+);
+
+const PAGE_COMPONENTS: Record<Exclude<PageId, "assistant">, () => React.JSX.Element> = {
   overview: OverviewPage,
   storage: StoragePage,
   duplicates: DuplicatesPage,
@@ -26,11 +36,26 @@ const PAGE_COMPONENTS: Record<PageId, () => React.JSX.Element> = {
   developer: DeveloperToolsPage,
   docker: DockerPage,
   downloads: DownloadsPage,
-  assistant: AssistantPage,
   cleanup: RecommendationsPage,
   history: HistoryPage,
   settings: SettingsPage,
 };
+
+/** The Assistant page's own shell, shown while its chunk loads. */
+function AssistantLoadingFallback() {
+  return (
+    <div className="flex h-full flex-col px-6 py-6">
+      <div className="flex min-h-0 w-full max-w-[760px] flex-1 flex-col">
+        <PageHeader
+          title="Assistant"
+          subtitle="Ask about this PC's scan results. The assistant is read-only: it can explain and point at recommendations, but it cannot delete, move, or run anything."
+          showScanControl={false}
+        />
+        <SkeletonRows rows={6} />
+      </div>
+    </div>
+  );
+}
 
 function StatusBanner() {
   const banner = useAppStore((s) => s.banner);
@@ -117,7 +142,7 @@ export default function App() {
   if (!inDesktop) return <DesktopOnlyState />;
 
   const effectivePage: PageId = page === "assistant" && !assistantEnabled ? "overview" : page;
-  const PageComponent = PAGE_COMPONENTS[effectivePage];
+  const PageComponent = effectivePage === "assistant" ? null : PAGE_COMPONENTS[effectivePage];
 
   return (
     <div className="flex h-full bg-background text-foreground">
@@ -127,7 +152,13 @@ export default function App() {
         <div data-tauri-drag-region className="h-[38px] w-full shrink-0" aria-hidden="true" />
         <StatusBanner />
         <main className="min-h-0 flex-1 overflow-hidden" key={effectivePage}>
-          <PageComponent />
+          {PageComponent ? (
+            <PageComponent />
+          ) : (
+            <Suspense fallback={<AssistantLoadingFallback />}>
+              <AssistantPage />
+            </Suspense>
+          )}
         </main>
       </div>
       <EmptyRecycleBinDialog open={recycleBinOpen} onClose={() => setRecycleBinOpen(false)} />

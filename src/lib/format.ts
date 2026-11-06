@@ -79,6 +79,15 @@ export function formatDate(timestampMs: number): string {
   }).format(new Date(timestampMs));
 }
 
+/** Clock time of day, "HH:MM" in 24-hour form — used for chat timestamps. */
+export function formatTimeOfDay(timestampMs: number): string {
+  return new Intl.DateTimeFormat("en-GB", {
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23",
+  }).format(new Date(timestampMs));
+}
+
 export function formatDateShort(timestampMs: number): string {
   return new Intl.DateTimeFormat("en-US", {
     month: "short",

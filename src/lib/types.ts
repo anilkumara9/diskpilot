@@ -496,9 +496,13 @@ export interface AssistantReply {
 }
 
 /** Local UI message: a chat message plus any recommendations the
-    assistant highlighted in that reply (kept for the review button). */
+    assistant highlighted in that reply (kept for the review button).
+    `sentAtMs` is local-only display metadata (the timestamp under the
+    message); it is never sent to the core — the history payload maps
+    back down to plain ChatMessage. */
 export interface AssistantMessage extends ChatMessage {
   highlightedRecommendationIds?: string[];
+  sentAtMs?: number;
 }
 
 export type PageId =

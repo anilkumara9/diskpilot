@@ -218,6 +218,34 @@ separated from the nav by a hairline and 12 px of air.
 - **Skeletons** — mirror the layout of the page they stand in for.
 - **Tooltips** — figures and icon buttons carry short explanations
   (e.g. every Overview figure label has an Info tooltip).
+- **Assistant messages** — user messages keep the accent bubble
+  (right-aligned, 86 % max width). Assistant replies sit flat on the
+  page in the modern chat pattern: the app logo glyph in a 24 px
+  raised circle beside a full-width content column — no bubble;
+  code blocks and cards provide their own surfaces. A muted 11 px
+  timestamp (HH:MM) sits under each message; assistant messages
+  reveal a Copy action (raw markdown source) on hover or focus.
+  Replies are rendered markdown, never raw characters: paragraphs at
+  body size with 8 px block spacing; headings restrained (15/14/13 px
+  semibold — a chat column, not a document); compact lists with muted
+  markers; inline code as a raised mono chip; fenced code as a
+  `panel-raised` panel (10 px radius, hairline border, mono 12 px,
+  horizontal scroll) with a Copy button; blockquotes take a left
+  accent hairline and muted text; tables are full-width at 12.5 px
+  with hairline row dividers and a muted semibold header, scrolling
+  horizontally when needed; GFM task-list checkboxes are disabled and
+  take the accent token. Links never navigate the webview — absolute
+  URLs open through the external opener. Long words and URLs always
+  wrap; the column never scrolls horizontally. Highlighted
+  recommendations render inline under the reply in a raised
+  container titled "Worth a look": one compact row per item (tier
+  badge, title, size), each row and the "Review in Cleanup" footer
+  action entering the same Cleanup review flow. While awaiting a
+  reply, a thinking row shows the assistant mark with three dots
+  pulsing in sequence (static under reduced motion). A failed request
+  renders as a danger-tinted callout (callout spec, critical tint)
+  with a Retry action that resends the last message without
+  duplicating it.
 
 ## Motion
 

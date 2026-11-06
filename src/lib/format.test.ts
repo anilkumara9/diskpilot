@@ -9,6 +9,7 @@ import {
   formatRelative,
   formatSignedBytes,
   formatSignedCount,
+  formatTimeOfDay,
   parentPath,
 } from "./format";
 
@@ -87,5 +88,13 @@ describe("signed deltas (scan-over-scan comparison)", () => {
     expect(formatSignedCount(1234)).toBe("+1,234");
     expect(formatSignedCount(-56)).toBe("−56");
     expect(formatSignedCount(0)).toBe("0");
+  });
+});
+
+describe("formatTimeOfDay", () => {
+  it("formats local time as HH:MM in 24-hour form", () => {
+    expect(formatTimeOfDay(new Date(2026, 0, 5, 9, 5).getTime())).toBe("09:05");
+    expect(formatTimeOfDay(new Date(2026, 0, 5, 23, 59).getTime())).toBe("23:59");
+    expect(formatTimeOfDay(new Date(2026, 0, 5, 0, 0).getTime())).toBe("00:00");
   });
 });
