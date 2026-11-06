@@ -46,6 +46,18 @@
 //!   `duplicates::verify_identical` re-verification per copy,
 //!   `safety::authorize_destructive`, and
 //!   `cleanup::RealFileOps::move_to_trash`.
+//! - `clean_app_junk` follows the same re-derive rule: the core's
+//!   app-junk table is re-measured at action time and only the
+//!   fresh measurement's own paths are recycled (through the same
+//!   `RealFileOps::move_to_trash`), so the webview's group IDs are
+//!   names into a server-side table, never paths.
+//! - The remaining power-wave surfaces live in their own modules:
+//!   `crate::smart_io` (drive health), `crate::winget_io` (software
+//!   updates), `crate::relocate_io` (folder relocation with a
+//!   junction) and `crate::maintenance` (the scheduled purge/clean
+//!   the watch loop calls). `export_scan_csv` shares
+//!   `export_report`'s save-dialog mechanism with content composed
+//!   by the core's export module.
 //! - `reveal_in_explorer` uses a containment check (target must be the
 //!   scanned root or inside it) rather than `safety::validate`: the
 //!   gate is destructive-op oriented and rejects the root itself and
@@ -111,8 +123,11 @@ where
         .map_err(|e| format!("background task failed: {e}"))
 }
 
-/// Open (once) and borrow the SQLite history store.
-fn with_history<T>(
+/// Open (once) and borrow the SQLite history store. Shared with
+/// the feature modules (`crate::winget_io`, `crate::relocate_io`,
+/// `crate::maintenance`) so every History write opens the same
+/// store the same way.
+pub(crate) fn with_history<T>(
     state: &ShellState,
     f: impl FnOnce(&HistoryStore) -> Result<T, CoreError>,
 ) -> CmdResult<T> {
@@ -1080,6 +1095,170 @@ pub async fn remove_duplicate_copies(
 }
 
 // ---------------------------------------------------------------------------
+// App junk
+// ---------------------------------------------------------------------------
+
+/// The environment roots the core's app-junk rules resolve
+/// against. A variable that is not set becomes an empty root,
+/// which the core's measurement simply finds nothing under.
+fn junk_roots() -> diskpilot_core::appjunk::JunkRoots {
+    let from_env = |name: &str| {
+        std::env::var_os(name)
+            .map(PathBuf::from)
+            .unwrap_or_default()
+    };
+    diskpilot_core::appjunk::JunkRoots {
+        local_app_data: from_env("LOCALAPPDATA"),
+        roaming_app_data: from_env("APPDATA"),
+        program_data: from_env("ProgramData"),
+        windows_dir: std::env::var_os("SystemRoot")
+            .or_else(|| std::env::var_os("windir"))
+            .map(PathBuf::from)
+            .unwrap_or_default(),
+        user_profile: from_env("USERPROFILE"),
+    }
+}
+
+/// Measured per-app junk on this machine (Discord/Slack/Chrome/…
+/// caches — the core's curated rule table, resolved against the
+/// live environment and measured with the allocated-bytes rule).
+#[tauri::command]
+pub async fn list_app_junk() -> CmdResult<Vec<diskpilot_core::appjunk::AppJunkGroup>> {
+    blocking_value(|| diskpilot_core::appjunk::measure_app_junk(&junk_roots())).await
+}
+
+/// One failed item of an app-junk clean.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct JunkCleanFailure {
+    pub path: String,
+    pub error: String,
+}
+
+/// Outcome of `clean_app_junk`: the paths actually recycled, the
+/// per-item failures, and the allocated bytes of the successes
+/// only.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct JunkCleanResult {
+    pub succeeded: Vec<String>,
+    pub failed: Vec<JunkCleanFailure>,
+    pub reclaimed_bytes: u64,
+}
+
+/// Recycle the named junk groups' contents. The groups are
+/// RE-MEASURED at action time from the core's rule table: an ID
+/// the fresh measurement does not produce is refused, and the
+/// paths acted on are always the fresh measurement's — never
+/// anything the webview held on to. Trash-only: no permanent path
+/// exists here. The outcome is recorded to History.
+#[tauri::command]
+pub async fn clean_app_junk(
+    state: State<'_, ShellState>,
+    group_ids: Vec<String>,
+) -> CmdResult<JunkCleanResult> {
+    let result = blocking_value(move || {
+        let mut out = JunkCleanResult {
+            succeeded: Vec::new(),
+            failed: Vec::new(),
+            reclaimed_bytes: 0,
+        };
+        let groups = diskpilot_core::appjunk::measure_app_junk(&junk_roots());
+        for id in &group_ids {
+            let Some(group) = groups.iter().find(|g| &g.id == id) else {
+                out.failed.push(JunkCleanFailure {
+                    path: id.clone(),
+                    error: "that junk group is no longer present".to_string(),
+                });
+                continue;
+            };
+            for path in &group.paths {
+                clean_junk_path(path, &mut out);
+            }
+        }
+        out
+    })
+    .await?;
+    let history_result = CleanupResult {
+        plan_id: "app-junk".to_string(),
+        succeeded: result.succeeded.clone(),
+        failed: result
+            .failed
+            .iter()
+            .map(|f| CleanupFailure {
+                path: f.path.clone(),
+                message: f.error.clone(),
+            })
+            .collect(),
+        reclaimed_bytes: result.reclaimed_bytes,
+        finished_at_ms: now_ms(),
+    };
+    let _ = with_history(&state, |history| {
+        history
+            .record_cleanup(
+                "app-junk",
+                &history_result,
+                None,
+                diskpilot_core::history::RemovedItemMode::Trash,
+            )
+            .map(|_| ())
+    });
+    Ok(result)
+}
+
+/// Recycle one measured junk path. A cache FILE goes as it is. A
+/// cache DIRECTORY is emptied child by child — one locked file
+/// then fails alone instead of vetoing the whole cache — and the
+/// directory itself is left in place, since its owner expects it
+/// to exist and only ever recreates its contents.
+fn clean_junk_path(path: &Path, out: &mut JunkCleanResult) {
+    let md = match std::fs::symlink_metadata(path) {
+        Ok(md) => md,
+        Err(e) => {
+            out.failed.push(JunkCleanFailure {
+                path: path.to_string_lossy().into_owned(),
+                error: e.to_string(),
+            });
+            return;
+        }
+    };
+    if md.is_dir() && !md.file_type().is_symlink() {
+        let children: Vec<PathBuf> = match std::fs::read_dir(path) {
+            Ok(read) => read.flatten().map(|entry| entry.path()).collect(),
+            Err(e) => {
+                out.failed.push(JunkCleanFailure {
+                    path: path.to_string_lossy().into_owned(),
+                    error: e.to_string(),
+                });
+                return;
+            }
+        };
+        for child in &children {
+            trash_junk_item(child, out);
+        }
+    } else {
+        trash_junk_item(path, out);
+    }
+}
+
+/// Move one junk item to the Recycle Bin (the executor's own
+/// `RealFileOps::move_to_trash`, shared with plan execution and
+/// duplicate removal), accounting its allocated bytes first.
+fn trash_junk_item(path: &Path, out: &mut JunkCleanResult) {
+    let bytes = scanner::measure_path(path);
+    match RealFileOps.move_to_trash(path) {
+        Ok(()) => {
+            out.succeeded.push(path.to_string_lossy().into_owned());
+            out.reclaimed_bytes += bytes;
+        }
+        Err(error) => out.failed.push(JunkCleanFailure {
+            path: path.to_string_lossy().into_owned(),
+            error,
+        }),
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Docker
 // ---------------------------------------------------------------------------
 
@@ -1792,28 +1971,87 @@ fn run_compact(path: &str, compress: bool) -> CompressionOutcome {
     })
 }
 
-/// Save an HTML storage report through the native save dialog
-/// (default name `DiskPilot-Report.html`). Resolves with the chosen
-/// path, or `None` when the user cancelled. The dialog runs on the
-/// Rust side, so no extra capability permission is involved.
-#[tauri::command]
-pub async fn export_report(app: AppHandle, html: String) -> CmdResult<Option<String>> {
+/// The one file-export mechanism: write `contents` to a path the
+/// user picks in the native save dialog (defaulting to
+/// `default_name`). Resolves with the chosen path, or `None` when
+/// the user cancelled. The dialog runs on the Rust side, so no
+/// extra capability permission is involved.
+async fn save_text_via_dialog(
+    app: AppHandle,
+    default_name: &'static str,
+    filter_name: &'static str,
+    extensions: &'static [&'static str],
+    contents: String,
+) -> CmdResult<Option<String>> {
     use tauri_plugin_dialog::DialogExt;
     blocking_value(move || -> Result<Option<String>, String> {
         let Some(file) = app
             .dialog()
             .file()
-            .set_file_name("DiskPilot-Report.html")
-            .add_filter("HTML", &["html"])
+            .set_file_name(default_name)
+            .add_filter(filter_name, extensions)
             .blocking_save_file()
         else {
             return Ok(None);
         };
         let path = file.into_path().map_err(|e| e.to_string())?;
-        std::fs::write(&path, html.as_bytes()).map_err(|e| e.to_string())?;
+        std::fs::write(&path, contents.as_bytes()).map_err(|e| e.to_string())?;
         Ok(Some(path.to_string_lossy().into_owned()))
     })
     .await?
+}
+
+/// Save an HTML storage report through the native save dialog
+/// (default name `DiskPilot-Report.html`). Resolves with the chosen
+/// path, or `None` when the user cancelled.
+#[tauri::command]
+pub async fn export_report(app: AppHandle, html: String) -> CmdResult<Option<String>> {
+    save_text_via_dialog(app, "DiskPilot-Report.html", "HTML", &["html"], html).await
+}
+
+/// Export the current scan as CSV through the same save dialog as
+/// the HTML report. `kind` is `"files"` (the index's largest
+/// files, at most 1000, largest first) or `"categories"` (the
+/// summary's per-category totals); the CSV itself is composed by
+/// the core's export module. Either kind needs a scan — the
+/// restored snapshot alone carries no index to export files from.
+#[tauri::command]
+pub async fn export_scan_csv(
+    app: AppHandle,
+    state: State<'_, ShellState>,
+    kind: String,
+) -> CmdResult<Option<String>> {
+    let (default_name, contents) = {
+        let engine = state
+            .engine
+            .lock()
+            .map_err(|_| "engine lock poisoned".to_string())?;
+        match kind.as_str() {
+            "files" => {
+                let Some(index) = engine.index.as_ref() else {
+                    return Err("Run a scan first".to_string());
+                };
+                let mut files = index.files.clone();
+                files.sort_by(|a, b| b.bytes.cmp(&a.bytes).then_with(|| a.path.cmp(&b.path)));
+                files.truncate(1000);
+                (
+                    "DiskPilot-Files.csv",
+                    diskpilot_core::export::files_to_csv(&files),
+                )
+            }
+            "categories" => {
+                let Some(summary) = engine.summary.as_ref() else {
+                    return Err("Run a scan first".to_string());
+                };
+                (
+                    "DiskPilot-Categories.csv",
+                    diskpilot_core::export::categories_to_csv(&summary.category_totals),
+                )
+            }
+            _ => return Err(format!("unknown export kind: {kind}")),
+        }
+    };
+    save_text_via_dialog(app, default_name, "CSV", &["csv"], contents).await
 }
 
 // ---------------------------------------------------------------------------
@@ -2250,6 +2488,102 @@ pub(crate) fn reveal_path_in_explorer(path: &Path) -> CmdResult<()> {
             .map_err(|e| format!("could not open the file manager: {e}"))?;
     }
     Ok(())
+}
+
+/// Registry paths of the Explorer context-menu entries, one for
+/// folders and one for drives. They live under HKCU, so no
+/// elevation is needed to write them and removal is complete.
+#[cfg(windows)]
+const EXPLORER_MENU_KEYS: [&str; 2] = [
+    r"Software\Classes\Directory\shell\DiskPilot",
+    r"Software\Classes\Drive\shell\DiskPilot",
+];
+
+/// Write or remove the Explorer context-menu entries ("Analyze
+/// with DiskPilot", which starts DiskPilot as
+/// `DiskPilot --scan "%1"`).
+#[cfg(windows)]
+fn set_explorer_integration_impl(enabled: bool) -> CmdResult<()> {
+    use winreg::enums::HKEY_CURRENT_USER;
+    use winreg::RegKey;
+
+    let hkcu = RegKey::predef(HKEY_CURRENT_USER);
+    if enabled {
+        let exe = std::env::current_exe()
+            .map_err(|e| format!("could not locate the DiskPilot executable: {e}"))?;
+        let exe = exe.to_string_lossy().into_owned();
+        for base in EXPLORER_MENU_KEYS {
+            let (key, _) = hkcu
+                .create_subkey(base)
+                .map_err(|e| format!("could not create the Explorer menu entry: {e}"))?;
+            key.set_value("", &"Analyze with DiskPilot")
+                .map_err(|e| format!("could not label the Explorer menu entry: {e}"))?;
+            key.set_value("Icon", &exe)
+                .map_err(|e| format!("could not set the Explorer menu icon: {e}"))?;
+            let (command_key, _) = hkcu
+                .create_subkey(format!(r"{base}\command"))
+                .map_err(|e| format!("could not create the Explorer menu command: {e}"))?;
+            command_key
+                .set_value("", &format!("\"{exe}\" --scan \"%1\""))
+                .map_err(|e| format!("could not set the Explorer menu command: {e}"))?;
+        }
+        Ok(())
+    } else {
+        for base in EXPLORER_MENU_KEYS {
+            match hkcu.delete_subkey_all(base) {
+                Ok(()) => {}
+                // Already absent is exactly the state being asked for.
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+                Err(e) => return Err(format!("could not remove the Explorer menu entry: {e}")),
+            }
+        }
+        Ok(())
+    }
+}
+
+/// Register or unregister the Explorer context-menu entries.
+#[tauri::command]
+pub fn set_explorer_integration(enabled: bool) -> CmdResult<()> {
+    #[cfg(windows)]
+    {
+        set_explorer_integration_impl(enabled)
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = enabled;
+        Err("Explorer integration is only available on Windows".to_string())
+    }
+}
+
+/// Whether the Explorer context-menu entries are currently
+/// registered (the folder entry is the marker for the pair).
+#[tauri::command]
+pub fn get_explorer_integration() -> bool {
+    #[cfg(windows)]
+    {
+        use winreg::enums::HKEY_CURRENT_USER;
+        use winreg::RegKey;
+        RegKey::predef(HKEY_CURRENT_USER)
+            .open_subkey(EXPLORER_MENU_KEYS[0])
+            .is_ok()
+    }
+    #[cfg(not(windows))]
+    {
+        false
+    }
+}
+
+/// Claim the folder a launch asked to scan (`DiskPilot --scan
+/// <path>`, from the Explorer entry or a later instance's
+/// handoff). Returns and clears the pending path: each intent is
+/// delivered exactly once.
+#[tauri::command]
+pub fn get_launch_intent(state: State<'_, ShellState>) -> CmdResult<Option<String>> {
+    let mut slot = state
+        .launch_intent
+        .lock()
+        .map_err(|_| "launch intent lock poisoned".to_string())?;
+    Ok(slot.take())
 }
 
 /// Open an external URL with the system handler. Only `https:`, `http:`
