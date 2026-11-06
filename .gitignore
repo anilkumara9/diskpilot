@@ -1,0 +1,34 @@
+# Dependencies
+node_modules/
+
+# Frontend build output
+dist/
+
+# Rust build output
+target/
+src-tauri/target/
+src-tauri/gen/
+
+# Tauri signing / packaging secrets — never commit
+*.key
+*.key.pub
+*.pfx
+*.p12
+
+# Local app data produced while developing
+*.sqlite3
+*.sqlite3-journal
+settings.json
+snapshot.json
+
+# Editors / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Logs
+*.log
+npm-debug.log*
+pnpm-debug.log*

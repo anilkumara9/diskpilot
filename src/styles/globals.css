@@ -1,0 +1,232 @@
+@import "tailwindcss";
+
+@custom-variant dark (&:where(.dark, .dark *));
+
+:root {
+  --background: #ffffff;
+  --sidebar: #f5f5f7;
+  --panel: #ffffff;
+  --panel-raised: #f5f5f7;
+  --hover: #ededf0;
+  --selected: #e4e4ea;
+  --border: #e5e5ea;
+  --border-strong: #d1d1d6;
+  --foreground: #1d1d1f;
+  --muted: #6e6e73;
+  --subtle: #737378;
+  --accent: #5856d6;
+  --accent-fill: #5856d6;
+  --accent-foreground: #ffffff;
+  --tier-safe: #248a3d;
+  --tier-review: #b25000;
+  --tier-keep: #6e6e73;
+  --critical: #d70015;
+  --cat-application-data: #2a78d6;
+  --cat-build-artifacts: #e0601f;
+  --cat-docker-storage: #13906f;
+  --cat-cache: #b07f00;
+  --cat-user-data: #d24b84;
+  --cat-downloads: #2d8a3a;
+  --cat-developer-tools: #6a52d9;
+  --cat-logs: #d33d3d;
+  --cat-binary-data: #8a7f73;
+  --cat-system-files: #6b7280;
+  --cat-unknown: #a1a1aa;
+  color-scheme: light;
+}
+
+.dark {
+  --background: #1c1c1e;
+  --sidebar: #161618;
+  --panel: #1c1c1e;
+  --panel-raised: #252528;
+  --hover: #2a2a2d;
+  --selected: #323236;
+  --border: #2e2e31;
+  --border-strong: #3a3a3d;
+  --foreground: #f5f5f7;
+  --muted: #a1a1a6;
+  --subtle: #8e8e93;
+  --accent: #7d7aff;
+  --accent-fill: #5e5ce6;
+  --accent-foreground: #ffffff;
+  --tier-safe: #30d158;
+  --tier-review: #ff9f0a;
+  --tier-keep: #98989d;
+  --critical: #ff453a;
+  --cat-application-data: #3b8ef0;
+  --cat-build-artifacts: #e0692a;
+  --cat-docker-storage: #18a88a;
+  --cat-cache: #b8870c;
+  --cat-user-data: #d9578f;
+  --cat-downloads: #3fa34d;
+  --cat-developer-tools: #8b6cf0;
+  --cat-logs: #e05555;
+  --cat-binary-data: #9a8f84;
+  --cat-system-files: #7c8494;
+  --cat-unknown: #5b5f68;
+  color-scheme: dark;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-sidebar: var(--sidebar);
+  --color-panel: var(--panel);
+  --color-panel-raised: var(--panel-raised);
+  --color-hover: var(--hover);
+  --color-selected: var(--selected);
+  --color-border: var(--border);
+  --color-border-strong: var(--border-strong);
+  --color-foreground: var(--foreground);
+  --color-muted: var(--muted);
+  --color-subtle: var(--subtle);
+  --color-accent: var(--accent);
+  --color-accent-fill: var(--accent-fill);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-tier-safe: var(--tier-safe);
+  --color-tier-review: var(--tier-review);
+  --color-tier-keep: var(--tier-keep);
+  --color-critical: var(--critical);
+  --color-cat-application-data: var(--cat-application-data);
+  --color-cat-build-artifacts: var(--cat-build-artifacts);
+  --color-cat-docker-storage: var(--cat-docker-storage);
+  --color-cat-cache: var(--cat-cache);
+  --color-cat-user-data: var(--cat-user-data);
+  --color-cat-downloads: var(--cat-downloads);
+  --color-cat-developer-tools: var(--cat-developer-tools);
+  --color-cat-logs: var(--cat-logs);
+  --color-cat-binary-data: var(--cat-binary-data);
+  --color-cat-system-files: var(--cat-system-files);
+  --color-cat-unknown: var(--cat-unknown);
+  --font-sans: "Segoe UI", -apple-system, BlinkMacSystemFont, "Helvetica Neue", Arial, sans-serif;
+  --font-mono: "Cascadia Code", ui-monospace, "SF Mono", Consolas, "Liberation Mono", monospace;
+  --radius-tag: 4px;
+  --radius-row: 6px;
+  --radius-panel: 10px;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--background);
+  color: var(--foreground);
+  font-family: var(--font-sans);
+  font-size: 13px;
+  line-height: 18px;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+  overflow: hidden;
+  user-select: none;
+}
+
+::selection {
+  background: color-mix(in srgb, var(--accent) 28%, transparent);
+}
+
+.tabular {
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum" 1;
+}
+
+.mono-path {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  line-height: 14px;
+  word-break: break-all;
+}
+
+/* Indeterminate scan bar */
+@keyframes scan-slide {
+  0% { transform: translateX(-110%); }
+  100% { transform: translateX(320%); }
+}
+.scan-indeterminate {
+  position: relative;
+  overflow: hidden;
+}
+.scan-indeterminate::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  width: 32%;
+  border-radius: 999px;
+  background: var(--accent);
+  animation: scan-slide 1.25s ease-in-out infinite;
+}
+
+/* Skeleton shimmer */
+@keyframes shimmer {
+  0% { background-position: -400px 0; }
+  100% { background-position: 400px 0; }
+}
+.skeleton-shimmer {
+  background: linear-gradient(
+    90deg,
+    var(--panel-raised) 25%,
+    var(--hover) 45%,
+    var(--panel-raised) 65%
+  );
+  background-size: 800px 100%;
+  animation: shimmer 1.4s linear infinite;
+}
+
+/* Hatched recoverable overlay for the storage strip */
+.hatched {
+  background-image: repeating-linear-gradient(
+    -45deg,
+    rgba(255, 255, 255, 0.42) 0 2px,
+    transparent 2px 6px
+  );
+}
+.dark .hatched {
+  background-image: repeating-linear-gradient(
+    -45deg,
+    rgba(0, 0, 0, 0.38) 0 2px,
+    transparent 2px 6px
+  );
+}
+
+@keyframes fade-in {
+  from { opacity: 0; transform: translateY(2px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.animate-fade-in {
+  animation: fade-in 180ms ease-out both;
+}
+
+@keyframes dialog-in {
+  from { opacity: 0; transform: translate(-50%, -48%) scale(0.985); }
+  to { opacity: 1; transform: translate(-50%, -50%) scale(1); }
+}
+.dialog-in {
+  animation: dialog-in 180ms ease-out both;
+}
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-strong) transparent;
+}
+*::-webkit-scrollbar { width: 8px; height: 8px; }
+*::-webkit-scrollbar-thumb { background: var(--border-strong); border-radius: 8px; }
+*::-webkit-scrollbar-track { background: transparent; }
+
+button, input, select, textarea { font: inherit; color: inherit; }
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+  .scan-indeterminate::after { animation: none; width: 100%; opacity: 0.45; }
+  .skeleton-shimmer { animation: none; }
+}
