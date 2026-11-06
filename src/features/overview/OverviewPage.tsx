@@ -14,6 +14,7 @@ import {
 } from "lucide-react";
 import { useAppStore } from "@/lib/store";
 import * as api from "@/lib/api";
+import { buildSeries, formatAxisBytes } from "@/lib/chart";
 import { categoryRows, sortLocations, totalRecoverable } from "@/lib/analysis";
 import { categoryMeta } from "@/lib/categories";
 import { displayPath, formatBytes, formatCount, formatDate, formatDuration, formatPercent, formatSignedBytes, formatSignedCount } from "@/lib/format";
@@ -34,6 +35,7 @@ import type {
 import { Button } from "@/components/ui/button";
 import { Section } from "@/components/ui/section";
 import { Tooltip } from "@/components/ui/tooltip";
+import { Chart, type ChartSeries } from "@/components/Chart";
 import { CategoryBadge, CategoryDot } from "@/components/shared/CategoryBadge";
 import { TierBadge } from "@/components/shared/TierBadge";
 import { SizeBar } from "@/components/shared/SizeBar";
@@ -51,6 +53,17 @@ export function sameRootPath(a: string, b: string): boolean {
 
 /* ---------------- StorageStrip ---------------- */
 
+interface StripSegment {
+  key: string;
+  label: string;
+  bytes: number;
+  /** Width as a percent of the disk; null is the flexible free tail. */
+  widthPct: number | null;
+  colorVar: string | null;
+  fillClass?: string;
+  recoverable?: number;
+}
+
 export function StorageStrip({
   disk,
   summary,
@@ -58,6 +71,20 @@ export function StorageStrip({
   disk: DiskInfo | null;
   summary: ScanSummary | null;
 }) {
+  /* Segment widths grow in on mount; the hover layer below animates
+     with the same widths so the two never drift apart. */
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => {
+    let inner = 0;
+    const outer = requestAnimationFrame(() => {
+      inner = requestAnimationFrame(() => setMounted(true));
+    });
+    return () => {
+      cancelAnimationFrame(outer);
+      cancelAnimationFrame(inner);
+    };
+  }, []);
+
   const total = disk?.totalBytes ?? summary?.totalBytes ?? 0;
   if (!disk && !summary) {
     return (
@@ -71,43 +98,111 @@ export function StorageStrip({
   const otherUsed = Math.max(0, (disk?.usedBytes ?? scannedTotal) - scannedTotal);
   const free = disk?.availableBytes ?? Math.max(0, total - (disk?.usedBytes ?? scannedTotal));
 
+  const segments: StripSegment[] = [];
+  for (const row of rows) {
+    const widthPct = total > 0 ? (row.bytes / total) * 100 : 0;
+    if (widthPct <= 0) continue;
+    segments.push({
+      key: row.category,
+      label: categoryMeta(row.category).label,
+      bytes: row.bytes,
+      widthPct,
+      colorVar: categoryMeta(row.category).colorVar,
+      recoverable: row.recoverable,
+    });
+  }
+  if (otherUsed > 0 && total > 0) {
+    segments.push({
+      key: "other-used",
+      label: "Other used space",
+      bytes: otherUsed,
+      widthPct: (otherUsed / total) * 100,
+      colorVar: null,
+      fillClass: "bg-border-strong",
+    });
+  }
+  if (total > 0) {
+    segments.push({
+      key: "free",
+      label: "Available",
+      bytes: free,
+      widthPct: null,
+      colorVar: null,
+    });
+  }
+
+  const segmentWidth = (segment: StripSegment) =>
+    segment.widthPct === null ? undefined : mounted ? `${segment.widthPct}%` : "0%";
+
   return (
     <div>
-      <div
-        className="flex h-7 w-full overflow-hidden rounded-md bg-panel-raised"
-        role="img"
-        aria-label="Disk usage by category"
-      >
-        {rows.map((row) => {
-          const width = total > 0 ? (row.bytes / total) * 100 : 0;
-          if (width <= 0) return null;
-          const recoverableWidth = row.bytes > 0 ? (row.recoverable / row.bytes) * 100 : 0;
-          return (
-            <div
-              key={row.category}
-              className="relative h-full shrink-0"
-              style={{ width: `${width}%`, background: categoryMeta(row.category).colorVar }}
-              title={`${categoryMeta(row.category).label}: ${formatBytes(row.bytes)}`}
-            >
-              {row.recoverable > 0 ? (
-                <div
-                  className="hatched absolute inset-y-0 right-0"
-                  style={{ width: `${recoverableWidth}%` }}
-                  title={`Likely recoverable: ${formatBytes(row.recoverable)}`}
-                />
-              ) : null}
-            </div>
-          );
-        })}
-        {otherUsed > 0 && total > 0 ? (
-          <div
-            className="h-full shrink-0 bg-border-strong"
-            style={{ width: `${(otherUsed / total) * 100}%` }}
-            title={`Other used space: ${formatBytes(otherUsed)}`}
-          />
-        ) : null}
-        {free > 0 && total > 0 ? (
-          <div className="h-full flex-1 bg-transparent" title={`Available: ${formatBytes(free)}`} />
+      <div className="relative">
+        <div
+          className="flex h-7 w-full overflow-hidden rounded-md bg-panel-raised"
+          role="img"
+          aria-label="Disk usage by category"
+        >
+          {segments.map((segment) =>
+            segment.widthPct === null ? (
+              <div key={segment.key} className="h-full min-w-0 flex-1 bg-transparent" />
+            ) : (
+              <div
+                key={segment.key}
+                className={`relative h-full shrink-0 transition-[width] duration-500 ease-out ${segment.fillClass ?? ""}`}
+                style={{
+                  width: segmentWidth(segment),
+                  background: segment.colorVar ?? undefined,
+                  boxShadow: "inset -1px 0 0 0 var(--panel)",
+                }}
+              >
+                {segment.recoverable && segment.recoverable > 0 ? (
+                  <div
+                    className="hatched absolute inset-y-0 right-0"
+                    style={{ width: `${(segment.recoverable / segment.bytes) * 100}%` }}
+                  />
+                ) : null}
+              </div>
+            ),
+          )}
+        </div>
+
+        {/* Hover layer: the product's floating-card tooltip per
+            segment (category, size, share of disk) — it lives
+            outside the clipped bar so the card is never cut off. */}
+        {total > 0 ? (
+          <div className="absolute inset-0 flex" aria-hidden="true">
+            {segments.map((segment) => (
+              <div
+                key={segment.key}
+                className={
+                  segment.widthPct === null
+                    ? "relative h-full min-w-0 flex-1"
+                    : "relative h-full shrink-0 transition-[width] duration-500 ease-out"
+                }
+                style={{ width: segmentWidth(segment) }}
+              >
+                <Tooltip
+                  side="bottom"
+                  className="h-full w-full"
+                  content={
+                    <>
+                      <span className="block font-medium">{segment.label}</span>
+                      <span className="tabular block">
+                        {formatBytes(segment.bytes)} · {formatPercent(segment.bytes / total)} of disk
+                      </span>
+                      {segment.recoverable && segment.recoverable > 0 ? (
+                        <span className="tabular block text-tier-safe">
+                          {formatBytes(segment.recoverable)} likely recoverable
+                        </span>
+                      ) : null}
+                    </>
+                  }
+                >
+                  <span className="block h-full w-full" />
+                </Tooltip>
+              </div>
+            ))}
+          </div>
         ) : null}
       </div>
 
@@ -317,67 +412,6 @@ export function DrivesList({
 
 /* ---------------- Forecast ---------------- */
 
-function HistorySparkline({ points }: { points: number[] }) {
-  const width = 240;
-  const height = 48;
-  const pad = 4;
-  const { line, area, baselineY } = useMemo(() => {
-    if (points.length === 0) return { line: "", area: "", baselineY: height - pad };
-    const min = Math.min(...points);
-    const max = Math.max(...points);
-    const span = max - min;
-    const y = (v: number) =>
-      span === 0
-        ? height / 2
-        : height - pad - ((v - min) / span) * (height - pad * 2);
-    const coords = points.map((v, i) => {
-      const x = points.length === 1 ? width / 2 : pad + (i / (points.length - 1)) * (width - pad * 2);
-      return `${x.toFixed(1)},${y(v).toFixed(1)}`;
-    });
-    const linePoints = coords.join(" ");
-    const firstX = points.length === 1 ? width / 2 : pad;
-    const lastX = points.length === 1 ? width / 2 : width - pad;
-    return {
-      line: linePoints,
-      area: `${firstX.toFixed(1)},${(height - pad).toFixed(1)} ${linePoints} ${lastX.toFixed(1)},${(height - pad).toFixed(1)}`,
-      baselineY: y(min),
-    };
-  }, [points]);
-  if (points.length === 0) return null;
-  return (
-    <svg
-      width="100%"
-      height={height}
-      viewBox={`0 0 ${width} ${height}`}
-      preserveAspectRatio="none"
-      role="img"
-      aria-label="Total scanned size across recent scans"
-      className="block w-full"
-    >
-      <polygon points={area} fill="var(--accent)" opacity={0.1} />
-      <line
-        x1={pad}
-        x2={width - pad}
-        y1={baselineY}
-        y2={baselineY}
-        stroke="var(--border-strong)"
-        strokeWidth={1}
-        strokeDasharray="3 3"
-        vectorEffect="non-scaling-stroke"
-      />
-      <polyline
-        points={line}
-        fill="none"
-        stroke="var(--accent)"
-        strokeWidth={1.5}
-        strokeLinejoin="round"
-        strokeLinecap="round"
-        vectorEffect="non-scaling-stroke"
-      />
-    </svg>
-  );
-}
-
 /**
  * Where the current growth rate leads, from the scan-history time
  * series. Renders only when the forecast fit used at least two
@@ -392,12 +426,18 @@ export function ForecastCard({
   history: ScanHistoryEntry[];
   root: string;
 }) {
-  const points = useMemo(
-    () =>
-      history
-        .filter((entry) => sameRootPath(entry.rootPath, root))
-        .sort((a, b) => a.scannedAtMs - b.scannedAtMs)
-        .map((entry) => entry.totalBytes),
+  const series = useMemo<ChartSeries[]>(
+    () => [
+      {
+        label: "Scanned size",
+        color: "var(--accent)",
+        points: buildSeries(
+          history.filter((entry) => sameRootPath(entry.rootPath, root)),
+          (entry) => ({ x: entry.scannedAtMs, y: entry.totalBytes }),
+        ),
+        formatY: formatAxisBytes,
+      },
+    ],
     [history, root],
   );
   const filling = forecast.daysUntilFull !== null && forecast.projectedFullAtMs !== null;
@@ -420,7 +460,12 @@ export function ForecastCard({
             : `Usage has been flat across the last ${forecast.pointsUsed} scans.`}
       </p>
       <div className="mt-3">
-        <HistorySparkline points={points} />
+        <Chart
+          series={series}
+          height={34}
+          mini
+          ariaLabel="Total scanned size across recent scans"
+        />
       </div>
     </div>
   );

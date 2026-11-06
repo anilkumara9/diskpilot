@@ -9,6 +9,7 @@ import {
 } from "lucide-react";
 import { useAppStore } from "@/lib/store";
 import * as api from "@/lib/api";
+import { buildSeries, formatAxisBytes } from "@/lib/chart";
 import { driveStatus, healthHeadline, type DriveStatus } from "@/lib/health";
 import { formatBytes, formatCount, formatDate, formatRelative } from "@/lib/format";
 import type {
@@ -18,6 +19,7 @@ import type {
 } from "@/lib/types";
 import { sameRootPath } from "@/features/overview/OverviewPage";
 import { PageHeader } from "@/components/layout/PageHeader";
+import { Chart, type ChartSeries } from "@/components/Chart";
 import { Button } from "@/components/ui/button";
 import { Section } from "@/components/ui/section";
 import { SkeletonRows } from "@/components/ui/skeleton";
@@ -78,66 +80,53 @@ function formatDay(timestampMs: number): string {
   return dayFormat.format(new Date(timestampMs));
 }
 
-interface ChartPoint {
-  ms: number;
-  total: number;
-  free: number | null;
-}
-
 /**
- * The scan-history time series at page scale: scanned size as the
- * accent area (the forecast sparkline's pattern, taller), free space
- * as a muted line over the same scale so the two can be compared.
- * Static SVG — no motion to reduce.
+ * The scan-history time series at page scale, drawn by the shared
+ * Chart: scanned size as the accent area, free space as a muted
+ * line over the same scale so the two can be compared. The Chart
+ * carries the axis (ticks, end dates, crosshair tooltip); the
+ * caption beneath keeps the min–max ranges it has always stated.
  */
 function GrowthChart({ entries }: { entries: ScanHistoryEntry[] }) {
-  const width = 848;
-  const height = 140;
-  const pad = 6;
-
-  const points: ChartPoint[] = useMemo(
+  const freeValues = useMemo(
     () =>
-      entries.map((entry) => ({
-        ms: entry.scannedAtMs,
-        total: entry.totalBytes,
-        free: entry.driveFreeBytes,
-      })),
+      entries
+        .map((entry) => entry.driveFreeBytes)
+        .filter((v): v is number => v !== null),
     [entries],
   );
+  const hasFree = freeValues.length > 0;
 
-  const model = useMemo(() => {
-    if (points.length === 0) return null;
-    const values = points.flatMap((p) => (p.free !== null ? [p.total, p.free] : [p.total]));
-    const min = Math.min(...values);
-    const max = Math.max(...values);
-    const span = max - min;
-    const x = (i: number) =>
-      points.length === 1 ? width / 2 : pad + (i / (points.length - 1)) * (width - pad * 2);
-    const y = (v: number) =>
-      span === 0 ? height / 2 : height - pad - ((v - min) / span) * (height - pad * 2);
-    const totalCoords = points.map((p, i) => `${x(i).toFixed(1)},${y(p.total).toFixed(1)}`);
-    const freeCoords = points
-      .map((p, i) => (p.free !== null ? `${x(i).toFixed(1)},${y(p.free).toFixed(1)}` : null))
-      .filter((c): c is string => c !== null);
-    const freeValues = points
-      .map((p) => p.free)
-      .filter((v): v is number => v !== null);
-    return {
-      area: `${x(0).toFixed(1)},${(height - pad).toFixed(1)} ${totalCoords.join(" ")} ${x(points.length - 1).toFixed(1)},${(height - pad).toFixed(1)}`,
-      totalLine: totalCoords.join(" "),
-      freeLine: freeCoords.join(" "),
-      hasFree: freeValues.length > 0,
-      baselineY: y(min),
-      minTotal: Math.min(...points.map((p) => p.total)),
-      maxTotal: Math.max(...points.map((p) => p.total)),
-      minFree: freeValues.length > 0 ? Math.min(...freeValues) : null,
-      maxFree: freeValues.length > 0 ? Math.max(...freeValues) : null,
-    };
-  }, [points]);
+  const series = useMemo<ChartSeries[]>(
+    () => [
+      {
+        label: "Scanned size",
+        color: "var(--accent)",
+        points: buildSeries(entries, (entry) => ({
+          x: entry.scannedAtMs,
+          y: entry.totalBytes,
+        })),
+        formatY: formatAxisBytes,
+      },
+      ...(hasFree
+        ? [
+            {
+              label: "Free space",
+              color: "var(--muted)",
+              points: buildSeries(entries, (entry) => ({
+                x: entry.scannedAtMs,
+                y: entry.driveFreeBytes,
+              })),
+              formatY: formatAxisBytes,
+            },
+          ]
+        : []),
+    ],
+    [entries, hasFree],
+  );
 
-  if (!model) return null;
-  const first = points[0];
-  const last = points[points.length - 1];
+  if (entries.length === 0) return null;
+  const totals = entries.map((entry) => entry.totalBytes);
 
   return (
     <div>
@@ -146,64 +135,24 @@ function GrowthChart({ entries }: { entries: ScanHistoryEntry[] }) {
           <span className="inline-block h-[3px] w-4 rounded-full bg-accent" />
           Scanned size
         </span>
-        {model.hasFree ? (
+        {hasFree ? (
           <span className="flex items-center gap-1.5">
             <span className="inline-block h-[3px] w-4 rounded-full bg-muted" />
             Free space
           </span>
         ) : null}
       </div>
-      <svg
-        width="100%"
-        height={height}
-        viewBox={`0 0 ${width} ${height}`}
-        preserveAspectRatio="none"
-        role="img"
-        aria-label="Scanned size and free space across recent scans"
-        className="block w-full"
-      >
-        <polygon points={model.area} fill="var(--accent)" opacity={0.1} />
-        <line
-          x1={pad}
-          x2={width - pad}
-          y1={model.baselineY}
-          y2={model.baselineY}
-          stroke="var(--border-strong)"
-          strokeWidth={1}
-          strokeDasharray="3 3"
-          vectorEffect="non-scaling-stroke"
-        />
-        <polyline
-          points={model.totalLine}
-          fill="none"
-          stroke="var(--accent)"
-          strokeWidth={1.5}
-          strokeLinejoin="round"
-          strokeLinecap="round"
-          vectorEffect="non-scaling-stroke"
-        />
-        {model.hasFree ? (
-          <polyline
-            points={model.freeLine}
-            fill="none"
-            stroke="var(--muted)"
-            strokeWidth={1.5}
-            strokeLinejoin="round"
-            strokeLinecap="round"
-            vectorEffect="non-scaling-stroke"
-          />
-        ) : null}
-      </svg>
-      <div className="flex items-baseline justify-between gap-4 pt-1.5 text-[11px] text-subtle">
-        <span>{formatDay(first.ms)}</span>
-        <span className="tabular">
-          Scanned size {formatBytes(model.minTotal)} to {formatBytes(model.maxTotal)}
-          {model.hasFree && model.minFree !== null && model.maxFree !== null
-            ? ` · Free space ${formatBytes(model.minFree)} to ${formatBytes(model.maxFree)}`
-            : ""}
-        </span>
-        <span>{formatDay(last.ms)}</span>
-      </div>
+      <Chart
+        series={series}
+        height={140}
+        ariaLabel="Scanned size and free space across recent scans"
+      />
+      <p className="tabular pt-1.5 text-center text-[11px] text-subtle">
+        Scanned size {formatBytes(Math.min(...totals))} to {formatBytes(Math.max(...totals))}
+        {hasFree
+          ? ` · Free space ${formatBytes(Math.min(...freeValues))} to ${formatBytes(Math.max(...freeValues))}`
+          : ""}
+      </p>
     </div>
   );
 }
