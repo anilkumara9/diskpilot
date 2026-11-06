@@ -179,15 +179,27 @@ separated from the nav by a hairline and 12 px of air.
   on the left. Icons are never positioned with magic offsets.
 - **Storage strip** — the whole disk as one horizontal bar: category
   segments, remaining used space, free space; recoverable space is
-  hatched inside its category segment. Legend items never wrap
-  mid-item.
+  hatched inside its category segment. Segments are separated by a
+  1 px inset line in the panel colour, and their widths grow in on
+  mount (500 ms; collapsed under reduced motion). Hovering a segment
+  shows the floating-card tooltip — never a `title` attribute — with
+  the category, its size and its share of the disk, plus the likely
+  recoverable part when there is one; the tooltip layer sits outside
+  the clipped bar so the card is never cut off. Legend items never
+  wrap mid-item.
 - **Figures** — one figure style everywhere: 12 px muted label, 20 px
   semibold tabular value. Overview stats, the since-last-scan deltas
   and the Docker summary cards all use it.
 - **Size bar** — the single meter implementation for the whole app:
   a proportional bar under a figure, in the row's category colour
   (accent when the row has no category). 2 px under figures, 4 px in
-  the Overview category list.
+  the Overview category list. The premium treatment lives in this one
+  component (see Charts): at 4 px and taller the fill is a gradient
+  from the full series colour to the same colour lightened (82 %
+  colour into white), over a track of the border token at half
+  strength; at 2 px the fill stays flat, where a gradient could not
+  be seen anyway. Widths grow in on mount and transition on change,
+  always with fully rounded caps.
 - **Callouts** — informational panels (notices, warnings, the
   since-last-scan summary) share one spec: 10 px radius, hairline
   border, `panel-raised` fill, 16 px horizontal and 12 px vertical
@@ -273,10 +285,10 @@ separated from the nav by a hairline and 12 px of air.
   forward: a label row, a 15 px semibold headline ("fills in about
   N days", or the flat/shrinking wording when there is no fill-up
   date), a 12 px muted explanation with the daily rate and
-  projected date — then the scan-history sparkline spanning the
-  card's full width beneath the text (~48 px tall): an accent
-  polyline (1.5 px) over a dashed `border-strong` baseline with a
-  10 % accent area fill, no axes.
+  projected date — then the shared Chart in its mini configuration
+  spanning the card's full width beneath the text: the smooth
+  accent curve over its gradient area and a single dashed
+  baseline, with the hover crosshair and tooltip on (see Charts).
 - **Biggest changes** — a callout panel inside the Since-last-scan
   section, titled "Biggest changes", holding two lists with muted
   sub-headers, "Grew most" and "Freed": name over a `mono-path`
@@ -350,11 +362,11 @@ separated from the nav by a hairline and 12 px of air.
   "Low space" (critical). **Forecast** is the Overview forecast at
   page scale — Fills in / Daily growth / Projected full as figures
   (or the flat/shrinking wording) — over the growth chart: the
-  scan-history series ~140 px tall, scanned size as the accent
-  area + polyline, free space as a muted second line on the same
-  scale, first/last dates and the min–max ranges as captions
-  beneath. Under two history points the section is the instructive
-  empty state instead. **Watch** is a definition-list panel (the
+  shared Chart at ~140 px, scanned size as the accent area + curve,
+  free space as a muted second line on the same scale, the min–max
+  ranges as a caption beneath (the Chart's own axis carries the
+  ticks and end dates). Under two history points the section is
+  the instructive empty state instead. **Watch** is a definition-list panel (the
   Scan details grid inside a hairline panel) restating the
   schedule, both alert thresholds, sign-in state and last scan,
   with an "Open Settings" action — Health reports the watch; it
@@ -383,6 +395,58 @@ separated from the nav by a hairline and 12 px of air.
   Epic — DiskPilot never removes game files. No libraries found
   is the standard medallion empty state.
 
+## Charts
+
+One chart system, bespoke SVG in this design language — no chart
+library. Geometry lives in `src/lib/chart.ts` (pure, unit-tested);
+rendering in `src/components/Chart.tsx`. Charts appear only where
+the data is a series: the Health growth chart and the Overview
+forecast. Nothing else in the app draws a line.
+
+- **Curve** — a Catmull-Rom spline through the points, converted to
+  cubic Bézier segments, stroked at 1.5 px with round caps and
+  joins. Control points are clamped into the plot box, so the curve
+  approaches the data's extremes but never overshoots them.
+- **Area** — under the primary (first) series only: a vertical
+  gradient from the series colour at 24 % opacity to transparent.
+  Later series are lines on the same scale, never filled.
+- **Axes and grid** — the y scale is bracketed by nice ticks (steps
+  of 1, 2 or 5 × 10ⁿ, about four); each tick is a horizontal
+  hairline in the border token, dashed 2 4 at 60 % opacity, with
+  its label in 11 px muted tabular figures in a reserved left
+  gutter. The first and last x values are captioned at the bottom
+  corners beneath the plot.
+- **End point** — the primary series' last point carries a filled
+  dot with a 2 px ring in the surface colour and a soft halo
+  (the series colour at 18 %), so the eye lands on "now".
+- **Crosshair and tooltip** — hovering snaps to the nearest point:
+  a vertical hairline in `border-strong`, a dot on every series,
+  and the floating-card tooltip (raised fill, `border-strong`
+  outline, deep soft shadow) with the date and each series' value
+  beside its colour dot. The card flips to the other side of the
+  crosshair near the right edge, and above/below the point near
+  the top. It leaves cleanly when the pointer does.
+- **Keyboard** — the chart is focusable; ← and → step the
+  crosshair point by point, and the chart's accessible label
+  always describes the active point ("date — label value, …").
+- **Mini configuration** — the sparkline form (Overview forecast):
+  no y-axis labels, the grid collapses to the single baseline at
+  the scale's foot, the hover crosshair and tooltip stay on.
+- **States** — a single point is a dot with a caption, never a
+  fake line; no points render nothing, and the caller's empty
+  state speaks instead.
+- **Motion** — on first mount the line draws in and the area fades
+  over ~600 ms ease-out. Under `prefers-reduced-motion` the global
+  rule collapses both to instant; nothing in a chart ever loops
+  or pulses.
+- **Bars** — meters share the premium treatment through the one
+  Size bar component (gradient fill at 4 px and taller, flat at
+  2 px, border-token track at half strength, rounded caps, width
+  transitions), and the storage strip follows the same language:
+  panel-coloured 1 px separators, grow-in widths, and the
+  floating-card tooltip per segment — see the Storage strip and
+  Size bar entries under Components.
+
 ## Motion
 
 | Transition        | Duration |
@@ -390,6 +454,8 @@ separated from the nav by a hairline and 12 px of air.
 | Hover states      | 120 ms   |
 | Expanding rows    | 180 ms   |
 | Sheets / dialogs  | 180 ms   |
+| Bar / strip grow  | 300–500 ms |
+| Chart draw-in     | 600 ms   |
 
 All durations collapse to zero under `prefers-reduced-motion`.
 
