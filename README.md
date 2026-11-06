@@ -14,6 +14,33 @@ why it is there, and only ever removes files through a reviewed cleanup
 plan that passes a strict safety gate. Nothing is deleted silently, and
 the default for everything is the Recycle Bin.
 
+## Install
+
+Grab the latest installer from
+[Releases](https://github.com/anilkumara9/diskpilot/releases):
+
+- **NSIS installer (`.exe`) — recommended.** Installs per-user into
+  your profile: no administrator rights needed to install or run.
+  (Two features — the fast NTFS scan and the live index — read the
+  drive's raw structures and engage only when *you* choose to run
+  DiskPilot as administrator; everything else works the same either
+  way.)
+- **MSI (`.msi`) — alternative.** A per-machine install for managed
+  or multi-user machines; needs administrator rights.
+
+**Windows SmartScreen:** DiskPilot is not yet signed with a
+code-signing certificate, so SmartScreen may warn the first time you
+run the installer. Choose *More info → Run anyway*. Every release
+ships a `SHA256SUMS.txt` so you can verify the installer you
+downloaded is the one that was published.
+
+**Updates:** once installed, DiskPilot checks for updates on launch
+and can download and install them itself (Settings → *About &
+updates*, or the *Update available* flag on the Settings entry).
+Update packages are cryptographically signed and verified in the app
+before anything installs — an update that fails verification is
+refused, never applied.
+
 ## Walkthrough
 
 [![DiskPilot walkthrough poster](assets/poster.png)](assets/DiskPilot-Walkthrough.mp4)
@@ -342,30 +369,30 @@ flow, [docs/DESIGN.md](docs/DESIGN.md) for the design system, and
   reporting. Everything is computed and stored on your machine; the
   optional Assistant is the only network feature.
 
-## Build & run
+## Build from source
 
 Prerequisites:
 
 - [Rust](https://rustup.rs) 1.82 or newer
-- [Node.js](https://nodejs.org) 22 and [pnpm](https://pnpm.io) 10
+- [Node.js](https://nodejs.org) 20 or newer (npm)
 - Visual Studio Build Tools with the *Desktop development with C++*
   workload (Tauri's Windows toolchain)
 - WebView2 runtime (preinstalled on Windows 11 and current Windows 10;
   the installer fetches the bootstrapper if it is missing)
 
 ```powershell
-pnpm install
-pnpm tauri dev      # run the desktop app with hot reload
-pnpm tauri build    # MSI + NSIS installers in src-tauri/target/release/bundle
+npm ci
+npm run tauri dev   # run the desktop app with hot reload
+npm run app:build   # MSI + NSIS installers in src-tauri/target/release/bundle
 ```
 
 Frontend-only development, checks, and tests:
 
 ```powershell
-pnpm dev            # frontend in a browser (shows the desktop-only state)
-pnpm lint           # eslint
-pnpm typecheck      # tsc --noEmit
-pnpm test           # vitest
+npm run dev         # frontend in a browser (shows the desktop-only state)
+npm run build       # tsc + vite
+npm run lint        # eslint
+npm run test        # vitest
 cargo fmt --all -- --check
 cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
@@ -391,6 +418,7 @@ assets/          screenshots and the system-design diagram
 
 Documentation: [Architecture](docs/ARCHITECTURE.md) ·
 [Design system](docs/DESIGN.md) · [Windows notes](docs/WINDOWS.md) ·
+[Releasing](docs/RELEASING.md) ·
 [Changelog](CHANGELOG.md) · [Security](SECURITY.md)
 
 ## Contributing
