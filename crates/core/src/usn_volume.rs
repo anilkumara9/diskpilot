@@ -342,7 +342,7 @@ mod imp {
         /// Full path of the file `record` describes: its parent's
         /// path plus its own name.
         fn resolve(&mut self, record: &UsnRecord) -> Option<String> {
-            let parent = self.dir_path(record.parent_ref)?;
+            let parent = self.dir_path(record.parent_ref_full)?;
             if parent.ends_with('\\') {
                 Some(format!("{parent}{}", record.name))
             } else {
@@ -350,16 +350,24 @@ mod imp {
             }
         }
 
-        /// Full path of the directory with the given record number.
-        fn dir_path(&mut self, number: u64) -> Option<String> {
+        /// Full path of the directory with the given FULL file
+        /// reference (reuse sequence included). The cache is keyed
+        /// by the full reference on purpose: when a record number
+        /// is recycled inside one batch (directory deleted, a new
+        /// one created at the same number with a bumped sequence),
+        /// the two incarnations must not share a cached path — the
+        /// walk itself starts from the stripped record number the
+        /// MFT is addressed by.
+        fn dir_path(&mut self, full_ref: u64) -> Option<String> {
+            let number = full_ref & 0x0000_FFFF_FFFF_FFFF;
             if number == mft::ROOT_RECORD {
                 return Some(self.prefix.to_string());
             }
-            if let Some(cached) = self.dir_cache.get(&number) {
+            if let Some(cached) = self.dir_cache.get(&full_ref) {
                 return cached.clone();
             }
             let resolved = self.walk(number);
-            self.dir_cache.insert(number, resolved.clone());
+            self.dir_cache.insert(full_ref, resolved.clone());
             resolved
         }
 

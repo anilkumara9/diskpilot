@@ -53,13 +53,22 @@ pub fn apply_changes(
     exclusions: &[String],
     changes: &[ResolvedChange],
 ) -> ApplyReport {
+    // Two entries whose paths differ only by case collide in the
+    // lower-cased positions map: one would be orphaned (its bytes
+    // unreachable by any later change, its removal unrecordable).
+    // That is an index inconsistency, not a state to mutate around
+    // — the whole batch is stale and nothing is applied.
+    let mut positions: HashMap<String, usize> = HashMap::new();
+    for (i, f) in index.files.iter().enumerate() {
+        if positions.insert(f.path.to_lowercase(), i).is_some() {
+            return ApplyReport {
+                became_stale: true,
+                ..ApplyReport::default()
+            };
+        }
+    }
     let mut applier = Applier {
-        positions: index
-            .files
-            .iter()
-            .enumerate()
-            .map(|(i, f)| (f.path.to_lowercase(), i))
-            .collect(),
+        positions,
         dir_keys: index
             .dir_sizes
             .keys()
@@ -87,6 +96,15 @@ struct Applier {
 
 impl Applier {
     fn apply_one(&mut self, index: &mut DirIndex, exclusions: &[String], change: &ResolvedChange) {
+        // A hard link added or removed rewrites which paths share
+        // one file's bytes; the record classifies as a plain
+        // modification, but no per-path delta can attribute it —
+        // stale on every platform, not just where a link-count
+        // check happens to exist.
+        if change.record.is_hard_link_change() {
+            self.report.became_stale = true;
+            return;
+        }
         // Any directory record — created, deleted, renamed, or
         // merely touched — asserts something about a subtree this
         // one record cannot describe. Never partial-apply it.
@@ -284,7 +302,12 @@ impl Applier {
 
     /// Add a signed byte delta to every ancestor directory total of
     /// `file_path`, from its parent up to and including the root.
-    fn add_delta(&self, index: &mut DirIndex, file_path: &str, delta: i64) {
+    /// A delta that would drive a total below zero (or past u64)
+    /// means the journal and the index disagree about that
+    /// directory's contents: the stored value is still clamped into
+    /// range, but the batch is marked stale — an inconsistent index
+    /// must not silently absorb the discrepancy as fact.
+    fn add_delta(&mut self, index: &mut DirIndex, file_path: &str, delta: i64) {
         if delta == 0 {
             return;
         }
@@ -292,7 +315,13 @@ impl Applier {
         while let Some(dir) = current {
             let Some(key) = self.dir_key(&dir) else { break };
             if let Some(total) = index.dir_sizes.get_mut(&key) {
-                *total = total.saturating_add_signed(delta);
+                let next = *total as i128 + delta as i128;
+                if next < 0 || next > u64::MAX as i128 {
+                    self.report.became_stale = true;
+                    *total = next.clamp(0, u64::MAX as i128) as u64;
+                } else {
+                    *total = next as u64;
+                }
             }
             if key == self.root_str {
                 break;
@@ -375,6 +404,8 @@ mod tests {
             record: UsnRecord {
                 file_ref: 100,
                 parent_ref: 5,
+                file_ref_full: 100,
+                parent_ref_full: 5,
                 usn: 0,
                 timestamp_ms: 0,
                 reason: kind_reason,
@@ -618,6 +649,65 @@ mod tests {
         );
         assert!(report.became_stale);
         assert_eq!(report.upserted, 0);
+    }
+
+    #[test]
+    fn hard_link_change_marks_stale_on_every_platform() {
+        let (_tmp, root, mut index) = fixture_index();
+        let b_path = path_to_string(&root.join("b.bin"));
+        let report = apply_changes(
+            &mut index,
+            &root,
+            &[],
+            &[change(
+                crate::usn::REASON_DATA_OVERWRITE | crate::usn::REASON_HARD_LINK_CHANGE,
+                0x20,
+                "b.bin",
+                Some(b_path),
+            )],
+        );
+        assert!(report.became_stale);
+        assert_eq!(report.removed + report.upserted, 0);
+        assert_eq!(index.files.len(), 2);
+    }
+
+    #[test]
+    fn case_colliding_entries_make_the_batch_stale() {
+        let (_tmp, root, mut index) = fixture_index();
+        // A second entry whose path differs from b.bin's only by
+        // case: the positions map cannot hold both.
+        let mut dup = index.files[1].clone();
+        dup.path = dup.path.to_uppercase();
+        index.files.push(dup);
+        let a_path = path_to_string(&root.join("sub").join("a.txt"));
+        let report = apply_changes(
+            &mut index,
+            &root,
+            &[],
+            &[change(REASON_FILE_DELETE, 0x20, "a.txt", Some(a_path))],
+        );
+        assert!(report.became_stale);
+        assert_eq!(report.removed, 0, "nothing is applied on a collision");
+        assert_eq!(index.files.len(), 3);
+    }
+
+    #[test]
+    fn negative_ancestor_total_marks_stale_instead_of_silent_clamp() {
+        let (_tmp, root, mut index) = fixture_index();
+        // Corrupt the stored sub total below its file's bytes: the
+        // delete's delta would drive it negative.
+        let sub_str = path_to_string(&root.join("sub"));
+        index.dir_sizes.insert(sub_str.clone(), 10);
+        let a_path = path_to_string(&root.join("sub").join("a.txt"));
+        let report = apply_changes(
+            &mut index,
+            &root,
+            &[],
+            &[change(REASON_FILE_DELETE, 0x20, "a.txt", Some(a_path))],
+        );
+        assert!(report.became_stale);
+        // The value is still clamped into range for display.
+        assert_eq!(index.dir_sizes[&sub_str], 0);
     }
 
     #[test]

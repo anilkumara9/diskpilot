@@ -88,6 +88,16 @@ pub struct UsnRecord {
     pub file_ref: u64,
     /// Low 48 bits of the parent directory's file reference.
     pub parent_ref: u64,
+    /// The FULL 64-bit file reference, reuse sequence included.
+    /// Two references with equal low 48 bits but different
+    /// sequences are DIFFERENT files (the record number was
+    /// recycled), so anything that caches per file — the path
+    /// resolver's directory cache above all — keys by this, never
+    /// by the stripped number.
+    pub file_ref_full: u64,
+    /// The FULL 64-bit parent reference, sequence included; the
+    /// resolver keys its directory cache by this value.
+    pub parent_ref_full: u64,
     /// The journal sequence number of this record.
     pub usn: i64,
     /// When the change was journaled, Unix epoch milliseconds
@@ -109,6 +119,14 @@ impl UsnRecord {
 
     pub fn is_directory(&self) -> bool {
         self.file_attributes & FILE_ATTRIBUTE_DIRECTORY != 0
+    }
+
+    /// A hard link was added or removed for this file. The reason
+    /// classifies as a plain modification, but for index accounting
+    /// it is structural: which paths share this file's bytes
+    /// changed, and no per-path delta can express that.
+    pub fn is_hard_link_change(&self) -> bool {
+        self.reason & REASON_HARD_LINK_CHANGE != 0
     }
 }
 
@@ -176,6 +194,8 @@ pub fn parse_usn_records(buffer: &[u8]) -> Vec<UsnRecord> {
         records.push(UsnRecord {
             file_ref: read_u64(rec, 8) & 0x0000_FFFF_FFFF_FFFF,
             parent_ref: read_u64(rec, 16) & 0x0000_FFFF_FFFF_FFFF,
+            file_ref_full: read_u64(rec, 8),
+            parent_ref_full: read_u64(rec, 16),
             usn: read_i64(rec, 24),
             timestamp_ms: crate::mft::filetime_to_unix_ms(read_u64(rec, 32)),
             reason: read_u32(rec, 40),
@@ -263,6 +283,11 @@ mod tests {
             assert_eq!(parsed[0].kind(), *want, "case {i}");
             assert_eq!(parsed[0].file_ref, 100 + i as u64, "sequence bits stripped");
             assert_eq!(parsed[0].parent_ref, 5);
+            // The full file reference keeps the reuse sequence (the
+            // fixture writes sequence 7 into its high bits; the
+            // parent is written sequence-free, so it stays 5).
+            assert_eq!(parsed[0].file_ref_full, (100 + i as u64) | (7u64 << 48));
+            assert_eq!(parsed[0].parent_ref_full, 5);
             assert_eq!(parsed[0].usn, 1000);
             assert_eq!(parsed[0].name, "file.txt");
             assert_eq!(parsed[0].timestamp_ms, 1_704_067_200_000);
