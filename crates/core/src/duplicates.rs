@@ -190,7 +190,11 @@ pub fn find_duplicates(root: &Path) -> Vec<DuplicateGroup> {
             .iter()
             .map(|p| DuplicateFile {
                 path: p.to_string_lossy().to_string(),
-                bytes: size,
+                // Display bytes are allocated (the space each copy
+                // actually occupies); `size` above stays the logical
+                // grouping key. See the byte-accounting rule in
+                // scanner/mod.rs docs.
+                bytes: crate::scanner::allocated_size_for_path(p),
                 is_hardlink: is_same_file(&first, p) && p != &first,
                 is_clone: p != &first && is_clone_candidate(&first, p),
             })
@@ -262,17 +266,23 @@ pub fn dhash_distance(a: u64, b: u64) -> u32 {
 #[serde(rename_all = "camelCase")]
 pub struct SimilarImage {
     pub path: String,
+    /// Allocated bytes on disk — the user-facing figure (see the
+    /// byte-accounting rule in scanner/mod.rs docs).
     pub bytes: u64,
     pub width: u32,
     pub height: u32,
 }
 
-/// A set of look-alike images. The keeper is the largest file; everything
-/// else is counted as wasted.
+/// A set of look-alike images. The keeper is the largest file by
+/// LOGICAL size (the pre-existing keeper rule — ordering deliberately
+/// does not change with the display accounting); `wasted_bytes` is
+/// allocated-based: the allocated bytes of every non-keeper copy.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SimilarGroup {
-    /// Files, largest first (the first entry is the keeper).
+    /// Files, largest first by logical size (the first entry is the
+    /// keeper). Displayed `bytes` are allocated, so adjacent rows can
+    /// occasionally appear out of order by a block or two.
     pub files: Vec<SimilarImage>,
     pub wasted_bytes: u64,
 }
@@ -297,7 +307,11 @@ pub fn find_similar_images(root: &Path) -> Vec<SimilarGroup> {
         .into_iter()
         .filter(|p| is_image_path(p))
         .collect();
-    let hashed: Vec<(SimilarImage, u64)> = candidates
+    // Each candidate carries its LOGICAL length alongside the display
+    // record: the keeper rule (largest first) is defined on logical
+    // size and must not change, while `SimilarImage::bytes` is the
+    // allocated display figure.
+    let hashed: Vec<(SimilarImage, u64, u64)> = candidates
         .into_par_iter()
         .filter_map(|path| {
             let hash = dhash(&path)?;
@@ -312,10 +326,11 @@ pub fn find_similar_images(root: &Path) -> Vec<SimilarGroup> {
             Some((
                 SimilarImage {
                     path: path.to_string_lossy().to_string(),
-                    bytes: md.len(),
+                    bytes: crate::scanner::allocated_size_for_path(&path),
                     width,
                     height,
                 },
+                md.len(),
                 hash,
             ))
         })
@@ -333,7 +348,7 @@ pub fn find_similar_images(root: &Path) -> Vec<SimilarGroup> {
     }
     for i in 0..n {
         for j in i + 1..n {
-            if dhash_distance(hashed[i].1, hashed[j].1) <= SIMILARITY_THRESHOLD {
+            if dhash_distance(hashed[i].2, hashed[j].2) <= SIMILARITY_THRESHOLD {
                 let (a, b) = (find(&mut parent, i), find(&mut parent, j));
                 if a != b {
                     parent[a] = b;
@@ -341,20 +356,23 @@ pub fn find_similar_images(root: &Path) -> Vec<SimilarGroup> {
             }
         }
     }
-    let mut components: HashMap<usize, Vec<SimilarImage>> = HashMap::new();
-    for (i, (img, _)) in hashed.into_iter().enumerate() {
+    let mut components: HashMap<usize, Vec<(SimilarImage, u64)>> = HashMap::new();
+    for (i, (img, logical, _)) in hashed.into_iter().enumerate() {
         let root_idx = find(&mut parent, i);
-        components.entry(root_idx).or_default().push(img);
+        components.entry(root_idx).or_default().push((img, logical));
     }
     let mut groups: Vec<SimilarGroup> = components
         .into_values()
         .filter(|files| files.len() >= 2)
         .map(|mut files| {
-            files.sort_by_key(|f| std::cmp::Reverse(f.bytes));
-            let total: u64 = files.iter().map(|f| f.bytes).sum();
-            let largest = files.first().map(|f| f.bytes).unwrap_or(0);
+            // Keeper rule unchanged: largest LOGICAL file first.
+            files.sort_by_key(|(_, logical)| std::cmp::Reverse(*logical));
+            let files: Vec<SimilarImage> = files.into_iter().map(|(img, _)| img).collect();
+            // Wasted is allocated-based: every non-keeper copy's
+            // allocated bytes (files[0] is the keeper).
+            let wasted_bytes: u64 = files.iter().skip(1).map(|f| f.bytes).sum();
             SimilarGroup {
-                wasted_bytes: total - largest,
+                wasted_bytes,
                 files,
             }
         })

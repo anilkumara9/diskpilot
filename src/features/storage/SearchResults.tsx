@@ -135,7 +135,7 @@ export function SearchResults({
           description="Nothing in the scanned folder matches all of those filters. Remove a filter above to widen the search, or try different words."
         />
       ) : (
-        <div className="min-h-0 flex-1 overflow-y-auto rounded-[10px] border border-border">
+        <div className="min-h-0 overflow-y-auto rounded-[10px] border border-border">
           <ul className="divide-y divide-border/60 px-3">
             {search.hits.map((hit) => (
               <li key={hit.path} className="flex items-center gap-3 py-2">

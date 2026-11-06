@@ -216,7 +216,9 @@ pub fn scan_provenance(dir: &Path) -> Vec<ProvenanceGroup> {
                 source,
                 ProvenanceFile {
                     path: path.to_string_lossy().to_string(),
-                    bytes: md.len(),
+                    // Allocated bytes, like every user-facing figure (see
+                    // the byte-accounting rule in scanner/mod.rs docs).
+                    bytes: crate::scanner::allocated_size_for_path(&path),
                     modified_ms: mtime_ms(&md),
                 },
             ))
@@ -268,7 +270,9 @@ pub fn recent_downloads(dir: &Path, limit: usize) -> Vec<RecentFile> {
                 name: entry.file_name().to_string_lossy().to_string(),
                 source: download_source(&path),
                 path: path.to_string_lossy().to_string(),
-                bytes: md.len(),
+                // Allocated bytes, like every user-facing figure (see
+                // the byte-accounting rule in scanner/mod.rs docs).
+                bytes: crate::scanner::allocated_size_for_path(&path),
                 modified_ms: mtime_ms(&md),
             })
         })
@@ -363,5 +367,68 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(dir.path().join("plain.txt"), b"data").unwrap();
         assert!(scan_provenance(dir.path()).is_empty());
+    }
+
+    /// Byte-accounting regression: a small file must report its
+    /// ALLOCATED bytes (the scanner helper's value) — not its logical
+    /// length — on every surface that displays a size: Downloads
+    /// recents, exact-duplicate rows + wasted math, and look-alike
+    /// rows + wasted math. Expected values always come from
+    /// `allocated_size_for_path`, never from hard-coded block sizes, so
+    /// the test is portable across filesystems.
+    #[test]
+    fn small_file_reports_allocated_bytes_on_every_surface() {
+        use crate::duplicates::{find_duplicates, find_similar_images};
+        use crate::scanner::allocated_size_for_path;
+
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        // Two identical tiny PNGs (logical size is a few hundred bytes)
+        // plus one small text file.
+        let img: image::ImageBuffer<image::Rgba<u8>, Vec<u8>> =
+            image::ImageBuffer::from_fn(8, 8, |_, _| image::Rgba([120, 30, 200, 255]));
+        img.save(root.join("a.png")).unwrap();
+        img.save(root.join("b.png")).unwrap();
+        std::fs::write(root.join("notes.txt"), vec![b'x'; 200]).unwrap();
+
+        let alloc_a = allocated_size_for_path(&root.join("a.png"));
+        let alloc_b = allocated_size_for_path(&root.join("b.png"));
+        let alloc_txt = allocated_size_for_path(&root.join("notes.txt"));
+        let logical_txt = std::fs::metadata(root.join("notes.txt")).unwrap().len();
+        assert_eq!(alloc_a, alloc_b, "identical copies allocate alike");
+        if alloc_txt > logical_txt {
+            // The normal case on a block filesystem — the whole point
+            // of the rule (a 200-byte file really occupies a block).
+            assert!(alloc_txt > logical_txt);
+        }
+
+        // Surface 1: Downloads recents.
+        let recent = recent_downloads(root, 10);
+        let txt = recent.iter().find(|f| f.name == "notes.txt").unwrap();
+        assert_eq!(txt.bytes, alloc_txt, "recents must show allocated bytes");
+        let png = recent.iter().find(|f| f.name == "a.png").unwrap();
+        assert_eq!(png.bytes, alloc_a, "recents must show allocated bytes");
+
+        // Surface 2: exact duplicates — per-file bytes and wasted math.
+        let groups = find_duplicates(root);
+        assert_eq!(groups.len(), 1);
+        let group = &groups[0];
+        assert!(group.files.iter().all(|f| f.bytes == alloc_a));
+        assert_eq!(
+            group.wasted_bytes(),
+            alloc_a,
+            "wasted = the removed copy's allocated bytes"
+        );
+
+        // Surface 3: look-alike images — per-file bytes and wasted math.
+        let similar = find_similar_images(root);
+        assert_eq!(similar.len(), 1);
+        let group = &similar[0];
+        assert_eq!(group.files.len(), 2);
+        assert!(group.files.iter().all(|f| f.bytes == alloc_a));
+        assert_eq!(
+            group.wasted_bytes, alloc_a,
+            "wasted = sum of allocated minus the keeper's allocated"
+        );
     }
 }

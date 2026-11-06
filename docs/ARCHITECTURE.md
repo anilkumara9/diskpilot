@@ -51,6 +51,16 @@ largest files, heavy folders, and lists of errors and skipped folders
 (nothing is silently dropped — unmeasurable folders surface on the
 Overview).
 
+**Byte accounting.** Every user-facing byte figure in the product is
+*allocated* bytes on disk — the space a file actually occupies and the
+space a cleanup actually frees. The scanner's `allocated_size` helpers
+are the single measuring point, and the index, search hits, cleanup
+cards, download provenance, duplicate per-file sizes and wasted totals,
+and cleanup results all report allocated bytes, so the same file shows
+the same size on every page. Logical file length is used only where it
+is a correctness input (duplicate size-grouping and hash staging) and
+is never displayed.
+
 ### Classifier (`classifier`)
 
 A pure function from paths (and tree position) to a `Classification`:

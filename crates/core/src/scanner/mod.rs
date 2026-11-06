@@ -1,6 +1,16 @@
 //! Parallel read-only scanner.
 //! Never follows symlinks, junctions or reparse points; never crosses into a
 //! different volume; counts each hard link once; reports allocated size.
+//!
+//! BYTE-ACCOUNTING RULE (product-wide): every user-facing byte figure is
+//! ALLOCATED bytes on disk — the space a file actually occupies and the
+//! space a cleanup actually frees — measured by [`allocated_size`] /
+//! [`allocated_size_for_path`] in this module. The scan index, search
+//! hits, cleanup cards, download provenance, duplicate displays (per-file
+//! bytes and wasted totals) and reclaimed-byte results all follow it, so
+//! the same file shows the same size on every page. Logical length
+//! (`Metadata::len`) is used ONLY where it is a correctness input —
+//! duplicate size-grouping and hash staging — and never displayed.
 
 use crate::classifier::{self, rules::RuleScope};
 use crate::model::*;

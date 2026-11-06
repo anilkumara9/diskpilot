@@ -270,6 +270,9 @@ pub struct HistoryEntry {
 #[serde(rename_all = "camelCase")]
 pub struct DuplicateFile {
     pub path: String,
+    /// Allocated bytes on disk — the user-facing figure (see the
+    /// byte-accounting rule in scanner/mod.rs docs). Copies of one file
+    /// can legitimately differ here (compression, sparse blocks).
     pub bytes: u64,
     pub is_clone: bool,
     pub is_hardlink: bool,
@@ -278,17 +281,25 @@ pub struct DuplicateFile {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DuplicateGroup {
+    /// Logical size shared by every copy. This is the grouping key (an
+    /// internal correctness input), NOT a display figure — displayed
+    /// per-file sizes are the allocated `DuplicateFile::bytes`.
     pub size: u64,
     pub hash: String,
     pub files: Vec<DuplicateFile>,
 }
 impl DuplicateGroup {
+    /// Space freed by removing every copy except the keeper. The keeper
+    /// is the first file (the same default the UI pre-selects). The
+    /// figure is allocated-based: each removed copy contributes its
+    /// allocated bytes, except hard links to the keeper, which free
+    /// nothing because the inode survives with the keeper.
     pub fn wasted_bytes(&self) -> u64 {
-        if self.files.len() <= 1 {
-            0
-        } else {
-            self.size * (self.files.len() as u64 - 1)
-        }
+        self.files
+            .iter()
+            .skip(1)
+            .map(|f| if f.is_hardlink { 0 } else { f.bytes })
+            .sum()
     }
 }
 

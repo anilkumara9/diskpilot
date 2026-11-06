@@ -29,6 +29,29 @@ interface ReviewGroup {
   bytes: number;
 }
 
+/**
+ * Allocated bytes freed by removing every copy except the keeper —
+ * mirrors the core rule (`DuplicateGroup::wasted_bytes`): per-file
+ * figures are allocated bytes, and copies that share the first file's
+ * inode (its hard links) free nothing while any member of that inode
+ * set stays. The shared inode counts once, and only when every member
+ * is being removed (the keeper always stays, so that requires the
+ * keeper to be a different file).
+ */
+export function groupWastedBytes(group: DuplicateGroup, keeperPath: string | undefined): number {
+  const keeper = keeperPath ?? group.files[0]?.path;
+  const inodeSet = group.files.filter((f, i) => i === 0 || f.isHardlink);
+  const inodeRemoved = inodeSet.filter((f) => f.path !== keeper);
+  const inodeFreed =
+    inodeSet.length > 0 && inodeRemoved.length === inodeSet.length
+      ? (inodeSet[0]?.bytes ?? 0)
+      : 0;
+  const rest = group.files
+    .filter((f, i) => i !== 0 && !f.isHardlink && f.path !== keeper)
+    .reduce((acc, f) => acc + f.bytes, 0);
+  return inodeFreed + rest;
+}
+
 export type DuplicatesMode = "exact" | "similar";
 
 /** Segmented control switching the exact-copies and look-alikes
@@ -123,8 +146,12 @@ function ExactDuplicatesView({
   }, []);
 
   const wastedTotal = useMemo(
-    () => (groups ?? []).reduce((acc, g) => acc + g.size * Math.max(0, g.files.length - 1), 0),
-    [groups],
+    () =>
+      (groups ?? []).reduce(
+        (acc, g) => acc + groupWastedBytes(g, keepers[g.hash] ?? g.files[0]?.path),
+        0,
+      ),
+    [groups, keepers],
   );
 
   const selectedBytes = useMemo(() => {
@@ -147,7 +174,10 @@ function ExactDuplicatesView({
         group,
         keeper: keepers[group.hash] ?? group.files[0]?.path ?? "",
         paths,
-        bytes: paths.length * group.size,
+        bytes: paths.reduce(
+          (acc, p) => acc + (group.files.find((f) => f.path === p)?.bytes ?? 0),
+          0,
+        ),
       });
     }
     return out;
@@ -278,11 +308,11 @@ function ExactDuplicatesView({
             </p>
             {groups.map((group) => {
               const keeper = keepers[group.hash] ?? group.files[0]?.path;
-              const wasted = group.size * Math.max(0, group.files.length - 1);
+              const wasted = groupWastedBytes(group, keeper);
               return (
                 <Section
                   key={group.hash}
-                  title={`${formatBytes(group.size)} each · ${group.files.length} copies`}
+                  title={`${group.files.length} identical copies`}
                   description={`SHA-256 ${group.hash.slice(0, 16)}… · ${formatBytes(wasted)} wasted`}
                 >
                   <ul className="divide-y divide-border rounded-[10px] border border-border px-3">
