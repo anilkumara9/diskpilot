@@ -76,7 +76,11 @@ function StatusBanner() {
   if (!shown) return null;
 
   const Icon =
-    shown.kind === "error" ? AlertTriangle : shown.kind === "success" ? CheckCircle2 : Info;
+    shown.kind === "error" || shown.kind === "warning"
+      ? AlertTriangle
+      : shown.kind === "success"
+        ? CheckCircle2
+        : Info;
 
   return (
     <div
@@ -87,9 +91,11 @@ function StatusBanner() {
         className={
           shown.kind === "error"
             ? "size-4 shrink-0 text-critical"
-            : shown.kind === "success"
-              ? "size-4 shrink-0 text-tier-safe"
-              : "size-4 shrink-0 text-accent"
+            : shown.kind === "warning"
+              ? "size-4 shrink-0 text-tier-review"
+              : shown.kind === "success"
+                ? "size-4 shrink-0 text-tier-safe"
+                : "size-4 shrink-0 text-accent"
         }
         aria-hidden="true"
       />

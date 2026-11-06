@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import type {
   AppSettings,
+  AssistantMessage,
   CandidateGroup,
   DiskInfo,
   DuplicatesMode,
@@ -30,7 +31,10 @@ const DEFAULT_SETTINGS: AppSettings = {
   liveIndex: true,
 };
 
-export type StatusBannerState = { kind: "error" | "info" | "success"; message: string } | null;
+export type StatusBannerState = {
+  kind: "error" | "warning" | "info" | "success";
+  message: string;
+} | null;
 
 interface AppState {
   page: PageId;
@@ -54,8 +58,16 @@ interface AppState {
   recommendations: Recommendation[];
   cleanupCards: CandidateGroup[];
   banner: StatusBannerState;
+  /** Message from the most recent failed settings save, cleared by
+      the next successful one. Settings renders it inline: a change
+      the shell could not persist must never look saved. */
+  settingsSaveError: string | null;
   recycleBinOpen: boolean;
   highlightedRecommendationIds: string[];
+  /** The assistant conversation. In the store (not page-local) so
+      navigating away and back keeps the thread — the page unmounts
+      on navigation, the conversation must not. */
+  assistantMessages: AssistantMessage[];
   /** Which Duplicates view shows. In the store (not page-local) so
       other pages can deep-link — Media sends readers to the
       look-alike photos view. */
@@ -68,10 +80,15 @@ interface AppState {
   refreshRecommendations: () => Promise<void>;
   refreshComparison: () => Promise<void>;
   refreshDisk: () => Promise<void>;
-  updateSettings: (patch: Partial<AppSettings>) => Promise<void>;
+  /** Applies a settings patch optimistically and persists it.
+      Resolves `true` when the shell saved it; on failure resolves
+      `false` and records `settingsSaveError` so the caller can
+      surface it instead of proceeding as if the change stuck. */
+  updateSettings: (patch: Partial<AppSettings>) => Promise<boolean>;
   setBanner: (banner: StatusBannerState) => void;
   setRecycleBinOpen: (open: boolean) => void;
   setHighlighted: (ids: string[]) => void;
+  setAssistantMessages: (messages: AssistantMessage[]) => void;
   setDuplicatesMode: (mode: DuplicatesMode) => void;
   handleTrayNavigate: (target: PageId | "emptyRecycleBin") => void;
   applyScanProgress: (p: ScanProgress) => void;
@@ -96,8 +113,10 @@ export const useAppStore = create<AppState>((set, get) => ({
   recommendations: [],
   cleanupCards: [],
   banner: null,
+  settingsSaveError: null,
   recycleBinOpen: false,
   highlightedRecommendationIds: [],
+  assistantMessages: [],
   duplicatesMode: "exact",
 
   init: async () => {
@@ -167,22 +186,35 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   refreshRecommendations: async () => {
     // Cards derive from the same stored scan as the recommendations,
-    // so the two always refresh together.
-    const [recommendations, cleanupCards] = await Promise.all([
-      api.getRecommendations(),
-      api.getCleanupCards(),
-    ]);
-    set({ recommendations, cleanupCards });
+    // so the two always refresh together. A failed background refresh
+    // keeps the last good data; the next scan or page load retries.
+    try {
+      const [recommendations, cleanupCards] = await Promise.all([
+        api.getRecommendations(),
+        api.getCleanupCards(),
+      ]);
+      set({ recommendations, cleanupCards });
+    } catch {
+      /* keep the previous recommendations */
+    }
   },
 
   refreshComparison: async () => {
-    const comparison = await api.getScanComparison();
-    set({ comparison });
+    try {
+      const comparison = await api.getScanComparison();
+      set({ comparison });
+    } catch {
+      /* keep the previous comparison */
+    }
   },
 
   refreshDisk: async () => {
-    const disk = await api.getDiskInfo(get().settings.scanRoot || undefined);
-    if (disk) set({ disk });
+    try {
+      const disk = await api.getDiskInfo(get().settings.scanRoot || undefined);
+      if (disk) set({ disk });
+    } catch {
+      /* keep the previous disk figures */
+    }
   },
 
   updateSettings: async (patch) => {
@@ -191,14 +223,21 @@ export const useAppStore = create<AppState>((set, get) => ({
     if (patch.theme) applyTheme(next.theme);
     try {
       await api.saveSettings(next);
-    } catch {
-      /* settings persist on next successful save */
+      set({ settingsSaveError: null });
+      return true;
+    } catch (err) {
+      set({
+        settingsSaveError:
+          err instanceof Error ? err.message : "Settings could not be saved.",
+      });
+      return false;
     }
   },
 
   setBanner: (banner) => set({ banner }),
   setRecycleBinOpen: (open) => set({ recycleBinOpen: open }),
   setHighlighted: (ids) => set({ highlightedRecommendationIds: ids }),
+  setAssistantMessages: (messages) => set({ assistantMessages: messages }),
   setDuplicatesMode: (mode) => set({ duplicatesMode: mode }),
 
   handleTrayNavigate: (target) => {

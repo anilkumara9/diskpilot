@@ -74,7 +74,12 @@ export function AssistantPage() {
   const navigate = useAppStore((s) => s.navigate);
   const setHighlighted = useAppStore((s) => s.setHighlighted);
   const recommendations = useAppStore((s) => s.recommendations);
-  const [messages, setMessages] = useState<AssistantMessage[]>([]);
+  /* The conversation lives in the store: this page unmounts on
+     navigation, and the thread (with its highlights) must survive
+     the trip to Cleanup and back. Only the draft and the send
+     state are page-local. */
+  const messages = useAppStore((s) => s.assistantMessages);
+  const setMessages = useAppStore((s) => s.setAssistantMessages);
   const [draft, setDraft] = useState("");
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
