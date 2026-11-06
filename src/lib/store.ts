@@ -27,6 +27,10 @@ import {
   restartToApplyUpdate,
   type UpdateState,
 } from "./updater";
+import {
+  readSidebarCollapsedMirror,
+  removeSidebarCollapsedMirror,
+} from "./settings";
 
 const DEFAULT_SETTINGS: AppSettings = {
   scanRoot: "",
@@ -46,33 +50,6 @@ const DEFAULT_SETTINGS: AppSettings = {
   lastMaintenanceMs: null,
   sidebarCollapsed: false,
 };
-
-/**
- * The shell's settings struct does not (yet) carry
- * `sidebarCollapsed`, so a save through the shell would drop the
- * field. Until it does, the preference is mirrored to
- * localStorage and the mirror wins at startup — the setting
- * rides the normal settings flow in the app and genuinely
- * persists across restarts.
- */
-const SIDEBAR_COLLAPSED_KEY = "diskpilot.sidebarCollapsed.v1";
-
-function readSidebarCollapsedMirror(): boolean | null {
-  try {
-    const value = window.localStorage.getItem(SIDEBAR_COLLAPSED_KEY);
-    return value === null ? null : value === "1";
-  } catch {
-    return null;
-  }
-}
-
-function writeSidebarCollapsedMirror(collapsed: boolean): void {
-  try {
-    window.localStorage.setItem(SIDEBAR_COLLAPSED_KEY, collapsed ? "1" : "0");
-  } catch {
-    /* the in-session setting still applies */
-  }
-}
 
 export type StatusBannerState = {
   kind: "error" | "warning" | "info" | "success";
@@ -198,13 +175,24 @@ export const useAppStore = create<AppState>((set, get) => ({
         scanRoot:
           savedSettings?.scanRoot || env?.homeDir || "",
       };
-      /* The shell does not return `sidebarCollapsed` (its struct
-         predates the field); the local mirror is the durable
-         copy and wins when present. */
-      const collapsedMirror = readSidebarCollapsedMirror();
-      if (collapsedMirror !== null) settings.sidebarCollapsed = collapsedMirror;
       set({ env, settings, settingsLoaded: savedSettings !== null });
       applyTheme(settings.theme);
+
+      /* One-time migration: early builds mirrored the collapsed
+         preference to localStorage because the shell's settings
+         struct dropped the field on save. The shell now carries
+         it natively, so a surviving mirror value is folded in
+         through the normal update path (which persists it to
+         settings.json) and the key is removed either way —
+         settings are the only store from here on. */
+      const collapsedMirror = readSidebarCollapsedMirror();
+      if (collapsedMirror !== null) {
+        try {
+          await get().updateSettings({ sidebarCollapsed: collapsedMirror });
+        } finally {
+          removeSidebarCollapsedMirror();
+        }
+      }
 
       const [disk, summary, recommendations, cleanupCards, comparison] = await Promise.all([
         api.getDiskInfo(settings.scanRoot || undefined),
@@ -360,9 +348,6 @@ export const useAppStore = create<AppState>((set, get) => ({
   },
 
   updateSettings: async (patch) => {
-    if (patch.sidebarCollapsed !== undefined) {
-      writeSidebarCollapsedMirror(patch.sidebarCollapsed);
-    }
     const next = { ...get().settings, ...patch };
     set({ settings: next });
     if (patch.theme) applyTheme(next.theme);

@@ -202,10 +202,10 @@ its accessible name and gains a tooltip; group headings become
 16 px of air. Badges become a 6 px accent dot on the icon, and the
 drive-health row becomes the dot alone, centred — still a button
 to Health with the full summary as its name. The mode persists in
-`settings.sidebarCollapsed` (default expanded), mirrored to a
-versioned localStorage key because the shell's settings struct
-predates the field and would drop it on save; the mirror wins at
-startup until the shell carries the field natively. The Quick
+`settings.sidebarCollapsed` (default expanded), which the shell's
+settings struct carries natively; a localStorage mirror used by
+early builds (whose shell dropped the field on save) is migrated
+into settings once at startup and the key removed. The Quick
 Search window has no sidebar and is unaffected.
 
 ## Components
