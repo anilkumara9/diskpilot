@@ -23,6 +23,7 @@ pub mod history;
 pub mod media;
 pub mod media_meta;
 pub mod model;
+pub mod ocr;
 pub mod privacy;
 pub mod provenance;
 pub mod recommend;

@@ -141,6 +141,14 @@ pub struct FileEntry {
     /// snapshots written before this field existed loadable.
     #[serde(default)]
     pub modified_ms: i64,
+    /// Text recognized in this file's pixels by the shell's OCR pass
+    /// (images and screenshots only; Windows' on-device engine). The
+    /// scanner never sets it — the shell fills it in after a scan,
+    /// from its OCR cache or a live pass. File search matches terms
+    /// against it (see `search`). `serde(default)` keeps serialized
+    /// entries written before this field existed loadable.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ocr_text: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

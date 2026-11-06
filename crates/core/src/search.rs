@@ -31,6 +31,13 @@
 //! canonical order: Kind, Size, Date, Source, then one Terms chip with
 //! each term quoted (`"annual" "report"`).
 //!
+//! **Terms also match recognized text:** a term matches a file when
+//! the name contains it OR the file's OCR text (`FileEntry::ocr_text`,
+//! filled in by the shell's OCR pass for images and screenshots)
+//! contains it — same case-insensitive substring semantics. A hit
+//! whose term matched only in the text is flagged
+//! [`SearchHit::matched_in_text`] so the UI can say why it matched.
+//!
 //! **Source-filter split:** [`run_search`] applies kinds/size/date/terms
 //! from the index only. The `source` filter is deliberately *not* applied
 //! here — provenance lives in an alternate data stream per file, so the
@@ -101,6 +108,13 @@ pub struct SearchHit {
     pub bytes: u64,
     pub category: Category,
     pub modified_ms: i64,
+    /// True when at least one query term matched only inside the
+    /// file's recognized text (`FileEntry::ocr_text`) — the name
+    /// itself does not contain it. Lets the UI badge "found in the
+    /// picture's text" instead of leaving the hit looking arbitrary.
+    /// `serde(default)` keeps older payloads loadable.
+    #[serde(default)]
+    pub matched_in_text: bool,
 }
 
 const DAY_MS: i64 = 86_400_000;
@@ -492,51 +506,69 @@ pub fn parse_query(query: &str, now_ms: i64) -> ParsedQuery {
 /// Apply filters to the scan index. The `source` filter is NOT applied
 /// here (see the module docs for the split); use
 /// [`source_matches`] on the hits with per-file provenance instead.
+/// How one file fares against the query terms: `None` when any
+/// term matches neither the name nor the recognized text (the file
+/// is out), otherwise whether at least one term matched ONLY in
+/// the recognized text (the `matchedInText` flag).
+fn term_match(f: &crate::model::FileEntry, terms: &[String]) -> Option<bool> {
+    if terms.is_empty() {
+        return Some(false);
+    }
+    let name = f.name.to_lowercase();
+    let ocr = f.ocr_text.as_ref().map(|t| t.to_lowercase());
+    let mut only_in_text = false;
+    for term in terms {
+        if name.contains(term.as_str()) {
+            continue;
+        }
+        match &ocr {
+            Some(text) if text.contains(term.as_str()) => only_in_text = true,
+            _ => return None,
+        }
+    }
+    Some(only_in_text)
+}
+
 pub fn run_search(index: &DirIndex, filters: &SearchFilters) -> Vec<SearchHit> {
     let mut hits: Vec<SearchHit> = index
         .files
         .iter()
-        .filter(|f| {
+        .filter_map(|f| {
             if !filters.kinds.is_empty() {
                 let ids = kind_ids_for(&f.name, &f.path);
                 if !filters.kinds.iter().any(|k| ids.contains(&k.as_str())) {
-                    return false;
+                    return None;
                 }
             }
             if let Some(min) = filters.min_bytes {
                 if f.bytes <= min {
-                    return false;
+                    return None;
                 }
             }
             if let Some(max) = filters.max_bytes {
                 if f.bytes >= max {
-                    return false;
+                    return None;
                 }
             }
             if let Some(after) = filters.modified_after_ms {
                 if f.modified_ms < after {
-                    return false;
+                    return None;
                 }
             }
             if let Some(before) = filters.modified_before_ms {
                 if f.modified_ms >= before {
-                    return false;
+                    return None;
                 }
             }
-            if !filters.terms.is_empty() {
-                let name = f.name.to_lowercase();
-                if !filters.terms.iter().all(|t| name.contains(t.as_str())) {
-                    return false;
-                }
-            }
-            true
-        })
-        .map(|f| SearchHit {
-            path: f.path.clone(),
-            name: f.name.clone(),
-            bytes: f.bytes,
-            category: f.category,
-            modified_ms: f.modified_ms,
+            let matched_in_text = term_match(f, &filters.terms)?;
+            Some(SearchHit {
+                path: f.path.clone(),
+                name: f.name.clone(),
+                bytes: f.bytes,
+                category: f.category,
+                modified_ms: f.modified_ms,
+                matched_in_text,
+            })
         })
         .collect();
     hits.sort_by(|a, b| {
@@ -703,6 +735,7 @@ mod tests {
             bytes,
             category: Category::Unknown,
             modified_ms,
+            ocr_text: None,
         };
         DirIndex {
             files: vec![
@@ -743,6 +776,52 @@ mod tests {
         // Source filter is not applied by run_search.
         let hits = run_search(&index, &parse_query("pdfs from gmail", NOW).filters);
         assert_eq!(hits.len(), 2);
+    }
+
+    #[test]
+    fn terms_match_ocr_text_and_flag_text_only_hits() {
+        let mut index = fixture_index();
+        // The screenshot gains recognized text naming an invoice the
+        // file name knows nothing about.
+        let shot = index
+            .files
+            .iter_mut()
+            .find(|f| f.name == "Screenshot 2023.png")
+            .unwrap();
+        shot.ocr_text = Some("Invoice 1042 — total due $59.00".to_string());
+
+        // A term that appears only in the OCR text finds the file,
+        // flagged as a text match.
+        let hits = run_search(&index, &parse_query("invoice", NOW).filters);
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].name, "Screenshot 2023.png");
+        assert!(hits[0].matched_in_text);
+
+        // Case-insensitive, like name matching.
+        let hits = run_search(&index, &parse_query("INVOICE", NOW).filters);
+        assert_eq!(hits.len(), 1);
+        assert!(hits[0].matched_in_text);
+
+        // A name match is not a text match, even with OCR text set.
+        let hits = run_search(&index, &parse_query("screenshot", NOW).filters);
+        assert_eq!(hits.len(), 1);
+        assert!(!hits[0].matched_in_text);
+
+        // Mixed: one term in the name, one only in the text → the
+        // hit still counts as found-in-text.
+        let hits = run_search(&index, &parse_query("screenshot invoice", NOW).filters);
+        assert_eq!(hits.len(), 1);
+        assert!(hits[0].matched_in_text);
+
+        // Every term must match somewhere: a term in neither place
+        // excludes the file.
+        let hits = run_search(&index, &parse_query("invoice missing", NOW).filters);
+        assert!(hits.is_empty());
+
+        // Files without OCR text keep the old behavior exactly.
+        let hits = run_search(&index, &parse_query("report", NOW).filters);
+        assert_eq!(hits.len(), 1);
+        assert!(!hits[0].matched_in_text);
     }
 
     #[test]

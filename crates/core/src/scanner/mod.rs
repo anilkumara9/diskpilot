@@ -345,6 +345,7 @@ impl Scanner {
                     bytes: counted,
                     category: class.category,
                     modified_ms: mtime_ms(&md),
+                    ocr_text: None,
                 };
                 index.files.push(entry);
                 children.push(IndexChild {

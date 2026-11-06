@@ -219,6 +219,7 @@ mod tests {
             bytes,
             category,
             modified_ms: NOW - age_days * DAY_MS,
+            ocr_text: None,
         }
     }
 

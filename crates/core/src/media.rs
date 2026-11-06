@@ -116,6 +116,7 @@ mod tests {
             bytes,
             category: Category::UserData,
             modified_ms: 1_700_000_000_000,
+            ocr_text: None,
         }
     }
 
