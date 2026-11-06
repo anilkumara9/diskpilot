@@ -9,6 +9,7 @@ import type {
   CleanupPlan,
   CleanupResult,
   CloudStatus,
+  CompressionCandidate,
   DirectoryEntry,
   DiskInfo,
   DockerActionRequest,
@@ -19,6 +20,8 @@ import type {
   DuplicateGroup,
   EmptyRecycleBinProgress,
   EnvironmentInfo,
+  ExtensionStat,
+  FileEntry,
   FreeUpResult,
   GamesReport,
   HistoryEntry,
@@ -38,6 +41,8 @@ import type {
   SearchHitsResponse,
   SearchResponse,
   SecretFinding,
+  SetCompressionResult,
+  StartupItem,
   SimilarGroup,
   SpaceForecast,
   ToolReport,
@@ -404,6 +409,69 @@ export async function getSettings(): Promise<AppSettings | null> {
 export async function saveSettings(settings: AppSettings): Promise<void> {
   if (!inDesktopApp()) return;
   await invoke<void>("save_settings", { settings });
+}
+
+/* ---------- Startup items ---------- */
+
+/** Every program registered to open at sign-in (registry Run keys
+    and Startup folders, per-user and machine-wide). Read fresh at
+    call time — no scan involved. Throws on failure: a page must
+    never render a failed read as "nothing starts with Windows". */
+export async function getStartupItems(): Promise<StartupItem[]> {
+  if (!inDesktopApp()) return [];
+  return invoke<StartupItem[]>("get_startup_items");
+}
+
+/**
+ * Enable or disable one sign-in entry. Disabling is reversible —
+ * the shell keeps the entry aside and restores it exactly when
+ * re-enabled. Throws with the shell's human message on failure
+ * (machine-wide entries need DiskPilot running as administrator).
+ */
+export async function setStartupItemEnabled(id: string, enabled: boolean): Promise<void> {
+  requireDesktop();
+  await invoke<void>("set_startup_item_enabled", { id, enabled });
+}
+
+/* ---------- Compression ---------- */
+
+/** Large, long-untouched folders from the current scan that
+    Windows could compress in place. Already-compressed folders
+    are filtered out by the shell. Empty until a scan has run. */
+export async function getCompressionCandidates(): Promise<CompressionCandidate[]> {
+  if (!inDesktopApp()) return [];
+  return invoke<CompressionCandidate[]>("get_compression_candidates");
+}
+
+/**
+ * Compress or decompress one folder in place (NTFS compression):
+ * nothing is deleted and the folder keeps working. The shell
+ * reports the outcome in the result — `ok: false` with the reason
+ * in `error` — rather than throwing, so the row can show it.
+ */
+export async function setFolderCompression(
+  path: string,
+  compress: boolean,
+): Promise<SetCompressionResult> {
+  requireDesktop();
+  return invoke<SetCompressionResult>("set_folder_compression", { path, compress });
+}
+
+/* ---------- Extension statistics ---------- */
+
+/** Allocated bytes and counts per file extension in the current
+    scan, largest first. Empty until a scan has run. */
+export async function getExtensionStats(): Promise<ExtensionStat[]> {
+  if (!inDesktopApp()) return [];
+  return invoke<ExtensionStat[]>("get_extension_stats");
+}
+
+/** The largest files carrying one extension (the bare extension,
+    "" for files with none), in the same row shape as the scan's
+    largest-files list. */
+export async function getExtensionFiles(extension: string): Promise<FileEntry[]> {
+  if (!inDesktopApp()) return [];
+  return invoke<FileEntry[]>("get_extension_files", { extension });
 }
 
 /** Whether launch-at-sign-in is currently registered. */

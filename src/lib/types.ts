@@ -694,6 +694,61 @@ export interface GamesReport {
     deep-link to a view. */
 export type DuplicatesMode = "exact" | "similar";
 
+/* ---------- Startup items & compression (core shell commands) ---------- */
+
+/** Where a sign-in entry was registered. */
+export type StartupSource =
+  | "registryUser"
+  | "registryMachine"
+  | "folderUser"
+  | "folderMachine";
+
+/** One program that opens when the user signs in to Windows.
+    `targetPath`/`targetBytes` are null when the entry's command
+    does not resolve to a single file on disk; `targetExists`
+    reports whether that file is there. Disabling is reversible:
+    the shell keeps the entry and restores it exactly on
+    re-enable. */
+export interface StartupItem {
+  id: string;
+  name: string;
+  command: string;
+  source: StartupSource;
+  targetPath: string | null;
+  targetExists: boolean;
+  targetBytes: number | null;
+  enabled: boolean;
+}
+
+/** A large, long-untouched folder Windows could compress in
+    place. Folders already compressed are filtered out by the
+    shell, so every candidate returned can be acted on. */
+export interface CompressionCandidate {
+  path: string;
+  bytes: number;
+  fileCount: number;
+  newestModifiedMs: number;
+  compressed: boolean;
+}
+
+/** Result of setting a folder's compression state: `ok` false
+    carries the failure in `error`, never a throw, so the row can
+    report it in place. */
+export interface SetCompressionResult {
+  path: string;
+  ok: boolean;
+  error: string | null;
+}
+
+/** Allocated bytes and file count for one file extension in the
+    current scan. `extension` is the bare extension ("zip"); the
+    empty string means files with no extension. */
+export interface ExtensionStat {
+  extension: string;
+  bytes: number;
+  count: number;
+}
+
 export type PageId =
   | "overview"
   | "health"
@@ -702,6 +757,7 @@ export type PageId =
   | "duplicates"
   | "applications"
   | "games"
+  | "startup"
   | "developer"
   | "docker"
   | "downloads"
