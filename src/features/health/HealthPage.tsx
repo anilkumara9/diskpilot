@@ -174,29 +174,35 @@ export function HealthPage() {
   const [forecast, setForecast] = useState<SpaceForecast | null>(null);
   const [history, setHistory] = useState<ScanHistoryEntry[] | null>(null);
   const [autostart, setAutostart] = useState<boolean | null>(null);
+  const [loadError, setLoadError] = useState(false);
+  const [reloadKey, setReloadKey] = useState(0);
 
   /* Drives, forecast and history refresh whenever a scan finishes —
-     the finished timestamp is the trigger, as on the Overview. */
+     the finished timestamp is the trigger, as on the Overview. Each
+     loader settles independently; a failure keeps the last good
+     data and raises a retry note rather than freezing the page on
+     its skeletons. */
   const finishedAtMs = summary?.finishedAtMs;
   useEffect(() => {
     let live = true;
     void (async () => {
-      const [d, f, h, a] = await Promise.all([
+      const [d, f, h, a] = await Promise.allSettled([
         api.getDrives(),
         api.getSpaceForecast(),
         api.getScanHistory(),
         api.getAutostart(),
       ]);
       if (!live) return;
-      setDrives(d);
-      setForecast(f);
-      setHistory(h);
-      setAutostart(a);
+      if (d.status === "fulfilled") setDrives(d.value);
+      if (f.status === "fulfilled") setForecast(f.value);
+      if (h.status === "fulfilled") setHistory(h.value);
+      if (a.status === "fulfilled") setAutostart(a.value);
+      setLoadError([d, f, h].some((r) => r.status === "rejected"));
     })();
     return () => {
       live = false;
     };
-  }, [finishedAtMs]);
+  }, [finishedAtMs, reloadKey]);
 
   const rootHistory = useMemo(() => {
     if (!history || !summary) return [];
@@ -217,6 +223,15 @@ export function HealthPage() {
           title="Health"
           subtitle={headline ?? "Drive space, growth, and the background watch at a glance."}
         />
+
+        {loadError ? (
+          <p role="alert" className="flex items-center gap-2 pb-1 text-[12px] text-critical">
+            Some health details couldn&rsquo;t be loaded.
+            <Button variant="subtle" size="sm" onClick={() => setReloadKey((n) => n + 1)}>
+              Retry
+            </Button>
+          </p>
+        ) : null}
 
         <Section title="Drives" description="Every drive on this PC, judged by the room it has left.">
           {drives === null ? (
@@ -293,7 +308,12 @@ export function HealthPage() {
                   </>
                 )
               ) : null}
-              <div className={forecast && forecast.pointsUsed >= 2 ? "mt-4" : undefined}>
+              {!(forecast && forecast.pointsUsed >= 2) ? (
+                <p className="text-[12px] leading-4 text-muted">
+                  Not enough trend yet to project — a few more scans will sharpen this.
+                </p>
+              ) : null}
+              <div className={forecast && forecast.pointsUsed >= 2 ? "mt-4" : "mt-3"}>
                 <GrowthChart entries={rootHistory} />
               </div>
             </div>

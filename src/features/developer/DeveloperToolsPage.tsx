@@ -89,11 +89,14 @@ export function TranscriptSecrets() {
 
 export function DeveloperToolsPage() {
   const homeDir = useAppStore((s) => s.env?.homeDir);
+  const finishedAtMs = useAppStore((s) => s.summary?.finishedAtMs);
   const [reports, setReports] = useState<ToolReport[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [query, setQuery] = useState("");
   const [revealError, setRevealError] = useState<string | null>(null);
 
+  /* Reloads whenever a scan finishes — the reports measure tool
+     storage, which the scan is what changes. */
   useEffect(() => {
     let live = true;
     api.getDevtoolsReports()
@@ -102,7 +105,7 @@ export function DeveloperToolsPage() {
         if (live) setError(err instanceof Error ? err.message : "Developer tool reports could not be loaded.");
       });
     return () => { live = false; };
-  }, []);
+  }, [finishedAtMs]);
 
   const visible = useMemo(() => {
     if (!reports) return [];
@@ -159,12 +162,21 @@ export function DeveloperToolsPage() {
         {reports === null ? (
           <div className="mt-6"><SkeletonRows rows={8} /></div>
         ) : visible.length === 0 ? (
-          <EmptyState
-            icon={Code2}
-            className="min-h-[360px]"
-            title="No developer tool data found"
-            description="Per-tool storage reports appear here for editors, AI coding tools, Node.js, Rust, Python, .NET, Visual Studio, JetBrains, and local model tools detected on this PC."
-          />
+          query.trim() ? (
+            <EmptyState
+              icon={Code2}
+              className="min-h-[360px]"
+              title="No tools match this filter"
+              description="Nothing in the developer tool reports matches the current filter. Clear the filter to see every tool again."
+            />
+          ) : (
+            <EmptyState
+              icon={Code2}
+              className="min-h-[360px]"
+              title="No developer tool data found"
+              description="Per-tool storage reports appear here for editors, AI coding tools, Node.js, Rust, Python, .NET, Visual Studio, JetBrains, and local model tools detected on this PC."
+            />
+          )
         ) : (
           visible.map((report) => {
             const total = report.sections.reduce(

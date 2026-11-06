@@ -25,6 +25,7 @@ function appTotal(app: AppEntry): number {
 export function ApplicationsPage() {
   const homeDir = useAppStore((s) => s.env?.homeDir);
   const navigate = useAppStore((s) => s.navigate);
+  const finishedAtMs = useAppStore((s) => s.summary?.finishedAtMs);
   const [apps, setApps] = useState<AppEntry[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [query, setQuery] = useState("");
@@ -32,6 +33,8 @@ export function ApplicationsPage() {
   const [direction, setDirection] = useState<SortDirection>("desc");
   const [revealError, setRevealError] = useState<string | null>(null);
 
+  /* Reloads whenever a scan finishes — app data figures come from
+     the scan, so a new scan is exactly when they change. */
   useEffect(() => {
     let live = true;
     api.getApplications()
@@ -40,7 +43,7 @@ export function ApplicationsPage() {
         if (live) setError(err instanceof Error ? err.message : "Applications could not be loaded.");
       });
     return () => { live = false; };
-  }, []);
+  }, [finishedAtMs]);
 
   const installed = useMemo(() => {
     const rows = (apps ?? []).filter((a) => !a.leftover);
@@ -114,6 +117,15 @@ export function ApplicationsPage() {
                   </tr>
                 </thead>
                 <tbody>
+                  {installed.length === 0 ? (
+                    <tr>
+                      <td colSpan={4} className="px-3 py-8 text-center text-[12px] text-muted">
+                        {query.trim()
+                          ? "No applications match this filter."
+                          : "No installed applications were found."}
+                      </td>
+                    </tr>
+                  ) : null}
                   {installed.map((app) => (
                     <tr key={app.name} className="border-b border-border/60 transition-colors duration-120 hover:bg-hover">
                       <td className="px-3 py-2">

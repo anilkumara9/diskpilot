@@ -53,7 +53,7 @@ function BiggestList({
             className="flex w-full items-center gap-3 py-2 text-left transition-colors duration-120 hover:bg-hover"
           >
             <span className="min-w-0 flex-1">
-              <span className="block truncate text-[13px] text-foreground" title={item.path}>
+              <span className="file-name block truncate text-[13px] text-foreground" title={item.path}>
                 {item.name}
               </span>
               <span className="mt-0.5 flex items-baseline gap-1.5 text-[11px] text-muted">
@@ -86,27 +86,44 @@ export function MediaPage() {
   const [media, setMedia] = useState<MediaSummary | null>(null);
   const [similar, setSimilar] = useState<SimilarGroup[] | null>(null);
   const [revealError, setRevealError] = useState<string | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [reloadKey, setReloadKey] = useState(0);
 
   /* Media totals and look-alike groups both derive from the scan
-     index, so they refresh with the scan that produced it. */
+     index, so they refresh with the scan that produced it. The
+     totals are the page: if they fail to load while a scan exists,
+     that is an error state with a retry — never an eternal
+     skeleton. The look-alike strip is secondary and fails quietly
+     to hidden. */
   const finishedAtMs = summary?.finishedAtMs;
   useEffect(() => {
     if (!summary) {
       setMedia(null);
       setSimilar(null);
+      setLoadError(null);
       return;
     }
     let live = true;
     void (async () => {
-      const [m, s] = await Promise.all([api.getMediaSummary(), api.getSimilarImages()]);
+      const [m, s] = await Promise.allSettled([
+        api.getMediaSummary(),
+        api.getSimilarImages(),
+      ]);
       if (!live) return;
-      setMedia(m);
-      setSimilar(s);
+      if (m.status === "fulfilled") {
+        setMedia(m.value);
+        setLoadError(null);
+      } else {
+        setLoadError(
+          m.reason instanceof Error ? m.reason.message : "Media totals could not be loaded.",
+        );
+      }
+      if (s.status === "fulfilled") setSimilar(s.value);
     })();
     return () => {
       live = false;
     };
-  }, [summary, finishedAtMs]);
+  }, [summary, finishedAtMs, reloadKey]);
 
   const reveal = async (path: string) => {
     setRevealError(null);
@@ -142,6 +159,18 @@ export function MediaPage() {
             title="No media measured yet"
             description="Photos and videos appear here after a scan — the totals for each kind, and the biggest files worth reviewing first."
             action={<ScanControl compact />}
+          />
+        ) : loadError ? (
+          <EmptyState
+            icon={Images}
+            className="min-h-[360px]"
+            title="Media totals couldn't be loaded"
+            description={loadError}
+            action={
+              <Button variant="secondary" onClick={() => setReloadKey((n) => n + 1)}>
+                Retry
+              </Button>
+            }
           />
         ) : media === null ? (
           <SkeletonRows rows={7} />

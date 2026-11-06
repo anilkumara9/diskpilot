@@ -26,25 +26,34 @@ function Figure({ label, value }: { label: string; value: string }) {
 
 export function GamesPage() {
   const homeDir = useAppStore((s) => s.env?.homeDir);
+  const finishedAtMs = useAppStore((s) => s.summary?.finishedAtMs);
   const [report, setReport] = useState<GamesReport | null>(null);
   const [revealError, setRevealError] = useState<string | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [reloadKey, setReloadKey] = useState(0);
 
-  /* Games come from the launchers' manifests, not from a scan, so
-     they load once when the page opens. */
+  /* Games come from the launchers' manifests, not from a scan; the
+     page reloads when a scan finishes so installs measured by the
+     scan and installs read from manifests stay in step. A failed
+     read is an error state — NOT the "no libraries" empty report. */
   useEffect(() => {
     let live = true;
     api
       .getGames()
       .then((rows) => {
-        if (live) setReport(rows);
+        if (!live) return;
+        setReport(rows);
+        setLoadError(null);
       })
-      .catch(() => {
-        if (live) setReport({ libraries: [], totalBytes: 0, totalGames: 0 });
+      .catch((err: unknown) => {
+        if (live) {
+          setLoadError(err instanceof Error ? err.message : "Games could not be loaded.");
+        }
       });
     return () => {
       live = false;
     };
-  }, []);
+  }, [finishedAtMs, reloadKey]);
 
   const reveal = async (path: string) => {
     setRevealError(null);
@@ -67,7 +76,19 @@ export function GamesPage() {
           <p role="alert" className="pb-3 text-[12px] text-critical">{revealError}</p>
         ) : null}
 
-        {report === null ? (
+        {loadError ? (
+          <EmptyState
+            icon={Gamepad2}
+            className="min-h-[360px]"
+            title="Games couldn't be loaded"
+            description={loadError}
+            action={
+              <Button variant="secondary" onClick={() => setReloadKey((n) => n + 1)}>
+                Retry
+              </Button>
+            }
+          />
+        ) : report === null ? (
           <SkeletonRows rows={7} />
         ) : report.totalGames === 0 ? (
           <EmptyState

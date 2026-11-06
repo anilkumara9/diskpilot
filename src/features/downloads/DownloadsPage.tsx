@@ -41,7 +41,7 @@ function RecentList({
       {files.map((file) => (
         <li key={file.path} className="flex items-center gap-3 py-2">
           <div className="min-w-0 flex-1">
-            <p className="truncate text-[13px] text-foreground" title={file.path}>
+            <p className="file-name truncate text-[13px] text-foreground" title={file.path}>
               {file.name}
             </p>
             <p className="mt-0.5 flex flex-wrap items-center gap-1.5 text-[11px] text-muted">
@@ -113,23 +113,38 @@ function SourceGroup({
 
 export function DownloadsPage() {
   const homeDir = useAppStore((s) => s.env?.homeDir);
+  const finishedAtMs = useAppStore((s) => s.summary?.finishedAtMs);
   const [recent, setRecent] = useState<RecentFile[] | null>(null);
   const [groups, setGroups] = useState<ProvenanceGroup[] | null>(null);
   const [revealError, setRevealError] = useState<string | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [reloadKey, setReloadKey] = useState(0);
 
+  /* Loads on open and again whenever a scan finishes — a fresh scan
+     is exactly when new downloads may have landed. A failed load is
+     an error state with a retry, never the "Nothing in Downloads"
+     empty state. */
   useEffect(() => {
     let live = true;
-    void Promise.all([api.getRecentDownloads(), api.getDownloadProvenance()]).then(
-      ([recentRows, groupsRows]) => {
+    void (async () => {
+      try {
+        const [recentRows, groupsRows] = await Promise.all([
+          api.getRecentDownloads(),
+          api.getDownloadProvenance(),
+        ]);
         if (!live) return;
         setRecent(recentRows);
         setGroups(groupsRows);
-      },
-    );
+        setLoadError(null);
+      } catch (err) {
+        if (!live) return;
+        setLoadError(err instanceof Error ? err.message : "Downloads could not be loaded.");
+      }
+    })();
     return () => {
       live = false;
     };
-  }, []);
+  }, [finishedAtMs, reloadKey]);
 
   const reveal = async (path: string) => {
     setRevealError(null);
@@ -155,7 +170,19 @@ export function DownloadsPage() {
           <p role="alert" className="pb-3 text-[12px] text-critical">{revealError}</p>
         ) : null}
 
-        {loading ? (
+        {loadError ? (
+          <EmptyState
+            icon={Download}
+            className="min-h-[360px]"
+            title="Downloads couldn't be loaded"
+            description={loadError}
+            action={
+              <Button variant="secondary" onClick={() => setReloadKey((n) => n + 1)}>
+                Retry
+              </Button>
+            }
+          />
+        ) : loading ? (
           <SkeletonRows rows={6} />
         ) : nothingFound ? (
           <EmptyState

@@ -57,7 +57,17 @@ export function DockerActionDialog({
     try {
       const executed = await api.dockerExecuteAction(request);
       setResult(executed);
-      setBanner({ kind: "success", message: "Docker action complete." });
+      /* The shell reports the command's own success: only an
+         explicit failure renders as one; a missing flag (older
+         shell builds) keeps the previous success treatment. */
+      if (executed.success === false) {
+        setBanner({
+          kind: "error",
+          message: "Docker action failed — the command's output is shown in the dialog.",
+        });
+      } else {
+        setBanner({ kind: "success", message: "Docker action complete." });
+      }
       onExecuted();
     } catch (err) {
       setError(err instanceof Error ? err.message : "The Docker action could not be run.");
@@ -93,7 +103,12 @@ export function DockerActionDialog({
       </div>
       {result ? (
         <div className="mt-3 space-y-2">
-          <p className="text-[12px] font-medium text-foreground">Result</p>
+          <p className="text-[12px] font-medium text-foreground">
+            Result
+            {result.success === false ? (
+              <span className="ml-2 font-normal text-critical">The command failed.</span>
+            ) : null}
+          </p>
           <div className="flex items-center gap-2">
             <code className="mono-path flex-1 rounded-md bg-panel-raised px-2.5 py-2 text-foreground">{result.command}</code>
             <CopyButton text={result.command} />
