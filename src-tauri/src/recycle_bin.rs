@@ -176,6 +176,47 @@ pub fn validate_item_id(id: &str) -> Option<(PathBuf, PathBuf)> {
     Some((payload, info))
 }
 
+/// Comparison key for matching a recorded original path against a
+/// bin item's: Windows paths compare case-insensitively and either
+/// separator spelling means the same location.
+fn original_path_key(path: &str) -> String {
+    path.replace('/', "\\")
+        .trim_end_matches('\\')
+        .to_lowercase()
+}
+
+/// The bin item that was deleted from `original_path`, if one is
+/// still in the bin. When several items share an original path
+/// (deleted, restored, deleted again), the most recently deleted
+/// one wins — callers pass the listing in any order.
+pub fn find_by_original_path<'a>(
+    items: &'a [RecycleBinItem],
+    original_path: &str,
+) -> Option<&'a RecycleBinItem> {
+    let key = original_path_key(original_path);
+    items
+        .iter()
+        .filter(|item| original_path_key(&item.original_path) == key)
+        .max_by_key(|item| item.deleted_at_ms)
+}
+
+/// How many of `trash_paths` could be restored right now: the item
+/// is still in the bin AND nothing occupies its original location
+/// (restore refuses occupied destinations). `destination_free` is
+/// injected so the counting is testable without a filesystem; in
+/// production it is "no entry exists at the path".
+pub fn count_restorable(
+    trash_paths: &[String],
+    bin_items: &[RecycleBinItem],
+    destination_free: &dyn Fn(&str) -> bool,
+) -> usize {
+    trash_paths
+        .iter()
+        .filter(|path| find_by_original_path(bin_items, path).is_some())
+        .filter(|path| destination_free(path))
+        .count()
+}
+
 /// Restore one recycled item to the original path recorded in its
 /// `$I…` metadata: the `$R…` payload moves back (parent folders are
 /// recreated when the original folder has since been removed) and
@@ -205,4 +246,68 @@ pub fn restore_item(id: &str) -> Result<(), String> {
     std::fs::remove_file(&info)
         .map_err(|e| format!("restored, but could not remove the item metadata: {e}"))?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn item(original_path: &str, deleted_at_ms: i64) -> RecycleBinItem {
+        RecycleBinItem {
+            id: format!(
+                "C:\\$Recycle.Bin\\S-1-5-21\\$R{:06}",
+                deleted_at_ms.rem_euclid(1_000_000)
+            ),
+            name: original_path
+                .rsplit('\\')
+                .next()
+                .unwrap_or(original_path)
+                .to_string(),
+            original_path: original_path.to_string(),
+            bytes: 10,
+            deleted_at_ms,
+        }
+    }
+
+    #[test]
+    fn find_matches_case_and_separator_insensitively() {
+        let items = vec![item("C:\\Users\\Ana\\Downloads\\Report.PDF", 100)];
+        assert!(find_by_original_path(&items, "c:\\users\\ana\\downloads\\report.pdf").is_some());
+        assert!(find_by_original_path(&items, "C:/Users/Ana/Downloads/Report.PDF").is_some());
+        assert!(find_by_original_path(&items, "C:\\Users\\Ana\\Downloads\\Other.PDF").is_none());
+        assert!(find_by_original_path(&[], "C:\\Users\\Ana\\Downloads\\Report.PDF").is_none());
+    }
+
+    #[test]
+    fn find_prefers_the_most_recently_deleted_copy() {
+        let items = vec![
+            item("D:\\scratch\\a.tmp", 100),
+            item("D:\\scratch\\a.tmp", 300),
+            item("D:\\scratch\\a.tmp", 200),
+        ];
+        let found = find_by_original_path(&items, "D:\\scratch\\a.tmp").unwrap();
+        assert_eq!(found.deleted_at_ms, 300);
+    }
+
+    #[test]
+    fn count_restorable_needs_bin_presence_and_a_free_destination() {
+        let bin = vec![
+            item("C:\\gone.tmp", 1),
+            item("C:\\back.tmp", 2),
+            item("C:\\occupied.tmp", 3),
+        ];
+        let paths: Vec<String> = [
+            "C:\\gone.tmp",     // in bin, destination free → counts
+            "C:\\back.tmp",     // restored already? no — still in bin, free → counts
+            "C:\\occupied.tmp", // in bin but destination taken → does not count
+            "C:\\never.tmp",    // not in bin → does not count
+        ]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+        let free = |p: &str| !p.eq_ignore_ascii_case("C:\\occupied.tmp");
+        assert_eq!(count_restorable(&paths, &bin, &free), 2);
+        assert_eq!(count_restorable(&[], &bin, &free), 0);
+        assert_eq!(count_restorable(&paths, &[], &free), 0);
+    }
 }

@@ -731,21 +731,150 @@ pub async fn execute_cleanup_plan(
     };
     let ctx = SafetyContext::new(state.scan_root());
     let result = blocking(move || execute_plan(&plan, mode, &ctx, &RealFileOps)).await?;
+    let removed_mode = match mode {
+        ExecuteMode::MoveToTrash => diskpilot_core::history::RemovedItemMode::Trash,
+        ExecuteMode::PermanentDelete => diskpilot_core::history::RemovedItemMode::Permanent,
+    };
     let _ = with_history(&state, |history| {
         history
-            .record_cleanup("cleanup", &result, Some(&plan_id))
+            .record_cleanup("cleanup", &result, Some(&plan_id), removed_mode)
             .map(|_| ())
     });
     Ok(result)
 }
 
-/// Cleanup history, newest first.
+/// Cleanup history, newest first. Each entry's `restorableCount`
+/// is computed here (the core store leaves it 0): the run's
+/// Trash-mode items that are still in the Recycle Bin with their
+/// original location free — see `crate::recycle_bin::count_restorable`.
 #[tauri::command]
 pub fn get_history(
     state: State<'_, ShellState>,
     limit: Option<usize>,
 ) -> CmdResult<Vec<HistoryEntry>> {
-    with_history(&state, |history| history.list_history(limit.unwrap_or(200)))
+    let bin_items = crate::recycle_bin::list_items();
+    with_history(&state, |history| {
+        let mut entries = history.list_history(limit.unwrap_or(200))?;
+        for entry in &mut entries {
+            let items = history.entry_items(entry.id)?.unwrap_or_default();
+            let trash_paths: Vec<String> = items
+                .iter()
+                .filter(|item| {
+                    item.mode == Some(diskpilot_core::history::RemovedItemMode::Trash)
+                })
+                .map(|item| item.path.clone())
+                .collect();
+            entry.restorable_count = crate::recycle_bin::count_restorable(
+                &trash_paths,
+                &bin_items,
+                &|path| Path::new(path).symlink_metadata().is_err(),
+            ) as u64;
+        }
+        Ok(entries)
+    })
+}
+
+/// One failed item of a cleanup-run restore.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RestoreRunFailure {
+    pub path: String,
+    pub error: String,
+}
+
+/// Outcome of restoring a whole cleanup run: the original paths put
+/// back, the per-item failures, and how many items were skipped
+/// because they were deleted permanently (never restorable).
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RestoreRunResult {
+    pub restored: Vec<String>,
+    pub failed: Vec<RestoreRunFailure>,
+    pub skipped_permanent: u32,
+}
+
+/// Restore every still-restorable item of one recorded cleanup run
+/// (identified by its History entry id) from the Recycle Bin, using
+/// the same single-item restore as `restore_recycle_item`. Runs
+/// recorded before removal modes were tracked cannot be restored as
+/// a group. The restore itself is recorded to History.
+#[tauri::command]
+pub async fn restore_cleanup_run(
+    state: State<'_, ShellState>,
+    entry_id: String,
+) -> CmdResult<RestoreRunResult> {
+    let id: i64 = entry_id
+        .trim()
+        .parse()
+        .map_err(|_| "invalid history entry id".to_string())?;
+    let items = with_history(&state, |history| history.entry_items(id))?
+        .ok_or_else(|| format!("history entry {id} not found"))?;
+    if items.iter().any(|item| item.mode.is_none()) {
+        return Err(
+            "This cleanup was recorded before restore support — its items can't be restored as a group."
+                .to_string(),
+        );
+    }
+    let result = blocking_value(move || {
+        let bin_items = crate::recycle_bin::list_items();
+        let mut restored: Vec<String> = Vec::new();
+        let mut failed: Vec<RestoreRunFailure> = Vec::new();
+        let mut skipped_permanent: u32 = 0;
+        for item in &items {
+            match item.mode {
+                Some(diskpilot_core::history::RemovedItemMode::Permanent) => {
+                    skipped_permanent += 1;
+                }
+                Some(diskpilot_core::history::RemovedItemMode::Trash) => {
+                    match crate::recycle_bin::find_by_original_path(&bin_items, &item.path) {
+                        None => failed.push(RestoreRunFailure {
+                            path: item.path.clone(),
+                            error: "no longer in the Recycle Bin".to_string(),
+                        }),
+                        Some(bin_item) => {
+                            match crate::recycle_bin::restore_item(&bin_item.id) {
+                                Ok(()) => restored.push(item.path.clone()),
+                                Err(error) => failed.push(RestoreRunFailure {
+                                    path: item.path.clone(),
+                                    error,
+                                }),
+                            }
+                        }
+                    }
+                }
+                None => unreachable!("unknown-mode entries returned above"),
+            }
+        }
+        RestoreRunResult {
+            restored,
+            failed,
+            skipped_permanent,
+        }
+    })
+    .await?;
+    let detail = format!(
+        "Restored {} items from a cleanup",
+        result.restored.len()
+    );
+    let errors: Vec<String> = result
+        .failed
+        .iter()
+        .map(|f| format!("{}: {}", f.path, f.error))
+        .collect();
+    let _ = with_history(&state, |history| {
+        history
+            .record_action(
+                now_ms(),
+                "restore",
+                &result.restored,
+                0,
+                &errors,
+                Some(&detail),
+                diskpilot_core::history::RemovedItemMode::Trash,
+            )
+            .map(|_| ())
+    });
+    Ok(result)
 }
 
 // ---------------------------------------------------------------------------
@@ -825,7 +954,12 @@ pub async fn remove_duplicate_copies(
     .await?;
     let _ = with_history(&state, |history| {
         history
-            .record_cleanup("duplicates", &result, Some(&group_hash_for_history))
+            .record_cleanup(
+                "duplicates",
+                &result,
+                Some(&group_hash_for_history),
+                diskpilot_core::history::RemovedItemMode::Trash,
+            )
             .map(|_| ())
     });
     Ok(result)
@@ -1100,7 +1234,12 @@ pub async fn empty_recycle_bin(
     .await?;
     let _ = with_history(&state, |history| {
         history
-            .record_cleanup("empty-recycle-bin", &result, None)
+            .record_cleanup(
+                "empty-recycle-bin",
+                &result,
+                None,
+                diskpilot_core::history::RemovedItemMode::Permanent,
+            )
             .map(|_| ())
     });
     Ok(result)

@@ -67,10 +67,26 @@ pub struct Settings {
     /// the app self-heals.
     #[serde(default)]
     pub auto_start: bool,
+    /// Whether the first-run onboarding has been completed. The
+    /// frontend sets it once the welcome flow finishes (or is
+    /// dismissed); `#[serde(default)]` keeps older settings files —
+    /// written before onboarding existed — at `false`.
+    #[serde(default)]
+    pub onboarded: bool,
+    /// Recognize text in screenshots and images after each scan, so
+    /// file search can match words that appear only inside a picture
+    /// (see `crate::ocr`). On by default; the engine is on-device
+    /// (Windows' built-in OCR) and the pass is fully cached.
+    #[serde(default = "default_ocr_enabled")]
+    pub ocr_enabled: bool,
 }
 
 fn default_auto_scan() -> String {
     "off".to_string()
+}
+
+fn default_ocr_enabled() -> bool {
+    true
 }
 
 fn default_low_space_alert_gb() -> f64 {
@@ -94,6 +110,8 @@ impl Default for Settings {
             low_space_alert_gb: default_low_space_alert_gb(),
             growth_alert_gb: default_growth_alert_gb(),
             auto_start: false,
+            onboarded: false,
+            ocr_enabled: default_ocr_enabled(),
         }
     }
 }
@@ -322,6 +340,7 @@ pub fn run() {
             commands::build_cleanup_plan,
             commands::execute_cleanup_plan,
             commands::get_history,
+            commands::restore_cleanup_run,
             commands::find_duplicates,
             commands::remove_duplicate_copies,
             commands::get_recent_downloads,
