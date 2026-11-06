@@ -246,6 +246,24 @@ See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the full data
 flow, [docs/DESIGN.md](docs/DESIGN.md) for the design system, and
 [docs/WINDOWS.md](docs/WINDOWS.md) for platform measurement details.
 
+## By the numbers
+
+![Tests](https://img.shields.io/badge/tests-430%20passing-brightgreen)
+![Source lines](https://img.shields.io/badge/source-47%2C452%20lines-5856D6)
+![Pages](https://img.shields.io/badge/pages-15-0078D4)
+
+| | |
+|---|---|
+| Automated tests | **430 passing** — 233 in the Rust core (203 unit + 30 integration), 197 in the frontend (vitest) |
+| Pages | **15** in the main window, plus the Quick Search window |
+| Typed shell commands | **68** — the only channel between the UI and the machine |
+| App-junk rules | **11** curated per-app cache rule sets |
+| Classifier categories | **11** — every scanned path lands in exactly one, with the rule that matched |
+| Source size | **47,452 lines** — 29,061 Rust · 18,129 TypeScript/React · 262 CSS |
+
+Counts measured on the 0.6.0 tree (tests run locally; the same
+suites run in CI on every commit).
+
 ## Build from source
 
 Prerequisites:
@@ -312,6 +330,16 @@ Found a vulnerability? Please report it privately through the
 repository's security advisory feature rather than a public issue —
 see [SECURITY.md](SECURITY.md) for what to include. A way around the
 safety gate counts as a critical vulnerability here.
+
+## Star history
+
+[![Stars](https://img.shields.io/github/stars/anilkumara9/diskpilot)](https://github.com/anilkumara9/diskpilot/stargazers)
+[![Forks](https://img.shields.io/github/forks/anilkumara9/diskpilot)](https://github.com/anilkumara9/diskpilot/forks)
+
+[![Star history chart](https://api.star-history.com/svg?repos=anilkumara9/diskpilot&type=Date)](https://github.com/anilkumara9/diskpilot/stargazers)
+
+DiskPilot went public with 0.6.0. If it earns a place on your
+machine, a star helps other people find it.
 
 ## License
 
