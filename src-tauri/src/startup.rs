@@ -30,13 +30,18 @@ use serde::{Deserialize, Serialize};
 
 /// Subkey (under `Software\Microsoft\Windows\CurrentVersion`) the
 /// shell's own autostart also uses; the two bases enumerated.
+/// (Registry machinery is Windows-only; on other hosts these are
+/// exercised by the unit tests only.)
+#[cfg_attr(not(windows), allow(dead_code))]
 const RUN_BASES: [&str; 2] = ["Run", "RunOnce"];
 /// Suffix of the sibling key disabled registry entries move to.
+#[cfg_attr(not(windows), allow(dead_code))]
 const DISABLED_KEY_SUFFIX: &str = "-DisabledByDiskPilot";
 /// Subfolder of a Startup folder that disabled files move into.
 const DISABLED_DIR_NAME: &str = "Disabled by DiskPilot";
 /// Registry path of the `CurrentVersion` key the Run keys live
 /// under.
+#[cfg_attr(not(windows), allow(dead_code))]
 const CURRENT_VERSION: &str = r"Software\Microsoft\Windows\CurrentVersion";
 
 /// Where a sign-in entry is registered.
@@ -188,7 +193,9 @@ fn resolve_target(command: &str) -> (Option<String>, bool, Option<u64>) {
 // Enumeration
 // ---------------------------------------------------------------------------
 
-/// How a toggle acts on one entry.
+/// How a toggle acts on one entry. Consumed by the Windows toggle
+/// path (and constructed everywhere enumeration runs).
+#[cfg_attr(not(windows), allow(dead_code))]
 enum Action {
     /// Registry value `item.name` under the `Run`/`RunOnce` base
     /// key of one hive.
@@ -197,6 +204,7 @@ enum Action {
     Folder { root: PathBuf },
 }
 
+#[cfg_attr(not(windows), allow(dead_code))]
 struct Entry {
     item: StartupItem,
     action: Action,
@@ -361,6 +369,7 @@ fn enumerate_registry_entries(_out: &mut Vec<Entry>) {}
 // ---------------------------------------------------------------------------
 
 /// Find an enumerated entry by its opaque id.
+#[cfg_attr(not(windows), allow(dead_code))]
 fn find_by_id<'a>(entries: &'a [Entry], id: &str) -> Option<&'a Entry> {
     entries.iter().find(|e| e.item.id == id)
 }
