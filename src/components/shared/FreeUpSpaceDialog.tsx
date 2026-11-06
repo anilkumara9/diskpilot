@@ -8,8 +8,10 @@ import { Dialog } from "@/components/ui/dialog";
 
 /**
  * Confirmation for marking cloud files online-only. The copy is the
- * contract: the files stay in the provider's cloud and re-download
- * when opened — nothing is deleted. The shell does the work through
+ * contract: the files are MARKED online-only on this PC and stay in
+ * the provider's cloud; the provider releases the local space as it
+ * syncs — marking does not free space on the spot, and the copy
+ * never claims it did. The shell does the work through
  * `free_up_space`; the caller reports the result (banner) and
  * refreshes its own data via `onDone`.
  */
@@ -40,7 +42,7 @@ export function FreeUpSpaceDialog({
       onDone(result);
       onClose();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Space could not be freed up.");
+      setError(err instanceof Error ? err.message : "The items could not be marked online-only.");
       setRunning(false);
     }
   };
@@ -52,8 +54,8 @@ export function FreeUpSpaceDialog({
       title={`Free up space in ${provider}?`}
       description={
         bytes != null
-          ? `About ${formatBytes(bytes)} stored on this PC can be freed.`
-          : "Files stored on this PC can be freed."
+          ? `About ${formatBytes(bytes)} stored on this PC can be marked online-only; ${provider} releases the space as it syncs.`
+          : `Files stored on this PC can be marked online-only; ${provider} releases the space as it syncs.`
       }
       dismissible={!running}
       footer={
@@ -74,8 +76,9 @@ export function FreeUpSpaceDialog({
         </p>
       ) : null}
       <p className="text-[13px] leading-[18px] text-foreground">
-        The files stay in {provider} — only the copies on this PC are removed. Each file downloads
-        again automatically the next time you open it. Nothing is deleted from {provider}.
+        The files stay in {provider} — they are marked online-only on this PC, and {provider}{" "}
+        releases the local space as it syncs (not all of it at once). Each file downloads again
+        automatically the next time you open it. Nothing is deleted from {provider}.
       </p>
     </Dialog>
   );

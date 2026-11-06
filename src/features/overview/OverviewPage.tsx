@@ -557,8 +557,8 @@ export function OneDriveCard({
           {cloud.provider} is keeping {formatBytes(cloud.localBytes)} on this PC
         </span>{" "}
         — {formatCount(cloud.fileCount)} file{cloud.fileCount === 1 ? "" : "s"} stored locally in{" "}
-        <span className="mono-path">{displayPath(cloud.rootPath, homeDir)}</span>. Making them
-        online-only frees the space; they download again when opened.
+        <span className="mono-path">{displayPath(cloud.rootPath, homeDir)}</span>. Marking them
+        online-only lets {cloud.provider} release the space as it syncs; they download again when opened.
       </p>
       <Button variant="secondary" size="sm" onClick={() => setConfirmOpen(true)}>
         Free up space
@@ -573,12 +573,12 @@ export function OneDriveCard({
           if (result.failed.length > 0) {
             setBanner({
               kind: "error",
-              message: `Could not free up space in ${cloud.provider}: ${result.failed[0].error}`,
+              message: `Could not mark items online-only in ${cloud.provider}: ${result.failed[0].error}`,
             });
           } else {
             setBanner({
               kind: "success",
-              message: `Freed up space for ${result.succeeded.length} item${result.succeeded.length === 1 ? "" : "s"} in ${cloud.provider}. The files stay in ${cloud.provider} and download again when opened.`,
+              message: `Marked ${result.succeeded.length} item${result.succeeded.length === 1 ? "" : "s"} to free up space in ${cloud.provider} — ${cloud.provider} releases the space as it syncs. The files stay in ${cloud.provider} and download again when opened.`,
             });
           }
           onChanged();
@@ -679,7 +679,12 @@ export function TrashWaitingNotice() {
   const [items, setItems] = useState<RecycleBinItem[]>([]);
   useEffect(() => {
     let live = true;
-    void api.getRecycleBinItems().then((rows) => { if (live) setItems(rows); });
+    /* Decorative notice: a failed read just keeps it hidden — the
+       Recycle Bin dialog itself reports read errors properly. */
+    void api
+      .getRecycleBinItems()
+      .then((rows) => { if (live) setItems(rows); })
+      .catch(() => undefined);
     return () => { live = false; };
   }, []);
   const bytes = items.reduce((acc, i) => acc + i.bytes, 0);
@@ -768,15 +773,19 @@ export function OverviewPage() {
   const [changes, setChanges] = useState<BiggestChanges | null>(null);
   const [cloud, setCloud] = useState<CloudStatus | null>(null);
   const [exporting, setExporting] = useState(false);
+  const [watchError, setWatchError] = useState(false);
+  const [watchReload, setWatchReload] = useState(0);
 
   /* Watch data (drives, forecast, history, biggest changes, cloud)
      refreshes whenever a scan finishes — the finished timestamp is
-     the trigger, the loaders themselves are best-effort. */
+     the trigger. Each loader settles independently: one failure
+     keeps that section's last good data and raises a retry note,
+     instead of freezing every section at its empty default. */
   const finishedAtMs = summary?.finishedAtMs;
   useEffect(() => {
     let live = true;
     void (async () => {
-      const [d, f, h, c, cl] = await Promise.all([
+      const [d, f, h, c, cl] = await Promise.allSettled([
         api.getDrives(),
         api.getSpaceForecast(),
         api.getScanHistory(),
@@ -784,16 +793,19 @@ export function OverviewPage() {
         api.getCloudStatus(),
       ]);
       if (!live) return;
-      setDrives(d);
-      setForecast(f);
-      setHistory(h);
-      setChanges(c);
-      setCloud(cl);
+      if (d.status === "fulfilled") setDrives(d.value);
+      if (f.status === "fulfilled") setForecast(f.value);
+      if (h.status === "fulfilled") setHistory(h.value);
+      if (c.status === "fulfilled") setChanges(c.value);
+      if (cl.status === "fulfilled") setCloud(cl.value);
+      setWatchError(
+        [d, f, h, c, cl].some((r) => r.status === "rejected"),
+      );
     })();
     return () => {
       live = false;
     };
-  }, [finishedAtMs]);
+  }, [finishedAtMs, watchReload]);
 
   const shown = summary;
   const liveChip = liveChipState(summary);
@@ -814,10 +826,17 @@ export function OverviewPage() {
         recommendations,
         generatedAtMs: Date.now(),
       });
+      /* A cancelled save dialog resolves null and stays silent; a
+         failed save throws and is reported. */
       const path = await api.exportReport(html);
       if (path) {
         setBanner({ kind: "success", message: `Report saved to ${path}` });
       }
+    } catch (err) {
+      setBanner({
+        kind: "error",
+        message: `The report could not be saved${err instanceof Error ? `: ${err.message}` : "."}`,
+      });
     } finally {
       setExporting(false);
     }
@@ -869,6 +888,19 @@ export function OverviewPage() {
       <div className="mt-5">
         <StorageStrip disk={disk} summary={shown} />
       </div>
+
+      {watchError ? (
+        <p role="alert" className="mt-3 flex items-center gap-2 text-[12px] text-critical">
+          Some details below couldn&rsquo;t be refreshed.
+          <Button
+            variant="subtle"
+            size="sm"
+            onClick={() => setWatchReload((n) => n + 1)}
+          >
+            Retry
+          </Button>
+        </p>
+      ) : null}
 
       {disk ? (
         <div className="mt-5 flex flex-wrap gap-x-10 gap-y-4">
@@ -941,7 +973,10 @@ export function OverviewPage() {
               <OneDriveCard
                 cloud={cloud}
                 onChanged={() => {
-                  void api.getCloudStatus().then(setCloud);
+                  void api
+                    .getCloudStatus()
+                    .then(setCloud)
+                    .catch(() => undefined);
                   void refreshDisk();
                 }}
               />
