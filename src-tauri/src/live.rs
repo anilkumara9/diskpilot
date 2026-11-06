@@ -33,6 +33,7 @@
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::Ordering;
 use std::time::Duration;
 
 use diskpilot_core::model::ScanSummary;
@@ -387,36 +388,61 @@ async fn recheckpoint(state: &ShellState, volume: &str) {
 
 /// Apply one poll's worth of resolved, in-scope changes to the
 /// in-memory index, then rebuild the summary (and therefore the
-/// recommendations and cleanup cards) from the mutated index
+/// recommendations and cleanup cards) from the rebuilt index
 /// through the same store a scan uses. Any unsound change flips
 /// the stale flag instead of being approximated.
+///
+/// Mechanism — snapshot / apply / install, so the engine lock is
+/// never held across the expensive work (a batch can mean thousands
+/// of file stats plus a full summary rebuild; holding the lock
+/// through that stalled every other command):
+///
+/// 1. Under the lock, briefly: clone the index and its summary,
+///    tagged with the shell's index generation.
+/// 2. Unlocked: run the core's sound apply over the clone and
+///    rebuild the summary from it.
+/// 3. Under the lock again: install ONLY if the generation is
+///    unchanged and no scan is running. A scan stores its result
+///    under the same lock and bumps the generation, so a scan that
+///    completed mid-apply makes the install check fail — the batch
+///    is dropped silently, which is sound: the fresh scan's index
+///    already reflects the volume, and its completion cleared or
+///    will clear the stale flag through the normal path.
+///
+/// Exclusions come from the scan-time snapshot in shell state, not
+/// from the current settings: patterns edited after the scan must
+/// not retroactively change what the existing index means.
 fn apply_batch(state: &ShellState, root: &str, changes: &[usn_volume::ResolvedChange]) {
     let exclusions = state
-        .settings
+        .scan_exclusions
         .lock()
-        .map(|settings| settings.exclusions.clone())
+        .map(|slot| slot.clone())
         .unwrap_or_default();
-    let Ok(mut engine) = state.engine.lock() else {
-        return;
+
+    // Phase 1 — snapshot (brief lock hold).
+    let (mut index, previous, generation) = {
+        let Ok(engine) = state.engine.lock() else {
+            return;
+        };
+        // The world may have moved since the tick started (a scan
+        // may have begun, or the root changed). Bail without
+        // touching anything; the next tick works from the new state.
+        if engine.scanning {
+            return;
+        }
+        let Some(previous) = engine.summary.clone() else {
+            return;
+        };
+        if previous.root != root {
+            return;
+        }
+        let Some(index) = engine.index.clone() else {
+            return;
+        }
+        (index, previous, state.index_generation.load(Ordering::SeqCst))
     };
-    // The world may have moved since the tick started (a scan may
-    // have begun, or the root changed). Bail without touching
-    // anything; the next tick works from the new state.
-    if engine.scanning {
-        return;
-    }
-    // Clone the current summary first (it is the `previous` the
-    // rebuilt summary carries provenance from), so no borrow of the
-    // engine is alive while the index is taken out.
-    let Some(previous) = engine.summary.clone() else {
-        return;
-    };
-    if previous.root != root {
-        return;
-    }
-    let Some(mut index) = engine.index.take() else {
-        return;
-    };
+
+    // Phase 2 — apply + rebuild, holding no lock.
     let report = diskpilot_core::live_apply::apply_changes(
         &mut index,
         Path::new(root),
@@ -426,12 +452,22 @@ fn apply_batch(state: &ShellState, root: &str, changes: &[usn_volume::ResolvedCh
     if report.became_stale {
         set_stale(state, true);
     }
-    if report.removed + report.upserted > 0 {
-        let summary = Scanner::new(root).summarize_existing(&index, &previous);
-        engine.store_scan(summary, index);
-    } else {
-        engine.index = Some(index);
+    if report.removed + report.upserted == 0 {
+        // Nothing sound was applied, so there is nothing to
+        // install; the (possibly stale-marked) live index stands.
+        return;
     }
+    let summary = Scanner::new(root).summarize_existing(&index, &previous);
+
+    // Phase 3 — install, only into the world the snapshot came from.
+    let Ok(mut engine) = state.engine.lock() else {
+        return;
+    };
+    if engine.scanning || state.index_generation.load(Ordering::SeqCst) != generation {
+        return;
+    }
+    engine.store_scan(summary, index);
+    state.index_generation.fetch_add(1, Ordering::SeqCst);
 }
 
 /// The healing path for a stale index: a background rescan through
