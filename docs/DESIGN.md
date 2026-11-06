@@ -126,9 +126,10 @@ right-aligned and tabular, with an optional 2 px meter under the value.
 - **One page shell for every page.** Pages scroll inside a shell with
   24 px gutters and 24 px top padding, and the content column is
   left-aligned so every page title starts on the same left edge.
-  Content pages (Overview, Cleanup, Duplicates, Applications,
-  Developer Tools, Docker, History) use an 880 px column; forms and
-  chat (Settings, Assistant) use a narrower 760 px reading column.
+  Content pages (Overview, Health, Cleanup, Duplicates, Media,
+  Applications, Games, Developer Tools, Docker, Downloads, History)
+  use an 880 px column; forms and chat (Settings, Assistant) use a
+  narrower 760 px reading column.
   Storage is the one full-bleed page, because its tables need the
   width. No page centres its column — a shared left edge is what
   makes ten pages read as one system.
@@ -143,10 +144,11 @@ right-aligned and tabular, with an optional 2 px meter under the value.
 ### Navigation
 
 Sidebar header: logo mark (indigo rounded square with a white gauge
-glyph) + "DiskPilot" at 13 px semibold. Groups: Overview; **Analyze** —
-Storage, Duplicates, Applications, Developer Tools, Docker, Downloads,
-Assistant (only when enabled in Settings); **Clean up** — Cleanup
-(with a trailing count of actionable recommendations), History. The footer,
+glyph) + "DiskPilot" at 13 px semibold. Top-level items: Overview,
+Health. Groups: **Analyze** — Storage, Media, Duplicates, Downloads,
+Assistant (only when enabled in Settings); **System** — Applications,
+Games, Developer Tools, Docker; **Clean up** — Cleanup (with a
+trailing count of actionable recommendations), History. The footer,
 above a hairline, shows scan status (not scanned yet / scanning with an
 indeterminate bar and the current path in 11 px mono / scanned
 <relative time> with the root path) and the Settings nav button.
@@ -339,6 +341,47 @@ separated from the nav by a hairline and 12 px of air.
   light document: wordmark header (accent "Pilot"), figure row,
   hairline tables, a raised forecast panel, and a print stylesheet.
   It never loads external assets.
+- **Health page** — the disk's state as three sections. The header
+  subtitle is the verdict, computed from the worst drive ("All
+  drives look healthy" / "One drive needs attention"). **Drives**
+  extends the Overview's drive rows with a status chip — the tier
+  tag treatment, never a new style: free ≥ 20 % is "Healthy"
+  (safe tier), 10–20 % "Getting low" (review tier), under 10 %
+  "Low space" (critical). **Forecast** is the Overview forecast at
+  page scale — Fills in / Daily growth / Projected full as figures
+  (or the flat/shrinking wording) — over the growth chart: the
+  scan-history series ~140 px tall, scanned size as the accent
+  area + polyline, free space as a muted second line on the same
+  scale, first/last dates and the min–max ranges as captions
+  beneath. Under two history points the section is the instructive
+  empty state instead. **Watch** is a definition-list panel (the
+  Scan details grid inside a hairline panel) restating the
+  schedule, both alert thresholds, sign-in state and last scan,
+  with an "Open Settings" action — Health reports the watch; it
+  never edits it.
+- **Media page** — the scan's photos and videos. A figures row
+  (Photos, Videos, Screenshots — each bytes over its file count;
+  Screenshots is captioned "included in Photos", because it is a
+  subset, never a separate total). Biggest videos and biggest
+  photos are hairline lists: name over a `mono-path` parent folder
+  and date caption, size right-aligned; a row click reveals the
+  file in Explorer. An empty list is a quiet "None found in this
+  scan" line, not an empty state. When look-alike groups exist, a
+  callout strip (the OneDrive card's pattern) states the group
+  count and the extra copies' size and offers "Review in
+  Duplicates" — which opens the Duplicates page on its look-alike
+  view, because the mode lives in the store. Before the first scan
+  the page is the standard empty state.
+- **Games page** — installed Steam and Epic games, read from the
+  launchers' manifests (no scan involved). A figures row (Total in
+  games, Games, Libraries), then one section per library: the
+  source as title, the library path as the description, the
+  library subtotal as the section action; game rows are name over
+  a 2 px accent Size bar (against the library's largest game),
+  size right-aligned, and a Reveal ghost button. A closing notice
+  states the boundary plainly: uninstalls happen in Steam or
+  Epic — DiskPilot never removes game files. No libraries found
+  is the standard medallion empty state.
 
 ## Motion
 
