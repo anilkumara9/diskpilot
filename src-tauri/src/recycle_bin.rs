@@ -13,20 +13,21 @@
 //! ```
 //!
 //! Listing is read-only. Emptying removes exactly the payload + metadata
-//! pairs the UI was shown — items that arrive later are never touched.
-//! The item `id` is the payload's absolute path; before anything is
-//! removed, `validate_item_id` re-checks that the id really points at a
-//! `$R…` payload inside a `$Recycle.Bin` folder with its `$I…` sibling
-//! present, so the command cannot be aimed elsewhere.
+//! pairs the UI was shown, one by one — items that arrive later are
+//! never touched, and there is no whole-bin API call. The item `id` is
+//! the payload's absolute path; before anything is removed,
+//! `validate_item_id` re-checks that the id really points at a `$R…`
+//! payload inside one of the machine's real per-drive `$Recycle.Bin`
+//! roots with its `$I…` sibling present, so the command cannot be
+//! aimed elsewhere — a folder merely *named* `$Recycle.Bin` somewhere
+//! else on disk does not qualify.
 //!
-//! Two more operations live here because they speak the same on-disk
-//! language: restoring one item (move the `$R…` payload back to the
-//! path its `$I…` metadata records, then remove the metadata), and
-//! emptying the whole bin through the shell API
-//! (`SHEmptyRecycleBinW`), which is what Explorer's "Empty Recycle
-//! Bin" does.
+//! Restoring one item lives here too, because it speaks the same
+//! on-disk language: move the `$R…` payload back to the path its
+//! `$I…` metadata records, then remove the metadata. A restore never
+//! overwrites and never lands inside a protected location.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
@@ -46,21 +47,41 @@ pub struct RecycleBinItem {
     pub deleted_at_ms: i64,
 }
 
-/// The system drive's `$Recycle.Bin` root, e.g. `C:\$Recycle.Bin`.
+/// Every real `$Recycle.Bin` root on this machine: `<Drive>:\$Recycle.Bin`
+/// for each drive letter whose bin folder exists. (A `$Recycle.Bin`
+/// directory only exists on a volume Windows has actually recycled
+/// from, so existence is the practical fixed-drive test.) Validation
+/// accepts payload ids only under one of these roots.
 #[cfg(windows)]
-fn recycle_bin_root() -> PathBuf {
-    let drive = std::env::var("SystemDrive").unwrap_or_else(|_| "C:".to_string());
-    PathBuf::from(drive).join("$Recycle.Bin")
+pub fn recycle_bin_roots() -> Vec<PathBuf> {
+    ('A'..='Z')
+        .map(|c| PathBuf::from(format!("{c}:\\$Recycle.Bin")))
+        .filter(|root| root.is_dir())
+        .collect()
 }
 
-/// List every recycled item on the system drive (all user SID folders;
+#[cfg(not(windows))]
+pub fn recycle_bin_roots() -> Vec<PathBuf> {
+    Vec::new()
+}
+
+/// List every recycled item on every drive (all user SID folders;
 /// folders the process cannot read are skipped).
 #[cfg(windows)]
 pub fn list_items() -> Vec<RecycleBinItem> {
-    let root = recycle_bin_root();
     let mut items = Vec::new();
-    let Ok(sid_dirs) = std::fs::read_dir(&root) else {
-        return items;
+    for root in recycle_bin_roots() {
+        list_items_under(&root, &mut items);
+    }
+    items.sort_by_key(|a| std::cmp::Reverse(a.deleted_at_ms));
+    items
+}
+
+/// Append the items of one `$Recycle.Bin` root to `items`.
+#[cfg(windows)]
+fn list_items_under(root: &Path, items: &mut Vec<RecycleBinItem>) {
+    let Ok(sid_dirs) = std::fs::read_dir(root) else {
+        return;
     };
     for sid in sid_dirs.flatten() {
         let sid_path = sid.path();
@@ -94,8 +115,6 @@ pub fn list_items() -> Vec<RecycleBinItem> {
             }
         }
     }
-    items.sort_by_key(|a| std::cmp::Reverse(a.deleted_at_ms));
-    items
 }
 
 #[cfg(not(windows))]
@@ -151,29 +170,141 @@ fn read_utf16(data: &[u8], max_chars: usize) -> String {
     String::from_utf16_lossy(&units)
 }
 
+/// Path comparison for bin roots: one separator style, no trailing
+/// separator, case-insensitive (Windows paths are case-insensitive;
+/// the normalized comparison is harmless on other hosts).
+fn same_path(a: &Path, b: &Path) -> bool {
+    fn norm(p: &Path) -> String {
+        p.to_string_lossy()
+            .replace('/', "\\")
+            .trim_end_matches('\\')
+            .to_lowercase()
+    }
+    norm(a) == norm(b)
+}
+
 /// Validate an item id before removal: it must name a `$R…` payload
-/// inside a `$Recycle.Bin` folder whose `$I…` metadata sibling exists.
-/// Returns `(payload_path, info_path)` on success.
+/// directly inside a SID folder of one of the machine's REAL
+/// `$Recycle.Bin` roots (see `recycle_bin_roots`), with its `$I…`
+/// metadata sibling present. A folder merely named `$Recycle.Bin`
+/// anywhere else does not qualify. Returns `(payload_path,
+/// info_path)` on success.
 pub fn validate_item_id(id: &str) -> Option<(PathBuf, PathBuf)> {
+    validate_item_id_within(id, &recycle_bin_roots())
+}
+
+/// `validate_item_id` against an explicit root set, so the rule is
+/// testable without real drives.
+fn validate_item_id_within(id: &str, roots: &[PathBuf]) -> Option<(PathBuf, PathBuf)> {
     let payload = PathBuf::from(id);
     let file_name = payload.file_name()?.to_string_lossy().into_owned();
     if !file_name.to_uppercase().starts_with("$R") {
         return None;
     }
-    let parent = payload.parent()?;
-    let in_bin = parent
-        .parent()
-        .and_then(|p| p.file_name())
-        .map(|n| n.to_string_lossy().eq_ignore_ascii_case("$Recycle.Bin"))
-        .unwrap_or(false);
-    if !in_bin {
+    let sid_dir = payload.parent()?;
+    let bin_root = sid_dir.parent()?;
+    if !roots.iter().any(|root| same_path(bin_root, root)) {
         return None;
     }
-    let info = parent.join(format!("$I{}", &file_name[2..]));
+    let info = sid_dir.join(format!("$I{}", &file_name[2..]));
     if !info.exists() {
         return None;
     }
     Some((payload, info))
+}
+
+/// Parse the `$I…` metadata paired with a validated payload — the
+/// server-side record of what the item is (original path, size,
+/// deletion time). Callers that report or record an operation use
+/// THIS, never the webview's copy of the item.
+pub fn read_item(payload: &Path, info: &Path) -> Option<RecycleBinItem> {
+    let data = std::fs::read(info).ok()?;
+    parse_info_file(&data, payload)
+}
+
+/// The one definition of "nothing occupies this destination": no
+/// directory entry of any kind exists at the path — a dangling
+/// symlink counts as OCCUPIED, because its metadata is there even
+/// though its target is gone. Restore refuses occupied destinations
+/// and the History restorable-count doesn't count them; both use
+/// this predicate so they can never disagree.
+pub fn destination_is_free(path: &str) -> bool {
+    Path::new(path).symlink_metadata().is_err()
+}
+
+/// Whether a restore destination is off-limits: inside one of the
+/// core safety gate's protected prefixes, a protected system file
+/// name, or a report-only location. The lists come from
+/// `diskpilot_core::safety` (the single source of truth); only the
+/// prefix comparison is local, because the core's own comparison
+/// helper is not public — worth unifying in core later.
+fn destination_is_protected(destination: &Path) -> bool {
+    if diskpilot_core::safety::is_report_only(destination) {
+        return true;
+    }
+    if let Some(name) = destination.file_name() {
+        let name = name.to_string_lossy().to_lowercase();
+        if diskpilot_core::safety::protected_filenames().contains(&name.as_str()) {
+            return true;
+        }
+    }
+    diskpilot_core::safety::protected_prefixes()
+        .iter()
+        .any(|prefix| same_path(destination, prefix) || path_is_below(destination, prefix))
+}
+
+/// Is `path` strictly below `prefix` (component-wise, normalized
+/// like `same_path`)? `C:\WindowsOld` is not below `C:\Windows`.
+fn path_is_below(path: &Path, prefix: &Path) -> bool {
+    fn norm(p: &Path) -> String {
+        p.to_string_lossy()
+            .replace('/', "\\")
+            .trim_end_matches('\\')
+            .to_lowercase()
+    }
+    let (path, prefix) = (norm(path), norm(prefix));
+    path.len() > prefix.len()
+        && path.starts_with(&prefix)
+        && path.as_bytes()[prefix.len()] == b'\\'
+}
+
+/// Move a file, guaranteeing no overwrite. On Windows this is
+/// `MoveFileExW` WITHOUT `MOVEFILE_REPLACE_EXISTING`: the move
+/// itself fails when the destination exists, so the guarantee is
+/// atomic rather than check-then-move. Off Windows (development
+/// hosts only — the bin is empty there) it is the free-check plus
+/// `rename`.
+#[cfg(windows)]
+fn move_no_overwrite(from: &Path, to: &Path) -> std::io::Result<()> {
+    use std::os::windows::ffi::OsStrExt;
+
+    #[link(name = "Kernel32")]
+    extern "system" {
+        fn MoveFileExW(existing: *const u16, new: *const u16, flags: u32) -> i32;
+    }
+
+    let wide = |p: &Path| -> Vec<u16> {
+        p.as_os_str().encode_wide().chain(Some(0)).collect()
+    };
+    let (from_w, to_w) = (wide(from), wide(to));
+    // flags = 0: no REPLACE_EXISTING, no cross-volume copy fallback.
+    let ok = unsafe { MoveFileExW(from_w.as_ptr(), to_w.as_ptr(), 0) };
+    if ok == 0 {
+        Err(std::io::Error::last_os_error())
+    } else {
+        Ok(())
+    }
+}
+
+#[cfg(not(windows))]
+fn move_no_overwrite(from: &Path, to: &Path) -> std::io::Result<()> {
+    if to.symlink_metadata().is_ok() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::AlreadyExists,
+            "destination already exists",
+        ));
+    }
+    std::fs::rename(from, to)
 }
 
 /// Comparison key for matching a recorded original path against a
@@ -221,15 +352,23 @@ pub fn count_restorable(
 /// `$I…` metadata: the `$R…` payload moves back (parent folders are
 /// recreated when the original folder has since been removed) and
 /// the metadata file is deleted. Refuses when anything already sits
-/// at the destination — a restore never overwrites.
+/// at the destination — a restore never overwrites — and when the
+/// destination sits inside a protected location: the metadata is
+/// on-disk data, and a crafted `$I…` must not be able to aim a
+/// restore at system files.
 pub fn restore_item(id: &str) -> Result<(), String> {
     let (payload, info) = validate_item_id(id)
         .ok_or_else(|| "item is no longer in the Recycle Bin".to_string())?;
-    let data = std::fs::read(&info).map_err(|e| format!("could not read item metadata: {e}"))?;
-    let item = parse_info_file(&data, &payload)
+    let item = read_item(&payload, &info)
         .ok_or_else(|| "item metadata is unreadable".to_string())?;
     let destination = PathBuf::from(&item.original_path);
-    if destination.symlink_metadata().is_ok() {
+    if destination_is_protected(&destination) {
+        return Err(format!(
+            "{} is inside a protected location — restore refused",
+            item.original_path
+        ));
+    }
+    if !destination_is_free(&item.original_path) {
         return Err(format!(
             "{} already exists — restore refused",
             item.original_path
@@ -239,7 +378,7 @@ pub fn restore_item(id: &str) -> Result<(), String> {
         std::fs::create_dir_all(parent)
             .map_err(|e| format!("could not recreate the original folder: {e}"))?;
     }
-    std::fs::rename(&payload, &destination)
+    move_no_overwrite(&payload, &destination)
         .map_err(|e| format!("could not restore {}: {e}", item.original_path))?;
     // The payload is home; a metadata file left behind would list a
     // ghost item, so its removal is part of the operation.
@@ -287,6 +426,107 @@ mod tests {
         ];
         let found = find_by_original_path(&items, "D:\\scratch\\a.tmp").unwrap();
         assert_eq!(found.deleted_at_ms, 300);
+    }
+
+    #[test]
+    fn validate_accepts_only_payloads_under_real_bin_roots() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("$Recycle.Bin");
+        let sid = root.join("S-1-5-21-1000");
+        std::fs::create_dir_all(&sid).unwrap();
+        std::fs::write(sid.join("$RABC123.txt"), b"payload").unwrap();
+        std::fs::write(sid.join("$IABC123.txt"), b"metadata").unwrap();
+        let roots = vec![root.clone()];
+
+        // A genuine payload under a real root validates.
+        let id = sid.join("$RABC123.txt").to_string_lossy().into_owned();
+        let (payload, info) = validate_item_id_within(&id, &roots).expect("real bin payload");
+        assert_eq!(payload, sid.join("$RABC123.txt"));
+        assert_eq!(info, sid.join("$IABC123.txt"));
+
+        // The exact same layout under a folder merely NAMED
+        // `$Recycle.Bin` somewhere else does not qualify.
+        let fake_sid = dir.path().join("stash").join("$Recycle.Bin").join("S-1-5-21-1000");
+        std::fs::create_dir_all(&fake_sid).unwrap();
+        std::fs::write(fake_sid.join("$RABC123.txt"), b"payload").unwrap();
+        std::fs::write(fake_sid.join("$IABC123.txt"), b"metadata").unwrap();
+        let fake_id = fake_sid
+            .join("$RABC123.txt")
+            .to_string_lossy()
+            .into_owned();
+        assert!(validate_item_id_within(&fake_id, &roots).is_none());
+
+        // A payload whose `$I…` sibling is gone does not validate.
+        let lone = sid.join("$RLONE99.txt");
+        std::fs::write(&lone, b"payload").unwrap();
+        assert!(
+            validate_item_id_within(&lone.to_string_lossy(), &roots).is_none(),
+            "missing metadata sibling"
+        );
+
+        // Non-payload names under a real root do not validate.
+        let other = sid.join("notes.txt");
+        std::fs::write(&other, b"x").unwrap();
+        assert!(validate_item_id_within(&other.to_string_lossy(), &roots).is_none());
+    }
+
+    #[test]
+    fn restore_destinations_in_protected_locations_are_refused() {
+        assert!(destination_is_protected(Path::new(
+            r"C:\Windows\System32\drivers\etc\hosts"
+        )));
+        assert!(destination_is_protected(Path::new(r"C:\Program Files\App\app.exe")));
+        assert!(destination_is_protected(Path::new(r"C:\pagefile.sys")));
+        assert!(destination_is_protected(Path::new(r"C:\Windows.old\Users\Ana\x.txt")));
+        assert!(!destination_is_protected(Path::new(
+            r"C:\Users\Ana\Downloads\report.pdf"
+        )));
+        assert!(!destination_is_protected(Path::new(r"D:\scratch\a.tmp")));
+        // A lookalike prefix is not the protected folder.
+        assert!(!destination_is_protected(Path::new(r"C:\WindowsOld\file.txt")));
+    }
+
+    #[test]
+    fn destination_free_means_no_directory_entry_at_all() {
+        let dir = tempfile::tempdir().unwrap();
+        let missing = dir.path().join("gone.txt");
+        assert!(destination_is_free(&missing.to_string_lossy()));
+        let present = dir.path().join("here.txt");
+        std::fs::write(&present, b"x").unwrap();
+        assert!(!destination_is_free(&present.to_string_lossy()));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_dangling_symlink_counts_as_occupied() {
+        let dir = tempfile::tempdir().unwrap();
+        let link = dir.path().join("link.txt");
+        std::os::unix::fs::symlink(dir.path().join("no-such-target"), &link).unwrap();
+        assert!(
+            !destination_is_free(&link.to_string_lossy()),
+            "the link itself occupies the destination even though its target is gone"
+        );
+    }
+
+    #[test]
+    fn move_no_overwrite_moves_once_and_then_refuses() {
+        let dir = tempfile::tempdir().unwrap();
+        let from = dir.path().join("$R1.txt");
+        let to = dir.path().join("restored.txt");
+        std::fs::write(&from, b"payload").unwrap();
+        move_no_overwrite(&from, &to).unwrap();
+        assert_eq!(std::fs::read(&to).unwrap(), b"payload");
+        assert!(!from.exists());
+
+        let second = dir.path().join("$R2.txt");
+        std::fs::write(&second, b"other").unwrap();
+        assert!(move_no_overwrite(&second, &to).is_err());
+        assert_eq!(
+            std::fs::read(&to).unwrap(),
+            b"payload",
+            "the existing destination is untouched"
+        );
+        assert!(second.exists(), "the refused payload stays in place");
     }
 
     #[test]
