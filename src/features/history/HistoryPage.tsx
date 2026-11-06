@@ -3,13 +3,13 @@ import { History as HistoryIcon, Search, Sparkles } from "lucide-react";
 import * as api from "@/lib/api";
 import { useAppStore } from "@/lib/store";
 import { displayPath, formatBytes, formatDate } from "@/lib/format";
+import { historyDetail, operationTitle } from "@/lib/history";
 import type { HistoryEntry, RestoreCleanupRunResult } from "@/lib/types";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { Input } from "@/components/ui/input";
 import { SkeletonRows } from "@/components/ui/skeleton";
 import { CopyButton } from "@/components/shared/CopyButton";
 import { EmptyState } from "@/components/shared/EmptyState";
-import { MarkerTag } from "@/components/shared/MarkerTag";
 import { RestoreRunAction } from "./RestoreRunAction";
 
 export function CleanupHistory({
@@ -33,12 +33,12 @@ export function CleanupHistory({
       </p>
       <ul className="divide-y divide-border border-t border-border">
         {entries.map((entry) => {
+          const detail = historyDetail(entry.detail);
           return (
             <li key={entry.id} className="py-3">
               <div className="flex items-center gap-2.5">
                 <Sparkles className="size-4 shrink-0 text-muted" aria-hidden="true" />
-                <p className="min-w-0 flex-1 truncate text-[13px] font-medium text-foreground">{entry.operation}</p>
-                <MarkerTag>{entry.operation}</MarkerTag>
+                <p className="min-w-0 flex-1 truncate text-[13px] font-medium text-foreground">{operationTitle(entry.operation)}</p>
                 <span className="text-[12px] tabular text-muted">{formatDate(entry.timestampMs)}</span>
                 {entry.reclaimedBytes > 0 ? (
                   <span className="w-[92px] text-right text-[13px] tabular text-tier-safe">{formatBytes(entry.reclaimedBytes)}</span>
@@ -46,8 +46,10 @@ export function CleanupHistory({
                   <span className="w-[92px] text-right text-[13px] tabular text-muted">—</span>
                 )}
               </div>
-              {entry.detail ? (
-                <p className="mono-path mt-1 pl-[26px] text-subtle">{entry.detail}</p>
+              {detail?.kind === "text" ? (
+                <p className="mt-1 pl-[26px] text-[12px] leading-4 text-muted">{detail.text}</p>
+              ) : detail?.kind === "reference" ? (
+                <p className="mt-1 pl-[26px] text-[11px] leading-[14px] text-subtle">{detail.label}</p>
               ) : null}
               {entry.paths.length > 0 ? (
                 <ul className="mt-1 space-y-0.5 pl-[26px]">
@@ -112,6 +114,7 @@ export function HistoryPage() {
     return entries.filter(
       (e) =>
         e.operation.toLowerCase().includes(q) ||
+        operationTitle(e.operation).toLowerCase().includes(q) ||
         (e.detail ?? "").toLowerCase().includes(q) ||
         e.paths.some((p) => p.toLowerCase().includes(q)),
     );

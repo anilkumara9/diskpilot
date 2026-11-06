@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { CheckCircle2, Undo2 } from "lucide-react";
+import { AlertTriangle, CheckCircle2, Undo2 } from "lucide-react";
 import * as api from "@/lib/api";
 import type { HistoryEntry, RestoreCleanupRunResult } from "@/lib/types";
 import { Button } from "@/components/ui/button";
@@ -21,18 +21,32 @@ function items(count: number): string {
 }
 
 export function RestoreResultBanner({ result }: { result: RestoreCleanupRunResult }) {
+  /* Zero restored is not a success and must not wear its colours:
+     the banner leads with what actually happened and the reason. */
+  const nothingRestored = result.restored.length === 0;
   return (
     <div className="rounded-[10px] border border-border bg-panel-raised px-3 py-2">
-      <p className="flex items-center gap-1.5 text-[12px] leading-4 text-foreground">
-        <CheckCircle2 className="size-3.5 shrink-0 text-tier-safe" aria-hidden="true" />
-        Restored {items(result.restored.length)} to their original locations.
-      </p>
-      {result.failed.length > 0 ? (
+      {nothingRestored ? (
+        <p className="flex items-center gap-1.5 text-[12px] leading-4 text-foreground">
+          <AlertTriangle className="size-3.5 shrink-0 text-tier-review" aria-hidden="true" />
+          Nothing could be restored
+          {result.failed.length > 0 ? <> — {result.failed[0].error}</> : null}
+          {result.failed.length === 0 && result.skippedPermanent > 0 ? (
+            <> — the run&rsquo;s items were permanently deleted.</>
+          ) : null}
+        </p>
+      ) : (
+        <p className="flex items-center gap-1.5 text-[12px] leading-4 text-foreground">
+          <CheckCircle2 className="size-3.5 shrink-0 text-tier-safe" aria-hidden="true" />
+          Restored {items(result.restored.length)} to their original locations.
+        </p>
+      )}
+      {!nothingRestored && result.failed.length > 0 ? (
         <p className="mt-1 text-[12px] leading-4 text-critical">
           {result.failed.length} couldn&rsquo;t be restored — {result.failed[0].error}
         </p>
       ) : null}
-      {result.skippedPermanent > 0 ? (
+      {result.skippedPermanent > 0 && !(nothingRestored && result.failed.length === 0) ? (
         <p className="mt-1 text-[12px] leading-4 text-muted">
           {items(result.skippedPermanent)} were permanently deleted and can&rsquo;t be restored.
         </p>

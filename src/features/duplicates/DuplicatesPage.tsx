@@ -1,8 +1,9 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Copy, FolderOpen, Images, ShieldCheck } from "lucide-react";
 import * as api from "@/lib/api";
 import { useAppStore } from "@/lib/store";
 import { basename, displayPath, formatBytes, formatCount, formatDate } from "@/lib/format";
+import { tabIndexForKey } from "@/lib/tabs";
 import type {
   CleanupFailure,
   CleanupResult,
@@ -46,14 +47,32 @@ interface ReviewGroup {
  */
 export function groupWastedBytes(group: DuplicateGroup, keeperPath: string | undefined): number {
   const keeper = keeperPath ?? group.files[0]?.path;
+  const removing = new Set(group.files.filter((f) => f.path !== keeper).map((f) => f.path));
+  return groupSelectedWastedBytes(group, keeper, removing);
+}
+
+/**
+ * The same inode-aware math for removing an arbitrary SUBSET of a
+ * group (the review dialog's selection): the shared inode's bytes
+ * count once, and only when every member of the inode set is in
+ * the removal set; other copies count individually. Summing raw
+ * file sizes instead would overstate the reclaim for hard-link
+ * groups — the dialog total must match the page header's rule.
+ */
+export function groupSelectedWastedBytes(
+  group: DuplicateGroup,
+  keeperPath: string | undefined,
+  selectedPaths: ReadonlySet<string>,
+): number {
+  const keeper = keeperPath ?? group.files[0]?.path;
   const inodeSet = group.files.filter((f, i) => i === 0 || f.isHardlink);
-  const inodeRemoved = inodeSet.filter((f) => f.path !== keeper);
+  const inodeRemoved = inodeSet.filter((f) => selectedPaths.has(f.path));
   const inodeFreed =
     inodeSet.length > 0 && inodeRemoved.length === inodeSet.length
       ? (inodeSet[0]?.bytes ?? 0)
       : 0;
   const rest = group.files
-    .filter((f, i) => i !== 0 && !f.isHardlink && f.path !== keeper)
+    .filter((f, i) => i !== 0 && !f.isHardlink && f.path !== keeper && selectedPaths.has(f.path))
     .reduce((acc, f) => acc + f.bytes, 0);
   return inodeFreed + rest;
 }
@@ -74,14 +93,32 @@ export function DuplicatesModeSwitch({
     { id: "exact", label: "Exact copies" },
     { id: "similar", label: "Look-alike photos" },
   ];
+  const selectedIndex = options.findIndex((o) => o.id === mode);
+  const buttonRefs = useRef<(HTMLButtonElement | null)[]>([]);
+
+  /* Same tabs pattern as the Storage tabs: roving tabindex,
+     Left/Right/Home/End move and select together. */
+  const onKeyDown = (event: React.KeyboardEvent, index: number) => {
+    const next = tabIndexForKey(index, event.key, options.length);
+    if (next === null) return;
+    event.preventDefault();
+    onChange(options[next].id);
+    buttonRefs.current[next]?.focus();
+  };
+
   return (
     <div role="tablist" aria-label="Duplicate views" className="flex gap-1 rounded-md bg-panel-raised p-1">
-      {options.map((option) => (
+      {options.map((option, index) => (
         <button
           key={option.id}
+          ref={(el) => {
+            buttonRefs.current[index] = el;
+          }}
           role="tab"
           aria-selected={mode === option.id}
+          tabIndex={index === selectedIndex ? 0 : -1}
           onClick={() => onChange(option.id)}
+          onKeyDown={(e) => onKeyDown(e, index)}
           className={cn(
             "h-6 rounded-[5px] px-3 text-[12px] font-medium transition-colors duration-120",
             mode === option.id
@@ -115,7 +152,7 @@ function ExactDuplicatesView({
   const [failures, setFailures] = useState<CleanupFailure[]>([]);
   const [revealError, setRevealError] = useState<string | null>(null);
 
-  const loadGroups = async () => {
+  const loadGroups = useCallback(async () => {
     const rows = await api.findDuplicates();
     setGroups(rows);
     setKeepers((prev) => {
@@ -130,18 +167,17 @@ function ExactDuplicatesView({
       return next;
     });
     return rows;
-  };
+  }, []);
 
+  /* Loads on open and again whenever a scan finishes — the groups
+     describe the latest scan's index, so a new scan replaces them
+     (and any selection made against the old one). */
+  const finishedAtMs = useAppStore((s) => s.summary?.finishedAtMs);
   useEffect(() => {
     let live = true;
-    api
-      .findDuplicates()
-      .then((rows) => {
-        if (!live) return;
-        setGroups(rows);
-        const defaults: Record<string, string> = {};
-        for (const group of rows) defaults[group.hash] = group.files[0]?.path ?? "";
-        setKeepers(defaults);
+    loadGroups()
+      .then(() => {
+        if (live) setSelected(new Set());
       })
       .catch((err: unknown) => {
         if (live) setError(err instanceof Error ? err.message : "Duplicates could not be loaded.");
@@ -149,7 +185,7 @@ function ExactDuplicatesView({
     return () => {
       live = false;
     };
-  }, []);
+  }, [finishedAtMs, loadGroups]);
 
   const wastedTotal = useMemo(
     () =>
@@ -160,14 +196,17 @@ function ExactDuplicatesView({
     [groups, keepers],
   );
 
+  /* What removing the current selection actually frees — the same
+     inode-aware math as the page header's wasted totals, applied
+     to the selected subset. */
   const selectedBytes = useMemo(() => {
     if (!groups) return 0;
     let total = 0;
     for (const group of groups) {
-      for (const file of group.files) if (selected.has(file.path)) total += file.bytes;
+      total += groupSelectedWastedBytes(group, keepers[group.hash], selected);
     }
     return total;
-  }, [groups, selected]);
+  }, [groups, selected, keepers]);
 
   /** Selected paths grouped by duplicate group, with each group's keeper. */
   const reviewGroups = useMemo<ReviewGroup[]>(() => {
@@ -176,14 +215,12 @@ function ExactDuplicatesView({
     for (const group of groups) {
       const paths = group.files.filter((f) => selected.has(f.path)).map((f) => f.path);
       if (paths.length === 0) continue;
+      const keeper = keepers[group.hash] ?? group.files[0]?.path ?? "";
       out.push({
         group,
-        keeper: keepers[group.hash] ?? group.files[0]?.path ?? "",
+        keeper,
         paths,
-        bytes: paths.reduce(
-          (acc, p) => acc + (group.files.find((f) => f.path === p)?.bytes ?? 0),
-          0,
-        ),
+        bytes: groupSelectedWastedBytes(group, keeper, new Set(paths)),
       });
     }
     return out;
@@ -441,10 +478,12 @@ function SimilarImagesView({
   onModeChange: (mode: DuplicatesMode) => void;
 }) {
   const homeDir = useAppStore((s) => s.env?.homeDir);
+  const finishedAtMs = useAppStore((s) => s.summary?.finishedAtMs);
   const [groups, setGroups] = useState<SimilarGroup[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [revealError, setRevealError] = useState<string | null>(null);
 
+  /* Reloads whenever a scan finishes, like the exact-copies view. */
   useEffect(() => {
     let live = true;
     api
@@ -458,7 +497,7 @@ function SimilarImagesView({
     return () => {
       live = false;
     };
-  }, []);
+  }, [finishedAtMs]);
 
   const wastedTotal = useMemo(
     () => (groups ?? []).reduce((acc, g) => acc + g.wastedBytes, 0),
