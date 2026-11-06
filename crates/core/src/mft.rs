@@ -65,7 +65,9 @@ pub fn parse_boot_sector(bytes: &[u8]) -> Result<BootSector, MftError> {
         return Err(MftError::BadBootSector("zero sectors-per-cluster"));
     }
     let cluster_bytes = if spc_raw & 0x80 != 0 {
-        let shift = (-(spc_raw as i8)) as u32;
+        // Widen before negating: 0x80 read as i8 is -128, whose
+        // negation overflows i8 (a panic in debug builds).
+        let shift = (-(spc_raw as i8 as i32)) as u32;
         if shift > 24 {
             return Err(MftError::BadBootSector("implausible cluster size"));
         }
@@ -282,6 +284,14 @@ pub fn parse_record(bytes: &[u8], boot: &BootSector) -> Result<Option<RawRecord>
             want: record_size,
         });
     }
+    // A boot sector built by hand (the struct's fields are public)
+    // could describe a geometry too small to hold the fixed record
+    // header fields this parser reads (up to offset 48) or a zero
+    // sector size the fixup arithmetic divides by. `parse_boot_sector`
+    // never produces those; treat them as unusable, never a panic.
+    if record_size < 48 || boot.bytes_per_sector == 0 {
+        return Ok(None);
+    }
     let rec = &bytes[..record_size];
     if &rec[0..4] != b"FILE" {
         return Ok(None);
@@ -337,7 +347,12 @@ pub fn parse_record(bytes: &[u8], boot: &BootSector) -> Result<Option<RawRecord>
         }
         let non_resident = fixed[pos + 8] != 0;
         let attr_name_len = fixed[pos + 9] as usize;
-        let content = if non_resident {
+        // A resident attribute's content fields (length at +16,
+        // offset at +20) live inside a 24-byte header; a shorter
+        // attribute is malformed and yields no content. The guard
+        // keeps those reads inside the record whatever `attr_len`
+        // a damaged record claims (it is only known to be ≥ 16).
+        let content = if non_resident || attr_len < 24 {
             None
         } else {
             let value_len = read_u32(&fixed, pos + 16) as usize;
@@ -372,7 +387,14 @@ pub fn parse_record(bytes: &[u8], boot: &BootSector) -> Result<Option<RawRecord>
                 }
             }
             ATTR_DATA if attr_name_len == 0 && record.data.is_none() => {
-                record.data = Some(parse_data(&fixed, pos, non_resident, boot));
+                // A $DATA header too truncated to hold its kind's
+                // fixed fields makes the whole record untrustworthy:
+                // skip it (counted by the caller as unparsed) rather
+                // than guess at sizes.
+                match parse_data(&fixed, pos, non_resident, boot) {
+                    Some(data) => record.data = Some(data),
+                    None => return Ok(None),
+                }
             }
             _ => {}
         }
@@ -439,10 +461,31 @@ fn parse_attr_list(c: &[u8]) -> Vec<AttrListEntry> {
     entries
 }
 
-fn parse_data(rec: &[u8], pos: usize, non_resident: bool, boot: &BootSector) -> DataInfo {
+/// Header extent of a resident attribute (content length at +16,
+/// content offset at +20).
+const RESIDENT_HEADER: usize = 24;
+/// Header extent of a non-resident attribute (real size at +48,
+/// initialized size at +56).
+const NONRESIDENT_HEADER: usize = 64;
+
+/// Parse the unnamed $DATA attribute at `pos`. Returns `None` when
+/// the attribute is too short to hold its kind's full header within
+/// the record — the attribute loop only guarantees `attr_len ≥ 16`,
+/// while a non-resident header spans 64 bytes, so a damaged record
+/// can place a header whose fields would fall outside the record
+/// entirely. The caller treats that as an unusable record.
+///
+/// The computed allocation is saturating throughout and bounded by
+/// the volume's total size: no runlist, however corrupt, can make a
+/// file "occupy" more than the volume holds.
+fn parse_data(rec: &[u8], pos: usize, non_resident: bool, boot: &BootSector) -> Option<DataInfo> {
+    let attr_len = read_u32(rec, pos + 4) as usize;
     if !non_resident {
+        if attr_len < RESIDENT_HEADER || pos + RESIDENT_HEADER > rec.len() {
+            return None;
+        }
         let content_len = read_u32(rec, pos + 16) as u64;
-        return DataInfo {
+        return Some(DataInfo {
             lowest_vcn: 0,
             real_size: content_len,
             // Resident data lives inside the file record: the file's
@@ -450,10 +493,12 @@ fn parse_data(rec: &[u8], pos: usize, non_resident: bool, boot: &BootSector) -> 
             allocated_bytes: boot.record_size as u64,
             resident: true,
             runs: Vec::new(),
-        };
+        });
+    }
+    if attr_len < NONRESIDENT_HEADER || pos + NONRESIDENT_HEADER > rec.len() {
+        return None;
     }
     let run_ofs = read_u16(rec, pos + 32) as usize;
-    let attr_len = read_u32(rec, pos + 4) as usize;
     let runs = if run_ofs < attr_len {
         parse_runlist(&rec[pos + run_ofs..pos + attr_len])
     } else {
@@ -462,16 +507,18 @@ fn parse_data(rec: &[u8], pos: usize, non_resident: bool, boot: &BootSector) -> 
     let allocated = runs
         .iter()
         .filter(|r| !r.is_sparse())
-        .map(|r| r.length_clusters)
-        .sum::<u64>()
+        .fold(0u64, |acc, r| acc.saturating_add(r.length_clusters))
         .saturating_mul(boot.cluster_bytes as u64);
-    DataInfo {
+    let volume_bytes = boot
+        .total_sectors
+        .saturating_mul(boot.bytes_per_sector as u64);
+    Some(DataInfo {
         lowest_vcn: read_u64(rec, pos + 16),
         real_size: read_u64(rec, pos + 48),
-        allocated_bytes: allocated,
+        allocated_bytes: allocated.min(volume_bytes),
         resident: false,
         runs,
-    }
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -544,13 +591,18 @@ pub(crate) fn namespace_rank(namespace: u8) -> u8 {
 /// record also has a non-DOS name there. A parent holding *only* a
 /// DOS name keeps it — old volumes have files with nothing else.
 pub(crate) fn record_links(merged_names: &[FileName]) -> Vec<(u64, FileName)> {
-    // Best namespace per (parent, name).
+    // Best namespace per (parent, name). Names are matched
+    // case-insensitively: Windows lookups are, so two names in one
+    // parent that differ only by case are the same link spelled
+    // twice (possible across namespaces, e.g. a POSIX-created odd
+    // case next to its Win32 name) — counting both would invent a
+    // file the walker never enumerates. The surviving entry keeps
+    // the best-ranked namespace's spelling.
     let mut best: Vec<(u64, FileName)> = Vec::new();
     for name in merged_names {
-        if let Some(slot) = best
-            .iter_mut()
-            .find(|(p, n)| *p == name.parent_ref && n.name == name.name)
-        {
+        if let Some(slot) = best.iter_mut().find(|(p, n)| {
+            *p == name.parent_ref && n.name.to_lowercase() == name.name.to_lowercase()
+        }) {
             if namespace_rank(name.namespace) < namespace_rank(slot.1.namespace) {
                 slot.1 = name.clone();
             }
@@ -568,11 +620,45 @@ pub(crate) fn record_links(merged_names: &[FileName]) -> Vec<(u64, FileName)> {
     best
 }
 
+/// What path resolution needs to know about one ancestor record,
+/// computed once per record and cached: the naive assembly
+/// recomputed this (merged names, link resolution, reparse check)
+/// for every descendant, which made deep trees quadratic in
+/// practice — a 1,500-deep chain took tens of seconds. With these
+/// caches, assembly is linear in records × chain depth walked
+/// *once* per directory.
+#[derive(Debug, Clone)]
+struct AncestorInfo {
+    in_use: bool,
+    reparse: bool,
+    /// The ancestor's own primary link: (parent record, name).
+    link: Option<(u64, String)>,
+}
+
+/// Why a directory's path cannot be resolved.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ChainFail {
+    /// An ancestor is missing, deleted, nameless, or part of a
+    /// parent cycle.
+    Orphan,
+    /// An ancestor is a reparse point.
+    UnderReparse,
+}
+
 /// Index of everything assembly needs to look up by record number.
 struct AssemblyIndex<'a> {
     by_number: std::collections::HashMap<u64, &'a RawRecord>,
     /// base record number → its extension record numbers.
     extensions_of: std::collections::HashMap<u64, Vec<u64>>,
+    /// Merged $FILE_NAME lists, computed at most once per record.
+    names_cache: std::cell::RefCell<std::collections::HashMap<u64, Vec<FileName>>>,
+    /// Per-record ancestor facts, computed at most once per record.
+    ancestor_cache: std::cell::RefCell<std::collections::HashMap<u64, AncestorInfo>>,
+    /// Resolved directory paths (record number → full path or the
+    /// reason it cannot resolve), with path compression: resolving
+    /// one directory caches every ancestor walked through.
+    path_cache:
+        std::cell::RefCell<std::collections::HashMap<u64, Result<String, ChainFail>>>,
 }
 
 impl<'a> AssemblyIndex<'a> {
@@ -592,6 +678,9 @@ impl<'a> AssemblyIndex<'a> {
         Self {
             by_number,
             extensions_of,
+            names_cache: Default::default(),
+            ancestor_cache: Default::default(),
+            path_cache: Default::default(),
         }
     }
 
@@ -628,11 +717,107 @@ impl<'a> AssemblyIndex<'a> {
     }
 
     fn merged_names(&self, base: &RawRecord) -> Vec<FileName> {
+        if let Some(cached) = self.names_cache.borrow().get(&base.number) {
+            return cached.clone();
+        }
         let mut names = Vec::new();
         for rec in self.instance_records(base) {
             names.extend(rec.names.iter().cloned());
         }
+        self.names_cache
+            .borrow_mut()
+            .insert(base.number, names.clone());
         names
+    }
+
+    /// The cached ancestor facts for one record: in-use, reparse,
+    /// and its primary (parent, name) link — the best link by
+    /// namespace rank, then name (directories have exactly one link
+    /// in practice; hard-linked directories cannot be created
+    /// through Win32). `None` when the record is absent.
+    fn ancestor_info(&self, number: u64) -> Option<AncestorInfo> {
+        if let Some(cached) = self.ancestor_cache.borrow().get(&number) {
+            return Some(cached.clone());
+        }
+        let record = self.get(number)?;
+        let names = self.merged_names(record);
+        let link = record_links(&names)
+            .into_iter()
+            .min_by(|a, b| {
+                namespace_rank(a.1.namespace)
+                    .cmp(&namespace_rank(b.1.namespace))
+                    .then(a.1.name.cmp(&b.1.name))
+            })
+            .map(|(parent, link)| (parent, link.name));
+        let info = AncestorInfo {
+            in_use: record.in_use,
+            reparse: self.is_reparse(record),
+            link,
+        };
+        self.ancestor_cache
+            .borrow_mut()
+            .insert(number, info.clone());
+        Some(info)
+    }
+
+    /// The full path of the directory with the given record number
+    /// (the root's path is the empty string, so an entry's path is
+    /// `dir_path(parent) + "\\" + name`). Walks up from `number`
+    /// until it reaches the root or an already-resolved directory,
+    /// then folds the collected segments back down, caching every
+    /// directory passed — each directory's chain is walked once
+    /// per assembly, not once per descendant.
+    fn dir_path(&self, number: u64, root_number: u64) -> Result<String, ChainFail> {
+        // (record number, its own name) pairs awaiting a base path,
+        // leaf-first.
+        let mut pending: Vec<(u64, String)> = Vec::new();
+        let mut visited: std::collections::HashSet<u64> = std::collections::HashSet::new();
+        let mut cur = number;
+        let base: Result<String, ChainFail>;
+        loop {
+            if cur == root_number {
+                base = Ok(String::new());
+                break;
+            }
+            if let Some(cached) = self.path_cache.borrow().get(&cur) {
+                base = cached.clone();
+                break;
+            }
+            if !visited.insert(cur) {
+                base = Err(ChainFail::Orphan); // parent cycle
+                break;
+            }
+            let Some(info) = self.ancestor_info(cur) else {
+                base = Err(ChainFail::Orphan); // missing ancestor
+                break;
+            };
+            if !info.in_use {
+                base = Err(ChainFail::Orphan); // deleted ancestor
+                break;
+            }
+            if info.reparse {
+                base = Err(ChainFail::UnderReparse);
+                break;
+            }
+            let Some((parent, name)) = info.link else {
+                base = Err(ChainFail::Orphan); // nameless ancestor
+                break;
+            };
+            pending.push((cur, name));
+            cur = parent;
+        }
+        // Fold back down: every pending directory's path extends
+        // the base by its own name, and is cached — including
+        // failures, which are deterministic for a fixed record set.
+        let mut resolved = base;
+        for (num, name) in pending.iter().rev() {
+            resolved = match &resolved {
+                Ok(parent_path) => Ok(format!("{parent_path}\\{name}")),
+                Err(fail) => Err(*fail),
+            };
+            self.path_cache.borrow_mut().insert(*num, resolved.clone());
+        }
+        resolved
     }
 
     /// Merged $DATA for a base record: total real size and summed
@@ -674,52 +859,6 @@ impl<'a> AssemblyIndex<'a> {
         self.instance_records(base)
             .iter()
             .any(|rec| rec.is_reparse())
-    }
-}
-
-/// Walk from `record`'s parent up to the root, returning the path
-/// segments (leaf-first) or the reason the chain cannot be walked.
-enum Chain {
-    Segments(Vec<String>),
-    Orphan,
-    UnderReparse,
-}
-
-fn build_chain(index: &AssemblyIndex, parent_ref: u64, leaf_name: &str, root_number: u64) -> Chain {
-    let mut segments = vec![leaf_name.to_string()];
-    let mut visited: std::collections::HashSet<u64> = std::collections::HashSet::new();
-    let mut cur = parent_ref;
-    loop {
-        if cur == root_number {
-            return Chain::Segments(segments);
-        }
-        if !visited.insert(cur) {
-            return Chain::Orphan; // parent cycle
-        }
-        let Some(ancestor) = index.get(cur) else {
-            return Chain::Orphan;
-        };
-        if !ancestor.in_use {
-            return Chain::Orphan;
-        }
-        if index.is_reparse(ancestor) {
-            return Chain::UnderReparse;
-        }
-        // The ancestor's own primary link: the best (parent, name)
-        // among its merged names (directories have exactly one link
-        // in practice; hard-linked directories cannot be created
-        // through Win32).
-        let names = index.merged_names(ancestor);
-        let links = record_links(&names);
-        let Some((next_parent, link)) = links.into_iter().min_by(|a, b| {
-            namespace_rank(a.1.namespace)
-                .cmp(&namespace_rank(b.1.namespace))
-                .then(a.1.name.cmp(&b.1.name))
-        }) else {
-            return Chain::Orphan;
-        };
-        segments.push(link.name.clone());
-        cur = next_parent;
     }
 }
 
@@ -796,13 +935,9 @@ pub fn assemble_with_stats(records: &[RawRecord]) -> (Vec<MftEntry>, AssemblySta
         let reparse = index.is_reparse(record);
         let links = record_links(&names);
         for (parent_ref, link) in links {
-            match build_chain(&index, parent_ref, &link.name, root_number) {
-                Chain::Segments(segments) => {
-                    let mut path = String::new();
-                    for seg in segments.iter().rev() {
-                        path.push('\\');
-                        path.push_str(seg);
-                    }
+            match index.dir_path(parent_ref, root_number) {
+                Ok(parent_path) => {
+                    let path = format!("{parent_path}\\{}", link.name);
                     if reparse {
                         stats.skipped_reparse_paths.push(path);
                         continue;
@@ -824,8 +959,8 @@ pub fn assemble_with_stats(records: &[RawRecord]) -> (Vec<MftEntry>, AssemblySta
                         modified_ms: index.modified_ms(record).unwrap_or(link.modified_ms),
                     });
                 }
-                Chain::Orphan => stats.orphaned_entries += 1,
-                Chain::UnderReparse => stats.under_reparse_entries += 1,
+                Err(ChainFail::Orphan) => stats.orphaned_entries += 1,
+                Err(ChainFail::UnderReparse) => stats.under_reparse_entries += 1,
             }
         }
     }

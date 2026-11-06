@@ -538,3 +538,176 @@ fn filetime_converts() {
     assert_eq!(filetime_to_unix_ms(0), 0);
     assert_eq!(filetime_to_unix_ms(1), 0); // before the epoch → 0
 }
+
+// ---------------------------------------------------------------------------
+// Regression: truncated $DATA headers must skip the record, not panic
+// ---------------------------------------------------------------------------
+
+/// Build a raw 1024-byte record whose attribute walk reaches a
+/// $DATA attribute header at `attr_ofs` claiming `attr_len` bytes,
+/// with the USA fixup applied over the top. A filler attribute of an
+/// ignored type bridges from the first-attribute offset to
+/// `attr_ofs`.
+fn record_with_late_data(attr_ofs: usize, attr_len: u32, non_resident: bool) -> Vec<u8> {
+    let record_size = RECORD as usize;
+    let usa_ofs = 0x30usize;
+    let first_attr = 56usize;
+    let mut buf = vec![0u8; record_size];
+    buf[0..4].copy_from_slice(b"FILE");
+    buf[4..6].copy_from_slice(&(usa_ofs as u16).to_le_bytes());
+    buf[6..8].copy_from_slice(&3u16.to_le_bytes()); // 2 sectors + 1
+    buf[20..22].copy_from_slice(&(first_attr as u16).to_le_bytes());
+    buf[22..24].copy_from_slice(&0x0001u16.to_le_bytes()); // in use
+    if attr_ofs > first_attr {
+        // Filler attribute (type 0x60: parsed by nobody) spanning
+        // first_attr..attr_ofs.
+        buf[first_attr..first_attr + 4].copy_from_slice(&0x60u32.to_le_bytes());
+        buf[first_attr + 4..first_attr + 8]
+            .copy_from_slice(&((attr_ofs - first_attr) as u32).to_le_bytes());
+    }
+    buf[attr_ofs..attr_ofs + 4].copy_from_slice(&ATTR_DATA.to_le_bytes());
+    buf[attr_ofs + 4..attr_ofs + 8].copy_from_slice(&attr_len.to_le_bytes());
+    buf[attr_ofs + 8] = u8::from(non_resident);
+    // USA fixup, exactly as RecordBuilder::finish applies it.
+    let usn = 7u16;
+    buf[usa_ofs..usa_ofs + 2].copy_from_slice(&usn.to_le_bytes());
+    for i in 0..2 {
+        let tail = (i + 1) * (SECTOR as usize) - 2;
+        let original = read_u16(&buf, tail);
+        buf[usa_ofs + 2 + i * 2..usa_ofs + 4 + i * 2].copy_from_slice(&original.to_le_bytes());
+        buf[tail..tail + 2].copy_from_slice(&usn.to_le_bytes());
+    }
+    buf
+}
+
+#[test]
+fn truncated_nonresident_data_header_skips_record() {
+    // $DATA at offset 1000 claiming the minimum 16 bytes: a
+    // non-resident header spans 64, so its real-size field would
+    // land past the end of the record. This panicked before the
+    // header-extent check existed.
+    let buf = record_with_late_data(1000, 16, true);
+    assert_eq!(parse_record(&buf, &boot()).unwrap(), None);
+}
+
+#[test]
+fn truncated_resident_data_header_skips_record() {
+    // Resident $DATA at 1008 with attr_len 16: even the content
+    // length field (at +16) falls outside the record.
+    let buf = record_with_late_data(1008, 16, false);
+    assert_eq!(parse_record(&buf, &boot()).unwrap(), None);
+}
+
+#[test]
+fn truncated_header_sweep_never_panics() {
+    for attr_ofs in (56..=1008).step_by(8) {
+        for attr_len in [0u32, 8, 16, 24, 32, 64, 128] {
+            for non_resident in [false, true] {
+                let buf = record_with_late_data(attr_ofs, attr_len, non_resident);
+                // Any Ok result is acceptable (usable record or a
+                // counted skip); a panic is the failure.
+                let _ = parse_record(&buf, &boot());
+            }
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Regression: runlist arithmetic saturates and stays inside the volume
+// ---------------------------------------------------------------------------
+
+#[test]
+fn runlist_allocation_is_bounded_by_the_volume() {
+    // One run of 200,000 clusters × 4096 B = 819.2 MB on a fixture
+    // volume of 1,000,000 × 512 B = 512 MB.
+    let runlist = [0x13, 0x40, 0xD4, 0x03, 0x04, 0x00];
+    let rec = RecordBuilder::new(40, true, false, 0)
+        .resident(ATTR_FILE_NAME, &file_name(5, 1, "huge.bin", 0))
+        .data_nonresident(0, 1234, &runlist)
+        .finish(7);
+    let parsed = parse(&rec);
+    let data = parsed.data.expect("data instance");
+    assert_eq!(data.allocated_bytes, 512_000_000);
+    assert_eq!(data.real_size, 1234);
+}
+
+#[test]
+fn boot_sector_0x80_sectors_per_cluster_is_an_error_not_a_panic() {
+    // 0x80 as i8 is -128; negating it in i8 overflows (debug panic).
+    // Widened, it is a shift of 128 — implausible, so a clean error.
+    let bytes = boot_bytes(512, 0x80, -10);
+    assert!(matches!(
+        parse_boot_sector(&bytes),
+        Err(MftError::BadBootSector(_))
+    ));
+}
+
+// ---------------------------------------------------------------------------
+// Regression: case-variant names in one parent are one link
+// ---------------------------------------------------------------------------
+
+#[test]
+fn case_variant_names_dedupe_to_one_link() {
+    let file = RecordBuilder::new(41, true, false, 0)
+        .resident(ATTR_STANDARD_INFORMATION, &si(FT_2020, 0x20))
+        .resident(ATTR_FILE_NAME, &file_name(5, 0, "REPORT.TXT", 10))
+        .resident(ATTR_FILE_NAME, &file_name(5, 1, "Report.txt", 10))
+        .resident(ATTR_DATA, &[7u8; 10])
+        .finish(7);
+    let entries = assemble(&[parse(&root_record()), parse(&file)]);
+    assert_eq!(entries.len(), 1);
+    // The Win32 spelling (better namespace rank) survives.
+    assert_eq!(entries[0].name, "Report.txt");
+    assert_eq!(entries[0].path, "\\Report.txt");
+}
+
+// ---------------------------------------------------------------------------
+// Regression: deep chains assemble in linear-ish time, identically
+// ---------------------------------------------------------------------------
+
+#[test]
+fn deep_chain_assembles_completely() {
+    const DEPTH: u64 = 1500;
+    let mut records = vec![parse(&root_record())];
+    for i in 0..DEPTH {
+        let number = 100 + i;
+        let parent = if i == 0 { 5 } else { 99 + i };
+        let dir = RecordBuilder::new(number, true, true, 0)
+            .resident(ATTR_STANDARD_INFORMATION, &si(FT_2020, 0x06))
+            .resident(
+                ATTR_FILE_NAME,
+                &file_name(parent, 3, &format!("d{i}"), 0),
+            )
+            .finish(7);
+        records.push(parse(&dir));
+    }
+    let leaf = RecordBuilder::new(100 + DEPTH, true, false, 0)
+        .resident(ATTR_STANDARD_INFORMATION, &si(FT_2020, 0x20))
+        .resident(
+            ATTR_FILE_NAME,
+            &file_name(99 + DEPTH, 3, "leaf.bin", 3),
+        )
+        .resident(ATTR_DATA, &[1, 2, 3])
+        .finish(7);
+    records.push(parse(&leaf));
+
+    let entries = assemble(&records);
+    // Every directory plus the leaf file — nothing orphaned.
+    assert_eq!(entries.len() as u64, DEPTH + 1);
+    let leaf_entry = entries
+        .iter()
+        .find(|e| e.name == "leaf.bin")
+        .expect("leaf assembled");
+    let mut want = String::new();
+    for i in 0..DEPTH {
+        want.push_str(&format!("\\d{i}"));
+    }
+    want.push_str("\\leaf.bin");
+    assert_eq!(leaf_entry.path, want);
+    let deepest_dir = entries
+        .iter()
+        .find(|e| e.name == format!("d{}", DEPTH - 1))
+        .expect("deepest dir assembled");
+    assert!(deepest_dir.is_dir);
+    assert_eq!(deepest_dir.path, want[..want.len() - "\\leaf.bin".len()]);
+}

@@ -253,14 +253,18 @@ mod imp {
                     if run.is_sparse() {
                         segments.push((vcn, None, run.length_clusters));
                     } else {
-                        prev_lcn += run.lcn_delta;
+                        // Saturating throughout: a corrupt runlist
+                        // must produce absurd offsets that fail their
+                        // reads (→ walker fallback), never wrap into
+                        // plausible-looking ones.
+                        prev_lcn = prev_lcn.saturating_add(run.lcn_delta);
                         segments.push((
                             vcn,
-                            Some(prev_lcn as u64 * cluster_bytes),
+                            Some((prev_lcn as u64).saturating_mul(cluster_bytes)),
                             run.length_clusters,
                         ));
                     }
-                    vcn += run.length_clusters;
+                    vcn = vcn.saturating_add(run.length_clusters);
                 }
             }
             RunMap {
@@ -270,10 +274,9 @@ mod imp {
         }
 
         fn total_bytes(&self) -> u64 {
-            self.segments
-                .iter()
-                .map(|(_, _, len)| len * self.cluster_bytes)
-                .sum()
+            self.segments.iter().fold(0u64, |acc, (_, _, len)| {
+                acc.saturating_add(len.saturating_mul(self.cluster_bytes))
+            })
         }
 
         /// Volume offset for a file byte offset; `None` inside a
@@ -283,9 +286,12 @@ mod imp {
             let vcn = file_offset / cluster;
             let within = file_offset % cluster;
             for &(start, offset, len) in &self.segments {
-                if vcn >= start && vcn < start + len {
+                if vcn >= start && vcn < start.saturating_add(len) {
                     let base = offset?;
-                    return Some(base + (vcn - start) * cluster + within);
+                    return Some(
+                        base.saturating_add((vcn - start).saturating_mul(cluster))
+                            .saturating_add(within),
+                    );
                 }
             }
             None
@@ -300,7 +306,7 @@ mod imp {
         scratch: &mut [u8],
     ) -> Result<Option<RawRecord>, MftUnavailable> {
         let record_size = boot.record_size as u64;
-        let file_offset = ordinal * record_size;
+        let file_offset = ordinal.saturating_mul(record_size);
         let Some(mut volume_offset) = map.translate(file_offset) else {
             return Ok(None);
         };
@@ -351,18 +357,39 @@ mod imp {
         pub(super) fn open(root: &Path) -> Result<VolumeReader, MftUnavailable> {
             let volume = open_volume(root)?;
 
-            // Boot sector.
-            let mut boot_bytes = vec![0u8; 512];
+            // Boot sector. Read a full 4 KiB: on 4Kn drives the
+            // sector is 4096 bytes and a short 512-byte read would
+            // be rejected by the device (and the BPB fields the
+            // parser checks sit comfortably inside either size).
+            let mut boot_bytes = vec![0u8; 4096];
             volume.read_at(0, &mut boot_bytes)?;
             let boot = mft::parse_boot_sector(&boot_bytes).map_err(|e| match e {
                 mft::MftError::NotNtfs => MftUnavailable::NotNtfs,
                 other => MftUnavailable::ReadFailed(other.to_string()),
             })?;
             let record_size = boot.record_size as usize;
+            // The volume's total size from its own geometry, the
+            // bound every later plausibility check uses. A zero
+            // total-sectors field means the geometry is unknown;
+            // leave the bound open and let read failures decide.
+            let volume_bytes = if boot.total_sectors == 0 {
+                u64::MAX
+            } else {
+                boot.total_sectors
+                    .saturating_mul(boot.bytes_per_sector as u64)
+            };
+            let mft_offset = boot
+                .mft_lcn
+                .saturating_mul(boot.cluster_bytes as u64);
+            if mft_offset >= volume_bytes {
+                return Err(MftUnavailable::ReadFailed(
+                    "the $MFT starts beyond the volume's own geometry".into(),
+                ));
+            }
 
             // Record 0 ($MFT itself) sits at the MFT's first LCN.
             let mut scratch = vec![0u8; record_size];
-            volume.read_at(boot.mft_lcn * boot.cluster_bytes as u64, &mut scratch)?;
+            volume.read_at(mft_offset, &mut scratch)?;
             let mft_record = mft::parse_record(&scratch, &boot)
                 .ok()
                 .flatten()
@@ -374,6 +401,11 @@ mod imp {
                 .ok_or_else(|| MftUnavailable::ReadFailed("$MFT has no $DATA".into()))?;
             if mft_real_size == 0 || mft_real_size % record_size as u64 != 0 {
                 return Err(MftUnavailable::ReadFailed("implausible $MFT size".into()));
+            }
+            if mft_real_size > volume_bytes {
+                return Err(MftUnavailable::ReadFailed(
+                    "the $MFT claims to be larger than the volume itself".into(),
+                ));
             }
 
             // Bootstrap the run map for the whole $MFT: its later $DATA
@@ -446,11 +478,13 @@ mod imp {
             let batch = chunk_records.min(total_records - ordinal);
             // Fast path: the batch lies inside one run segment —
             // read it in bulk. Otherwise fall back to per-record.
-            let start_offset = ordinal * record_size as u64;
-            let batch_bytes = batch * record_size as u64;
+            let start_offset = ordinal.saturating_mul(record_size as u64);
+            let batch_bytes = batch.saturating_mul(record_size as u64);
             let contiguous = reader.map.translate(start_offset).and_then(|first| {
-                let last = reader.map.translate(start_offset + batch_bytes - 1)?;
-                (last == first + batch_bytes - 1).then_some(first)
+                let last = reader
+                    .map
+                    .translate(start_offset.saturating_add(batch_bytes).saturating_sub(1))?;
+                (last == first.saturating_add(batch_bytes).saturating_sub(1)).then_some(first)
             });
             match contiguous {
                 Some(volume_offset) => {
