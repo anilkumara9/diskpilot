@@ -61,6 +61,14 @@ struct Shared {
     last_progress: Option<Instant>,
 }
 
+/// Lock the shared scan state, recovering the guard if a worker thread
+/// panicked while holding it — one bad path must not kill the whole scan.
+fn lock_shared(shared: &Mutex<Shared>) -> std::sync::MutexGuard<'_, Shared> {
+    shared
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
 impl Scanner {
     pub fn new(root: impl AsRef<Path>) -> Self {
         Self {
@@ -101,7 +109,7 @@ impl Scanner {
         );
         let finished = now_ms();
         let (errors, skipped) = {
-            let s = shared.lock().unwrap();
+            let s = lock_shared(&shared);
             (s.errors.clone(), s.skipped.clone())
         };
         let mut category_totals: HashMap<Category, u64> = HashMap::new();
@@ -130,7 +138,7 @@ impl Scanner {
                 category: c.category,
             })
             .collect();
-        locations.sort_by(|a, b| b.bytes.cmp(&a.bytes));
+        locations.sort_by_key(|l| std::cmp::Reverse(l.bytes));
 
         let mut heavy: Vec<LocationEntry> = index
             .dir_sizes
@@ -182,7 +190,7 @@ impl Scanner {
 
     fn report_progress(&self, shared: &Arc<Mutex<Shared>>, path: &Path) {
         let Some(cb) = &self.progress else { return };
-        let mut s = shared.lock().unwrap();
+        let mut s = lock_shared(shared);
         let due = s
             .last_progress
             .map(|t| t.elapsed().as_millis() >= 120)
@@ -219,7 +227,7 @@ impl Scanner {
         let read = match std::fs::read_dir(dir) {
             Ok(r) => r,
             Err(e) => {
-                shared.lock().unwrap().errors.push(ScanError {
+                lock_shared(shared).errors.push(ScanError {
                     path: path_to_string(dir),
                     message: e.to_string(),
                 });
@@ -230,7 +238,7 @@ impl Scanner {
         for entry in read {
             match entry {
                 Ok(e) => entries.push(e.path()),
-                Err(e) => shared.lock().unwrap().errors.push(ScanError {
+                Err(e) => lock_shared(shared).errors.push(ScanError {
                     path: path_to_string(dir),
                     message: e.to_string(),
                 }),
@@ -248,7 +256,7 @@ impl Scanner {
             let md = match std::fs::symlink_metadata(path) {
                 Ok(m) => m,
                 Err(e) => {
-                    shared.lock().unwrap().errors.push(ScanError {
+                    lock_shared(shared).errors.push(ScanError {
                         path: path_to_string(path),
                         message: e.to_string(),
                     });
@@ -261,13 +269,13 @@ impl Scanner {
                 .map(|n| n.to_string_lossy().to_string())
                 .unwrap_or_default();
             if ft.is_symlink() || is_reparse_point(&md) {
-                shared.lock().unwrap().skipped.push(path_to_string(path));
+                lock_shared(shared).skipped.push(path_to_string(path));
                 continue;
             }
             if ft.is_dir() {
                 // Same-volume check.
                 if device_of(&md) != root_dev && root_dev != 0 {
-                    shared.lock().unwrap().skipped.push(path_to_string(path));
+                    lock_shared(shared).skipped.push(path_to_string(path));
                     continue;
                 }
                 let (class, scope) = classifier::classify_child_from(
@@ -288,7 +296,7 @@ impl Scanner {
                 agg.bytes += counted;
                 agg.files += 1;
                 {
-                    let mut s = shared.lock().unwrap();
+                    let mut s = lock_shared(shared);
                     s.files_seen += 1;
                     s.bytes_seen += counted;
                 }
@@ -377,7 +385,7 @@ fn counted_bytes(md: &std::fs::Metadata, shared: &Arc<Mutex<Shared>>) -> u64 {
         use std::os::unix::fs::MetadataExt;
         if md.nlink() > 1 {
             let key = (md.dev(), md.ino());
-            let mut s = shared.lock().unwrap();
+            let mut s = lock_shared(shared);
             if !s.hardlinks.insert(key) {
                 return 0;
             }
@@ -387,7 +395,7 @@ fn counted_bytes(md: &std::fs::Metadata, shared: &Arc<Mutex<Shared>>) -> u64 {
     {
         if file_nlink_windows(md) > 1 {
             if let Some(key) = file_index_key(md) {
-                let mut s = shared.lock().unwrap();
+                let mut s = lock_shared(&shared);
                 if !s.hardlinks.insert(key) {
                     return 0;
                 }

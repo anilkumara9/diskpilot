@@ -33,7 +33,7 @@ fn components_lower(path: &Path) -> Vec<String> {
 }
 
 fn rule_matches_component(rule: &Rule, comp: &str) -> bool {
-    rule.names.iter().any(|n| *n == comp)
+    rule.names.contains(&comp)
 }
 
 fn rule_matches_path(rule: &Rule, norm: &str) -> bool {
@@ -184,11 +184,9 @@ pub fn classify_child_from(
     if own.category != Category::Unknown {
         let scope = scope_of(&own.rule_id);
         // For files inside a container, extension refinement may apply.
-        if !is_dir {
-            if scope == RuleScope::Container {
-                if let Some(refined) = extension_classification(path, Some(&own)) {
-                    return (refined, RuleScope::Leaf);
-                }
+        if !is_dir && scope == RuleScope::Container {
+            if let Some(refined) = extension_classification(path, Some(&own)) {
+                return (refined, RuleScope::Leaf);
             }
         }
         return (own, scope);

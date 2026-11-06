@@ -431,6 +431,7 @@ pub async fn remove_duplicate_copies(
 ) -> CmdResult<CleanupResult> {
     let ctx = SafetyContext::new(state.scan_root());
     let keeper = keeper_path.clone();
+    let group_hash_for_history = group_hash.clone();
     let result = blocking_value(move || {
         let mut succeeded: Vec<String> = Vec::new();
         let mut failed: Vec<CleanupFailure> = Vec::new();
@@ -475,7 +476,7 @@ pub async fn remove_duplicate_copies(
     .await?;
     let _ = with_history(&state, |history| {
         history
-            .record_cleanup("duplicates", &result, Some(&group_hash))
+            .record_cleanup("duplicates", &result, Some(&group_hash_for_history))
             .map(|_| ())
     });
     Ok(result)
@@ -629,9 +630,7 @@ pub struct DockerActionResult {
 pub async fn docker_execute_action(action: DockerActionRequest) -> CmdResult<DockerActionResult> {
     let action = to_docker_action(&action)?;
     let command = action.preview_command();
-    let output = blocking_value(move || docker::execute_action(&action))
-        .await?
-        .map_err(|e| e)?;
+    let output = blocking_value(move || docker::execute_action(&action)).await??;
     Ok(DockerActionResult { command, output })
 }
 
@@ -827,8 +826,7 @@ pub async fn assistant_ask(
     let info = assistant::provider::provider_info(provider);
     let api_key = state
         .key_store
-        .load(provider)
-        .map_err(|e| e)?
+        .load(provider)?
         .ok_or_else(|| format!("No API key saved for {}. Add one in Settings.", info.label))?;
 
     // Snapshot the engine data so the tool context can borrow owned
@@ -893,7 +891,7 @@ pub fn save_api_key(state: State<'_, ShellState>, provider: String, key: String)
             info.label, info.key_prefix_hint
         ));
     }
-    state.key_store.save(provider, &key).map_err(|e| e)
+    state.key_store.save(provider, &key)
 }
 
 /// Whether an API key is stored for `provider`. Never returns the key.
@@ -909,7 +907,7 @@ pub fn has_api_key(state: State<'_, ShellState>, provider: String) -> bool {
 #[tauri::command]
 pub fn delete_api_key(state: State<'_, ShellState>, provider: String) -> CmdResult<()> {
     let provider = provider_from_str(&provider)?;
-    state.key_store.delete(provider).map_err(|e| e)
+    state.key_store.delete(provider)
 }
 
 // ---------------------------------------------------------------------------

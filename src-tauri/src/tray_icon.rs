@@ -61,7 +61,7 @@ pub fn render_rgba(used_fraction: f64, size: u32) -> Vec<u8> {
                     }
                 }
             }
-            let samples = (ss * ss) as u32;
+            let samples = ss * ss;
             let idx = ((y * size + x) * 4) as usize;
             if a > 0 {
                 // Un-premultiply the accumulated colour by the coverage alpha.

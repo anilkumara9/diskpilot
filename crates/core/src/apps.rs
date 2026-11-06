@@ -269,7 +269,7 @@ pub fn build_app_entries(installed: &[RawInstalledApp], data_roots: &[PathBuf]) 
             }
         }
     }
-    entries.sort_by(|a, b| (b.install_bytes + b.data_bytes).cmp(&(a.install_bytes + a.data_bytes)));
+    entries.sort_by_key(|e| std::cmp::Reverse(e.install_bytes + e.data_bytes));
     entries
 }
 

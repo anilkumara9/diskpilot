@@ -19,8 +19,10 @@ pub struct OllamaAnalysis {
 }
 
 pub fn analyze_ollama_at(models_dir: &Path) -> OllamaAnalysis {
-    let mut result = OllamaAnalysis::default();
-    result.total_bytes = measure_path(models_dir);
+    let mut result = OllamaAnalysis {
+        total_bytes: measure_path(models_dir),
+        ..Default::default()
+    };
     let blobs = models_dir.join("blobs");
     let manifests_root = models_dir.join("manifests");
     // Count references to each blob digest across all manifests.

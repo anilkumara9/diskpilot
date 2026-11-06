@@ -19,7 +19,7 @@
 //! `$R…` payload inside a `$Recycle.Bin` folder with its `$I…` sibling
 //! present, so the command cannot be aimed elsewhere.
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 
@@ -40,6 +40,7 @@ pub struct RecycleBinItem {
 }
 
 /// The system drive's `$Recycle.Bin` root, e.g. `C:\$Recycle.Bin`.
+#[cfg(windows)]
 fn recycle_bin_root() -> PathBuf {
     let drive = std::env::var("SystemDrive").unwrap_or_else(|_| "C:".to_string());
     PathBuf::from(drive).join("$Recycle.Bin")
@@ -96,7 +97,8 @@ pub fn list_items() -> Vec<RecycleBinItem> {
 }
 
 /// Parse one `$I…` metadata file.
-fn parse_info_file(data: &[u8], payload_path: &Path) -> Option<RecycleBinItem> {
+#[cfg(windows)]
+fn parse_info_file(data: &[u8], payload_path: &std::path::Path) -> Option<RecycleBinItem> {
     if data.len() < 24 {
         return None;
     }
@@ -118,7 +120,7 @@ fn parse_info_file(data: &[u8], payload_path: &Path) -> Option<RecycleBinItem> {
     if original_path.is_empty() {
         return None;
     }
-    let name = Path::new(&original_path)
+    let name = std::path::Path::new(&original_path)
         .file_name()
         .map(|n| n.to_string_lossy().into_owned())
         .unwrap_or_else(|| original_path.clone());
@@ -133,6 +135,7 @@ fn parse_info_file(data: &[u8], payload_path: &Path) -> Option<RecycleBinItem> {
 }
 
 /// Decode up to `max_chars` UTF-16LE code units, stopping at NUL.
+#[cfg(windows)]
 fn read_utf16(data: &[u8], max_chars: usize) -> String {
     let units: Vec<u16> = data
         .chunks_exact(2)

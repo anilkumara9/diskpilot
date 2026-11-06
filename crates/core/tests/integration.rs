@@ -175,14 +175,14 @@ fn recommendations_and_planner_single_use_and_expiry() {
     let c = ctx(dir.path());
     let mut planner = Planner::new();
     let now = 1_000_000i64;
-    let plan = planner.build_plan(&[rec.id.clone()], &recs, &c, now);
+    let plan = planner.build_plan(std::slice::from_ref(&rec.id), &recs, &c, now);
     assert_eq!(plan.items.len(), 1);
     assert!(plan.allow_permanent, "node_modules is regenerable");
     // Single use.
     assert!(planner.take_plan(&plan.id, now + 1000).is_ok());
     assert!(planner.take_plan(&plan.id, now + 1000).is_err());
     // Expiry on a fresh plan.
-    let plan2 = planner.build_plan(&[rec.id.clone()], &recs, &c, now);
+    let plan2 = planner.build_plan(std::slice::from_ref(&rec.id), &recs, &c, now);
     assert!(planner
         .take_plan(
             &plan2.id,
@@ -203,7 +203,7 @@ fn executor_uses_mock_and_records() {
     let c = ctx(dir.path());
     let mut planner = Planner::new();
     let now = 2_000_000i64;
-    let plan = planner.build_plan(&[rec.id.clone()], &recs, &c, now);
+    let plan = planner.build_plan(std::slice::from_ref(&rec.id), &recs, &c, now);
     let taken = planner.take_plan(&plan.id, now + 10).unwrap();
     let ops = MockFileOps::default();
     let result = execute_plan(&taken, ExecuteMode::MoveToTrash, &c, &ops).unwrap();

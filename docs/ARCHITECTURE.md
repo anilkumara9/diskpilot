@@ -211,4 +211,4 @@ leaf classifier rules, safety-gate rejections (protected, outside root,
 link in path), plan expiry and single-use, duplicate hashing, parsing
 of a captured `docker system df -v` fixture, and secret masking. Core
 tests run on Linux in CI as well as Windows, so the engine's logic is
-platform-checked even where Windows APIs are stubbed behind `cfg`.
+platform-checked even where Windows APIs are platform-gated behind `cfg`.

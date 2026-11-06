@@ -38,7 +38,7 @@ pub fn is_clone_candidate(a: &Path, b: &Path) -> bool {
         }
         let ta = ma.mtime();
         let tb = mb.mtime();
-        return (ta - tb).abs() <= 1 && ma.dev() == mb.dev();
+        (ta - tb).abs() <= 1 && ma.dev() == mb.dev()
     }
     #[cfg(not(unix))]
     {
@@ -178,7 +178,7 @@ pub fn find_duplicates(root: &Path) -> Vec<DuplicateGroup> {
             }
         }
     }
-    groups.sort_by(|a, b| b.wasted_bytes().cmp(&a.wasted_bytes()));
+    groups.sort_by_key(|g| std::cmp::Reverse(g.wasted_bytes()));
     groups
 }
 
