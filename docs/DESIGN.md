@@ -135,8 +135,9 @@ right-aligned and tabular, with an optional 2 px meter under the value.
   makes ten pages read as one system.
 - Sections are separated by 28 px, with a 13 px semibold title, an
   optional 12 px description, and a 10 px gap before the content.
-- Sidebar: 220 px, `sidebar` background, right hairline, 38 px drag
-  region at the top.
+- Sidebar: 220 px (64 px collapsed — see "The sidebar system"),
+  `sidebar` background, right hairline, 38 px drag region at the
+  top.
 - Radii: 4 px tags, 6 px buttons/inputs/rows, 10 px panels, sheets and
   dialogs.
 - Table rows 32 px; two-line rows 44 px.
@@ -147,17 +148,65 @@ Sidebar header: logo mark (indigo rounded square with a white gauge
 glyph) + "DiskPilot" at 13 px semibold. Top-level items: Overview,
 Health. Groups: **Analyze** — Storage, Media, Duplicates, Downloads,
 Assistant (only when enabled in Settings); **System** — Applications,
-Games, Startup, Developer Tools, Docker; **Clean up** — Cleanup (with a
-trailing count of actionable recommendations), History. The footer,
-above a hairline, shows scan status (not scanned yet / scanning with an
-indeterminate bar and the current path in 11 px mono / scanned
-<relative time> with the root path) and the Settings nav button.
+Games, Startup, Developer Tools, Docker; **Clean up** — Cleanup,
+History. The footer, above a hairline, shows scan status (not scanned
+yet / scanning with an indeterminate bar and the current path in
+11 px mono / scanned <relative time> with the root path), the
+drive-health row, the Settings nav button, and the collapse toggle.
 
 Nav buttons are 28 px tall, `rounded-md`, 13 px text; the active item
 uses the `selected` background, medium-weight text and an accent icon,
 inactive icons are `muted`, hover uses the `hover` background. Group
 labels sit 20 px below the previous group. The footer scan status is
 separated from the nav by a hairline and 12 px of air.
+
+### The sidebar system
+
+**Drive block + health dot.** The footer's drive-health row is a
+28 px nav-style button: an 8 px status dot and the worst drive's
+"<model> · <status>" in 12 px muted text, truncating. It is fed by
+one `get_drive_health` read per launch, held in the store; the worst
+status across drives wins (critical > caution > healthy). Dot colours
+are the status tokens: `tier-safe` (healthy), `tier-review` (caution),
+`critical`. The tooltip and accessible name carry the full summary —
+"<model> · SSD life 87% · Healthy", omitting any part the drive did
+not report. The row is ambient chrome: a failed read, no drives, or
+every drive Unknown means no row and no error anywhere. Clicking goes
+to Health, where the full per-drive cards live.
+
+**Badges.** Badges are information, never alarms: muted pills
+(`bg-hover`, 11 px tabular, muted text) trailing the nav item.
+
+- *Cleanup* shows the total reclaimable size — exactly the figure
+  the Cleanup page headlines (`actionableBytes` over the current
+  scan's recommendations), so the two can never disagree. Hidden
+  when there is no scan or nothing is actionable.
+- *Applications* shows the count of available software updates from
+  the **last completed check only**. The Applications page's check
+  (and any update run, which recomputes the still-outstanding
+  count) writes `{count, checkedAtMs}` to the store and to a
+  versioned localStorage key, so the badge survives restarts with
+  its "last checked <relative>" tooltip. **Nothing ever runs winget
+  in the background for the badge** — it only ever describes a
+  check the user ran.
+- The Settings item keeps its existing accent "Update available"
+  flag for the app's own signed updates.
+
+**Collapsed mode.** A footer toggle (chevrons, `aria-expanded`,
+labelled "Collapse sidebar" / "Expand sidebar") switches the
+sidebar between 220 px and 64 px, animating `width` over 200 ms
+(suppressed under reduced motion); the content column simply takes
+the freed width. At 64 px: labels, group headings, the scan-status
+text and the wordmark hide; icons stay centred; every item keeps
+its accessible name and gains a tooltip; group headings become
+16 px of air. Badges become a 6 px accent dot on the icon, and the
+drive-health row becomes the dot alone, centred — still a button
+to Health with the full summary as its name. The mode persists in
+`settings.sidebarCollapsed` (default expanded), mirrored to a
+versioned localStorage key because the shell's settings struct
+predates the field and would drop it on save; the mirror wins at
+startup until the shell carries the field natively. The Quick
+Search window has no sidebar and is unaffected.
 
 ## Components
 
