@@ -46,7 +46,7 @@ tokens, components and principles. Tokens live in
 | border-strong   | `#D1D1D6` | Emphasised borders, inputs            |
 | foreground      | `#1D1D1F` | Primary text                          |
 | muted           | `#6E6E73` | Secondary text                        |
-| subtle          | `#737378` | Captions, metadata                    |
+| subtle          | `#67676C` | Captions, metadata (≥ 4.5:1 on panels) |
 | accent          | `#5856D6` | Interactive, selected icon, primary   |
 | tier-safe       | `#248A3D` | Likely safe                           |
 | tier-review     | `#B25000` | Review first                          |
@@ -67,7 +67,7 @@ tokens, components and principles. Tokens live in
 | border-strong   | `#3A3A3D` | Emphasised borders, inputs            |
 | foreground      | `#F5F5F7` | Primary text                          |
 | muted           | `#A1A1A6` | Secondary text                        |
-| subtle          | `#8E8E93` | Captions, metadata                    |
+| subtle          | `#8E8E93` | Captions, metadata (≥ 4.5:1 on panels) |
 | accent          | `#7D7AFF` | Interactive text/icons                |
 | accent-fill     | `#5E5CE6` | Primary button fill                   |
 | tier-safe       | `#30D158` | Likely safe                           |
@@ -432,6 +432,44 @@ separated from the nav by a hairline and 12 px of air.
   both were ever reported. Informational only; the remedy is
   the ordinary Scan control beside it. The following itself is
   the Settings → Scanning toggle "Live index", on by default.
+- **Dialog focus trap** — focus is trapped inside the open
+  dialog: Tab and Shift+Tab cycle through its focusable
+  elements and can never reach the page (or another dialog)
+  underneath. With dialogs stacked, the trap — and Escape —
+  belong to the topmost dialog only; one Escape closes one
+  dialog. Open-focus, backdrop dismissal and focus restore on
+  close behave as before. A render failure anywhere in the app
+  lands on the root error boundary's recovery screen (what
+  happened, in human terms, and a Reload action) — never a
+  white window.
+- **Error-state rule** — a failed command is never rendered as
+  an empty state. Read commands throw on failure (a page's
+  "no data" copy is reserved for data the shell actually
+  returned as empty); pages with an error state light it up,
+  and sections fed by background loaders (Overview watch data,
+  Health) keep their last good data behind a slim error note
+  with Retry. Deliberate soft-fail is allowed only for purely
+  decorative affordances (the cloud "free up space" offer, the
+  Recycle Bin waiting notice, the look-alike strip) and for the
+  fire-and-forget cancels and autostart probes in `api.ts`.
+  Outcomes follow the same rule: a cleanup banner is derived
+  from the full result (success only when nothing failed,
+  warning for partial, error when nothing was removed), and a
+  restore that brought nothing back is never badged as success.
+- **Quick Search refresh-on-show** — the Quick Search window is
+  created once and then only shown and hidden, so its context
+  (scan existence, theme, home directory) refreshes on every
+  show — window focus, visibility, and the shell's
+  scan-finished event — never only at mount. A scan finished
+  after launch is searchable the next time the popup opens,
+  and a theme change arrives with it.
+- **Plan expiry countdown** — the cleanup dialog's footer
+  counts the plan's remaining life down live ("Expires in
+  7:32", relative m:ss, never an absolute date); at zero the
+  execute action disables and the footer reads "Expired",
+  with the explanatory alert in the body. Plans are single-use
+  and expire after 10 minutes, as the dialog's description
+  states.
 
 ## Charts
 

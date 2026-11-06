@@ -1,8 +1,9 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { FolderTree, Scale, Search } from "lucide-react";
 import * as api from "@/lib/api";
 import { useAppStore } from "@/lib/store";
 import { addSavedSearch, filtersWithoutChip } from "@/lib/search";
+import { tabIndexForKey } from "@/lib/tabs";
 import type { QueryChip } from "@/lib/types";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { Input } from "@/components/ui/input";
@@ -27,14 +28,32 @@ export function StorageTabs({
     { id: "largest", label: "Largest items" },
     { id: "map", label: "Map" },
   ];
+  const selectedIndex = tabs.findIndex((t) => t.id === tab);
+  const buttonRefs = useRef<(HTMLButtonElement | null)[]>([]);
+
+  /* Tabs pattern: only the selected tab is tabbable (roving
+     tabindex); Left/Right/Home/End move and select together. */
+  const onKeyDown = (event: React.KeyboardEvent, index: number) => {
+    const next = tabIndexForKey(index, event.key, tabs.length);
+    if (next === null) return;
+    event.preventDefault();
+    onChange(tabs[next].id);
+    buttonRefs.current[next]?.focus();
+  };
+
   return (
     <div role="tablist" aria-label="Storage views" className="flex gap-1 rounded-md bg-panel-raised p-1">
-      {tabs.map((t) => (
+      {tabs.map((t, index) => (
         <button
           key={t.id}
+          ref={(el) => {
+            buttonRefs.current[index] = el;
+          }}
           role="tab"
           aria-selected={tab === t.id}
+          tabIndex={index === selectedIndex ? 0 : -1}
           onClick={() => onChange(t.id)}
+          onKeyDown={(e) => onKeyDown(e, index)}
           className={cn(
             "h-6 rounded-[5px] px-3 text-[12px] font-medium transition-colors duration-120",
             tab === t.id

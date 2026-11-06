@@ -18,6 +18,7 @@ import {
 import { useAppStore } from "@/lib/store";
 import { actionableCount } from "@/lib/analysis";
 import { displayPath, formatBytes, formatCount, formatRelative } from "@/lib/format";
+import { useNowTick } from "@/lib/hooks";
 import type { PageId } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
@@ -92,12 +93,27 @@ function ScanStatus() {
   const progress = useAppStore((s) => s.progress);
   const summary = useAppStore((s) => s.summary);
   const homeDir = useAppStore((s) => s.env?.homeDir);
+  const cancelScan = useAppStore((s) => s.cancelScan);
+  /* The "Scanned … ago" line ages on the same 30 s tick as the
+     results-age label elsewhere. */
+  const now = useNowTick();
 
   return (
     <div className="px-2 pb-2" aria-live="polite">
       {scanning ? (
         <>
-          <p className="text-[12px] font-medium text-foreground">Scanning…</p>
+          <p className="flex items-center justify-between gap-2">
+            <span className="text-[12px] font-medium text-foreground">Scanning…</span>
+            {/* Cancellation lives here (visible from every page), not
+                only beside the scan control on some pages. */}
+            <button
+              type="button"
+              onClick={() => void cancelScan()}
+              className="rounded px-1 text-[11px] font-medium leading-[14px] text-muted transition-colors duration-120 hover:bg-hover hover:text-foreground"
+            >
+              Cancel
+            </button>
+          </p>
           <div className="scan-indeterminate mt-1.5 h-[3px] rounded-full bg-hover" aria-hidden="true" />
           {progress?.currentPath ? (
             <p className="mono-path mt-1.5 truncate text-subtle" title={progress.currentPath}>
@@ -112,7 +128,7 @@ function ScanStatus() {
         </>
       ) : summary ? (
         <>
-          <p className="text-[12px] text-muted">Scanned {formatRelative(summary.finishedAtMs)}</p>
+          <p className="text-[12px] text-muted">Scanned {formatRelative(summary.finishedAtMs, now)}</p>
           <p className="mono-path mt-0.5 truncate text-subtle" title={summary.root}>
             {displayPath(summary.root, homeDir)}
           </p>

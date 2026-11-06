@@ -13,7 +13,10 @@
   --border-strong: #d1d1d6;
   --foreground: #1d1d1f;
   --muted: #6e6e73;
-  --subtle: #737378;
+  /* Darkened from #737378: on the raised/sidebar surfaces (#f5f5f7)
+     the old value measured 4.33:1 at small sizes; #67676c measures
+     5.17:1 there and 5.62:1 on white — comfortably past 4.5:1. */
+  --subtle: #67676c;
   --accent: #5856d6;
   --accent-fill: #5856d6;
   --accent-foreground: #ffffff;
@@ -48,6 +51,8 @@
   --border-strong: #3a3a3d;
   --foreground: #f5f5f7;
   --muted: #a1a1a6;
+  /* Verified on the dark panel surfaces: 5.22:1 on #1c1c1e,
+     4.69:1 on #252528, 5.54:1 on the #161618 sidebar. */
   --subtle: #8e8e93;
   --accent: #7d7aff;
   --accent-fill: #5e5ce6;
@@ -141,6 +146,16 @@ body {
   font-size: 11px;
   line-height: 14px;
   word-break: break-all;
+  /* Paths are data the user may need to copy: selectable even
+     though the app chrome around them is not. */
+  user-select: text;
+}
+
+/* File and folder names: selectable for the same reason as paths.
+   Applied at the name element in list surfaces (explorer rows,
+   media lists, search hits, downloads). */
+.file-name {
+  user-select: text;
 }
 
 /* Indeterminate scan bar */

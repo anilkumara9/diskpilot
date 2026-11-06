@@ -146,7 +146,7 @@ export function SearchResults({
                   <div className="flex items-center gap-2">
                     <p className="flex min-w-0 items-center gap-1.5 text-[13px] text-foreground" title={hit.path}>
                       <CategoryDot category={hit.category} />
-                      <span className="truncate">{hit.name}</span>
+                      <span className="file-name truncate">{hit.name}</span>
                     </p>
                     {hit.matchedInText ? <TextMatchChip /> : null}
                   </div>

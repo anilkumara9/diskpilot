@@ -83,7 +83,7 @@ export function LargeFilesPage({ embedded = false }: { embedded?: boolean }) {
           <tbody>
             {files.map((file) => (
               <tr key={file.path} className="h-8 border-b border-border/60 transition-colors duration-120 hover:bg-hover">
-                <td className="max-w-[220px] truncate px-3 py-1 text-[13px] text-foreground" title={file.name}>{file.name}</td>
+                <td className="file-name max-w-[220px] truncate px-3 py-1 text-[13px] text-foreground" title={file.name}>{file.name}</td>
                 <td className="mono-path max-w-[320px] truncate px-3 py-1 text-subtle" title={file.path}>{displayPath(file.path, homeDir)}</td>
                 <td className="px-3 py-1"><CategoryBadge category={file.category} /></td>
                 <td className="px-3 py-1 text-right text-[13px] tabular text-foreground">{formatBytes(file.bytes)}</td>
@@ -109,7 +109,7 @@ export function LargeFilesPage({ embedded = false }: { embedded?: boolean }) {
             {heavy.map((folder) => (
               <li key={folder.path} className="flex items-center gap-3 py-2">
                 <div className="min-w-0 flex-1">
-                  <p className="truncate text-[13px] text-foreground">{folder.name}</p>
+                  <p className="file-name truncate text-[13px] text-foreground">{folder.name}</p>
                   <p className="mono-path truncate text-subtle">{displayPath(folder.path, homeDir)}</p>
                 </div>
                 <CategoryBadge category={folder.category} className="hidden lg:flex" />
