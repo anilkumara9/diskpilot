@@ -81,7 +81,29 @@ pub fn get_overview() -> DockerOverview {
     }
 }
 
-pub fn execute_action(action: &DockerAction) -> Result<String, String> {
+/// The outcome of an executed docker action: the command line as
+/// shown to the user beforehand, what the process printed, and
+/// whether it exited successfully. A process that RAN and failed
+/// is an `Ok` result with `success: false` — its output is the
+/// explanation the user needs — while `Err` is reserved for the
+/// action never running at all (no CLI, failed re-check, safety
+/// invariant, spawn/timeout failure).
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DockerActionResult {
+    /// The preview command line (`docker container rm …`).
+    pub command: String,
+    /// The process output: stdout on success; on failure, stderr
+    /// when the process wrote any, stdout otherwise.
+    pub output: String,
+    /// The process exit status. Defaults to false so payloads
+    /// written before this field existed deserialize as "not known
+    /// to have succeeded".
+    #[serde(default)]
+    pub success: bool,
+}
+
+pub fn execute_action(action: &DockerAction) -> Result<DockerActionResult, String> {
     let docker = cli::locate_docker().ok_or_else(|| "Docker CLI not found".to_string())?;
     // Re-check against a fresh overview before running anything.
     let overview = get_overview();
@@ -92,9 +114,16 @@ pub fn execute_action(action: &DockerAction) -> Result<String, String> {
     let args = action.args();
     let refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
     let out = cli::run_with_timeout(&docker, &refs, cli::DOCKER_TIMEOUT)?;
-    if out.success {
-        Ok(out.stdout)
+    let output = if out.success {
+        out.stdout
+    } else if !out.stderr.trim().is_empty() {
+        out.stderr
     } else {
-        Err(out.stderr)
-    }
+        out.stdout
+    };
+    Ok(DockerActionResult {
+        command: action.preview_command(),
+        output,
+        success: out.success,
+    })
 }
