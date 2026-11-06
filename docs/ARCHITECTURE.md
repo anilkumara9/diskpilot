@@ -305,6 +305,55 @@ index entries' `ocrText`, which the core search matches terms
 against alongside file names — a hit that matched only inside the
 picture's text is flagged `matchedInText`.
 
+## Live index (`usn`, `usn_volume`, `live_apply`, shell `live`)
+
+Between scans, the shell keeps the in-memory index fresh by
+following the NTFS USN change journal of the scanned volume — the
+same "what changed since X" stream Windows itself maintains.
+
+- **Checkpoints.** After every completed scan, the shell queries
+  the journal (`FSCTL_QUERY_USN_JOURNAL`) and stores
+  `{journalId, nextUsn}` per volume root in the app-data
+  `usn_checkpoints.json`. The checkpoint is taken at scan end, so
+  it matches the index's freshness. Loading or saving the file is
+  best-effort, exactly like the scan history's.
+- **Polling.** A thread wakes ~15 s after startup and then every
+  60 s. For the current scan root's volume it reads the changes
+  since the checkpoint (`FSCTL_READ_USN_JOURNAL`, reason-masked,
+  capped at 200k records), resolving each record's full path by
+  walking its parent chain through the MFT (`mft_volume`'s record
+  reader). Only changes under the scan root are applicable.
+- **Sound application.** Changes go through the core's
+  `live_apply`: deletes and rename-sources remove the entry;
+  creates, modifies and rename-targets re-stat the file through
+  the walker's own metadata path and re-classify it against its
+  parent directory's stored classification; ancestor totals are
+  adjusted by the exact byte delta; the summary is then rebuilt
+  from the mutated index through the same `finish_summary` a real
+  scan uses (with the original scan's provenance carried over).
+  Case-insensitive lookups bridge the journal's volume-anchored
+  spelling and the index's scan-root spelling.
+- **Stale, never approximate.** Anything that cannot be applied
+  exactly marks the index stale instead: a journal reset or wrap
+  (typed `JournalReset`), a batch of more than 20,000 applicable
+  changes, an unresolvable path, any directory change (a
+  directory's journal record says nothing about its subtree), a
+  hard-link ambiguity, or a file appearing in a directory the
+  index does not know. A stale index heals only through a fresh
+  scan — triggered automatically through the scheduled-scan path
+  when the Watch scheduler is enabled, otherwise left for the
+  user's next scan. The served summary reports both states
+  (`liveIndexActive`, `indexStale`); the persisted snapshot never
+  carries them.
+- **Limits.** The live index updates only while DiskPilot is
+  running (tray-resident counts); changes made while it is closed
+  are reconciled by the next scan. It requires the same
+  administrator volume access as the MFT fast path — without it,
+  the journal query fails, no checkpoint is kept, and polling
+  quietly stays off. Freshness is within about a minute (the poll
+  interval), never real-time. The `liveIndex` setting (default on)
+  disables polling and checkpointing entirely.
+
 ## Shell (`src-tauri`)
 
 - **Commands (`commands.rs`)** — one typed Tauri command per frontend
@@ -340,6 +389,10 @@ picture's text is flagged `matchedInText`.
   per-category bytes, capped at the last 120 scans. It feeds the
   history chart, the `forecast` fit and the growth alert. Writes are
   best-effort and never fail a scan.
+- **Live index (`live.rs`)** — the USN journal poller described in
+  the Live index section above: per-volume checkpoints, a 60-second
+  poll, sound application into the in-memory index, the stale flag,
+  and the Watch-gated heal rescan.
 - **Watch (`watch.rs`)** — the daily-driver automation. A background
   scheduler checks every 30 minutes (and once a minute after
   startup): when the settings' `autoScan` is `daily` or `weekly` and

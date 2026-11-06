@@ -15,6 +15,18 @@ based on Keep a Changelog, and the project follows semantic versioning.
   folder target, a non-NTFS volume, or any read problem — the
   standard scanner is used, automatically and invisibly; results
   are identical either way, and each scan records which engine ran.
+- **Live index (NTFS)** — after a scan, DiskPilot follows the
+  volume's USN change journal and applies file creations, changes,
+  renames and deletions to the in-memory index, so search and the
+  size views stay current within about a minute, while DiskPilot
+  is running. It updates only while DiskPilot is running (sitting
+  in the tray counts); changes made while it is closed are picked
+  up by the next scan as before. Like the fast scan it needs
+  administrator volume access — without it, it quietly stays off.
+  When the journal has wrapped or a change cannot be applied
+  exactly, the index is marked stale rather than approximated, and
+  the next scan reconciles it (automatically, when scheduled scans
+  are enabled). Can be turned off in Settings (`liveIndex`).
 - **Scan history** — every completed scan (manual or scheduled) now
   appends to a persisted time series (`scan_history.json`, last 120
   scans): totals, file count, per-category bytes and the scanned
