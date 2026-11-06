@@ -841,6 +841,7 @@ dependencies = [
  "tauri-plugin-global-shortcut",
  "tauri-plugin-notification",
  "tauri-plugin-opener",
+ "tempfile",
  "winreg 0.52.0",
 ]
 

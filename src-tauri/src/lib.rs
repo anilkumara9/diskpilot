@@ -7,6 +7,7 @@
 //! the webview itself has no filesystem or shell access.
 
 mod commands;
+mod ocr;
 mod recycle_bin;
 mod scan_history;
 mod tray;
@@ -14,7 +15,7 @@ mod tray_icon;
 mod watch;
 
 use std::path::{Path, PathBuf};
-use std::sync::atomic::AtomicBool;
+use std::sync::atomic::{AtomicBool, AtomicU64};
 use std::sync::{Arc, Mutex};
 
 use serde::{Deserialize, Serialize};
@@ -142,6 +143,10 @@ pub struct ShellState {
     pub recycle_bin_cancel: Arc<AtomicBool>,
     /// SQLite history store, opened lazily on first use.
     pub history: Mutex<Option<HistoryStore>>,
+    /// Scan generation for the OCR pass: bumped every time a scan
+    /// starts, so a pass still running from the previous scan stops
+    /// cooperatively instead of writing into the new scan's index.
+    pub ocr_generation: Arc<AtomicU64>,
 }
 
 impl ShellState {
@@ -171,6 +176,13 @@ impl ShellState {
     /// the scheduled-scan alerts.
     pub fn scan_history_file(&self) -> PathBuf {
         self.app_data_dir.join("scan_history.json")
+    }
+
+    /// Path of the OCR text cache (`ocr_cache.json`): recognized
+    /// text keyed by file path + mtime + size, so an unchanged image
+    /// is never recognized twice (see `crate::ocr`).
+    pub fn ocr_cache_file(&self) -> PathBuf {
+        self.app_data_dir.join("ocr_cache.json")
     }
 
     /// Root the safety contexts are built against: the scanned root when
@@ -276,6 +288,7 @@ pub fn run() {
                 key_store: diskpilot_core::assistant::provider::default_key_store(),
                 recycle_bin_cancel: Arc::new(AtomicBool::new(false)),
                 history: Mutex::new(None),
+                ocr_generation: Arc::new(AtomicU64::new(0)),
             });
 
             tray::build_tray(app.handle())?;

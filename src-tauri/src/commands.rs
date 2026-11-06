@@ -30,6 +30,11 @@
 //!   `$R…` payloads after re-validating each ID. The same module
 //!   restores single items from their metadata and empties the whole
 //!   bin through the shell API (`SHEmptyRecycleBinW`).
+//!   `restore_cleanup_run` composes that single-item restore over a
+//!   recorded cleanup run's Trash-mode items.
+//! - The post-scan OCR pass lives in `crate::ocr`: background
+//!   recognition over the fresh index's images, cached on disk and
+//!   written back into the index entries the search commands read.
 //! - OneDrive status is computed by the core from the scan index (no
 //!   second walk of the folder); `export_report` writes the frontend's
 //!   HTML through the dialog plugin's Rust-side save dialog.
@@ -253,6 +258,9 @@ pub(crate) async fn run_scan(
         engine.scan_cancel.store(false, Ordering::SeqCst);
         engine.scan_cancel.clone()
     };
+    // A new scan supersedes any OCR pass still running from the
+    // previous one: bumping the generation stops it cooperatively.
+    state.ocr_generation.fetch_add(1, Ordering::SeqCst);
 
     let progress_app = app.clone();
     let callback: ProgressCallback = Arc::new(move |progress: ScanProgress| {
@@ -308,6 +316,11 @@ pub(crate) async fn run_scan(
     // Append to the scan-history time series (forecast + alerts).
     // Best-effort inside `scan_history::append`: it never fails here.
     crate::scan_history::append(state, &summary);
+
+    // Recognize text in the fresh index's images in the background
+    // (settings-gated inside the pass; never blocks the scan result).
+    let ocr_generation = state.ocr_generation.load(Ordering::SeqCst);
+    crate::ocr::spawn_pass(app.clone(), ocr_generation);
 
     // Keep the tray ring honest about the scanned volume, and the
     // tray's Recent downloads submenu current.
