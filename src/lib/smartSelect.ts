@@ -37,10 +37,12 @@ export function smartKeeper(group: DuplicateGroup, rule: SmartSelectRule): strin
   const files = group.files;
   if (files.length === 0) return null;
   const sorted = [...files].sort((a, b) => {
-    let primary = 0;
-    if (rule === "newest") primary = modifiedMs(b) - modifiedMs(a);
-    else if (rule === "oldest") primary = modifiedMs(a) - modifiedMs(b);
-    else primary = a.path.length - b.path.length;
+    const primary =
+      rule === "newest"
+        ? modifiedMs(b) - modifiedMs(a)
+        : rule === "oldest"
+          ? modifiedMs(a) - modifiedMs(b)
+          : a.path.length - b.path.length;
     return primary !== 0 ? primary : comparePaths(a.path, b.path);
   });
   return sorted[0]?.path ?? null;
