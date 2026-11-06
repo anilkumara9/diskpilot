@@ -152,7 +152,18 @@ History.
   name) for the Overview figures and the tray ring.
 - **Snapshot (`snapshot`)** — the last scan summary, persisted as JSON
   in the app data folder so the Overview is populated on launch before
-  a fresh scan.
+  a fresh scan. Each scan also records the scanned drive's free space
+  (`driveFreeBytes`) at scan end.
+- **Forecast (`forecast`)** — a pure least-squares fit over the scan
+  history: daily growth in bytes, and — when the drive is growing and
+  the latest scan knows the free space — the projected date it fills.
+  Needs at least two points spanning 12 hours inside the last 30 days.
+- **Snapshot diff (`snapshot_diff`)** — the directory-level diff
+  between the current and previous snapshots behind "biggest
+  changes": grown / shrunk / added / removed directories, from the
+  snapshots' stored directory sizes (or, when a snapshot carries
+  none, prefix aggregation over its file list). All bytes are the
+  scanner's allocated bytes.
 
 ## Assistant (`assistant`)
 
@@ -194,6 +205,23 @@ view — it is the audit trail for "what did DiskPilot ever do?".
   volume, with a tooltip showing available space and a menu that emits
   `tray://navigate` events. Closing the window hides it to the tray
   instead of quitting.
+- **Scan history (`scan_history.rs`)** — every completed scan
+  (manual or scheduled) appends one entry to `scan_history.json` in
+  the app data folder: time, root, totals, drive free space and
+  per-category bytes, capped at the last 120 scans. It feeds the
+  history chart, the `forecast` fit and the growth alert. Writes are
+  best-effort and never fail a scan.
+- **Watch (`watch.rs`)** — the daily-driver automation. A background
+  scheduler checks every 30 minutes (and once a minute after
+  startup): when the settings' `autoScan` is `daily` or `weekly` and
+  the last scan of the configured root is older than the interval
+  (20 h / 6.5 days), it runs a scan through the same routine as the
+  manual command. After a *scheduled* scan only, it can raise two
+  notifications — free space below `lowSpaceAlertGb`, or growth above
+  `growthAlertGb` since the previous scan. The module also owns
+  launch-at-login (the per-user Run key on Windows, re-applied at
+  startup so it self-heals) and the Quick Search popup window,
+  toggled globally by Ctrl+Shift+Space and hidden on focus loss.
 
 ## Data flow, end to end
 

@@ -3,6 +3,31 @@
 All notable changes to DiskPilot are documented here. The format is
 based on Keep a Changelog, and the project follows semantic versioning.
 
+## [0.6.0] — Unreleased
+
+### Added
+
+- **Scan history** — every completed scan (manual or scheduled) now
+  appends to a persisted time series (`scan_history.json`, last 120
+  scans): totals, file count, per-category bytes and the scanned
+  drive's free space, which the scanner now records on every summary.
+- **Space forecast** — a least-squares fit over the last 30 days of
+  scan history reports the drive's daily growth and, while it is
+  growing, the projected date the drive fills up.
+- **Biggest changes** — a directory-level diff between the current
+  and previous scans (grown / shrunk / added / removed), so "what
+  ate my disk?" has a direct answer after every scan.
+- **Scheduled scans with alerts** — optional daily or weekly
+  background scans of the configured root; after a scheduled scan,
+  DiskPilot notifies when free space drops below a threshold
+  (default 10 GB) or usage grows past a threshold (default 5 GB).
+  Manual scans never notify.
+- **Launch at login** — an optional autostart setting backed by the
+  per-user Run key, re-applied at startup so it self-heals.
+- **Quick Search window** — a global Ctrl+Shift+Space shortcut
+  toggles a compact, always-on-top search popup over the current
+  scan index; it hides when it loses focus.
+
 ## [0.5.1] — 2026-11-06 — Windows release
 
 First Windows release of DiskPilot: storage intelligence for Windows 10
