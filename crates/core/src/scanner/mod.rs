@@ -1,6 +1,11 @@
 //! Parallel read-only scanner.
 //! Never follows symlinks, junctions or reparse points; never crosses into a
 //! different volume; counts each hard link once; reports allocated size.
+//! On Windows both properties go through the path, not metadata:
+//! allocated bytes come from `GetCompressedFileSizeW`, and hard-link
+//! identity (volume serial + file index) and link count from
+//! `GetFileInformationByHandle` — metadata alone carries only the
+//! logical length there.
 //!
 //! BYTE-ACCOUNTING RULE (product-wide): every user-facing byte figure is
 //! ALLOCATED bytes on disk — the space a file actually occupies and the
@@ -62,6 +67,49 @@ pub struct Scanner {
     pub exclusions: Vec<String>,
 }
 
+/// Deepest directory nesting the walks will descend into. Real
+/// trees are never close; the cap exists so a pathological tree
+/// cannot overflow the stack through unbounded recursion. Anything
+/// below the cap is reported through the skipped list instead of
+/// being silently dropped.
+pub const MAX_DEPTH: usize = 512;
+
+/// Stack reserved for the thread a scan runs on: reaching
+/// [`MAX_DEPTH`] takes several KB of stack per level (walk frames
+/// plus rayon's), more than pooled worker threads carry by
+/// default. 64 MiB of (lazily committed) stack makes the cap the
+/// binding limit, never the caller's thread.
+const SCAN_STACK_BYTES: usize = 64 * 1024 * 1024;
+
+/// Run `work` on a scoped thread with [`SCAN_STACK_BYTES`] of
+/// stack; if the thread cannot be spawned, run inline rather than
+/// fail.
+fn on_deep_stack<T, F>(work: F) -> T
+where
+    F: FnOnce() -> T + Send,
+    T: Send,
+{
+    let cell = std::sync::Arc::new(std::sync::Mutex::new(Some(work)));
+    let take = {
+        let cell = cell.clone();
+        move || {
+            cell.lock()
+                .expect("scan work lock")
+                .take()
+                .expect("scan work taken twice")()
+        }
+    };
+    std::thread::scope(|scope| {
+        match std::thread::Builder::new()
+            .stack_size(SCAN_STACK_BYTES)
+            .spawn_scoped(scope, &take)
+        {
+            Ok(handle) => handle.join().expect("scan thread panicked"),
+            Err(_) => take(),
+        }
+    })
+}
+
 #[derive(Default)]
 struct Shared {
     errors: Vec<ScanError>,
@@ -97,6 +145,10 @@ struct EntryBuild {
     files_seen: u64,
     bytes_seen: u64,
     last_progress: Option<Instant>,
+    /// Directories the depth cap kept the virtual walk out of,
+    /// merged into the summary's skipped list (the walker twin
+    /// pushes into `Shared::skipped` for the same condition).
+    skipped: Vec<String>,
 }
 
 impl EntryBuild {
@@ -153,6 +205,16 @@ impl Scanner {
     }
 
     pub fn scan(&self) -> (ScanSummary, DirIndex) {
+        // The walk recurses to the depth cap (512); on a caller
+        // thread with a small stack (a pooled worker, a test
+        // thread) that recursion alone can overflow the stack
+        // before the cap is reached. Run the scan on a scoped
+        // thread with a stack sized for the cap, whatever thread
+        // called in.
+        on_deep_stack(|| self.scan_walk())
+    }
+
+    fn scan_walk(&self) -> (ScanSummary, DirIndex) {
         let started = now_ms();
         let start_instant = Instant::now();
         let root_dev = root_device(&self.root);
@@ -160,9 +222,12 @@ impl Scanner {
         let mut index = DirIndex::default();
         let root_class = classifier::classify_inner_from(&self.root, self.base_skip());
         let root_scope = classifier::scope_of(&root_class.rule_id);
+        let root_memo = classifier::ClassifyMemo::root(&self.root, self.base_skip());
         let agg = self.walk_dir(
             &self.root,
             Some(&(root_class.clone(), root_scope)),
+            &root_memo,
+            0,
             root_dev,
             &shared,
             &mut index,
@@ -197,6 +262,12 @@ impl Scanner {
     /// the exact same index build and summary finisher as the walk,
     /// so downstream results are indistinguishable.
     pub fn scan_auto(&self) -> (ScanSummary, DirIndex) {
+        // Same deep-stack guarantee as `scan` (the MFT entry build
+        // recurses to the same depth cap).
+        on_deep_stack(|| self.scan_auto_inner())
+    }
+
+    fn scan_auto_inner(&self) -> (ScanSummary, DirIndex) {
         if crate::mft_volume::is_volume_root(&self.root) {
             if let Ok(volume) = crate::mft_volume::scan_volume(&self.root) {
                 // The volume layer anchors paths at the canonical
@@ -270,12 +341,17 @@ impl Scanner {
         let mut index = DirIndex::default();
         let root_class = classifier::classify_inner_from(&self.root, self.base_skip());
         let root_scope = classifier::scope_of(&root_class.rule_id);
+        let root_memo = classifier::ClassifyMemo::root(&self.root, self.base_skip());
         let agg = self.build_dir(
             &root_str,
             Some(&(root_class, root_scope)),
+            &root_memo,
+            0,
             &mut build,
             &mut index,
         );
+        let mut skipped = skipped;
+        skipped.extend(build.skipped);
         let summary = self.finish_summary(
             &index,
             &agg,
@@ -335,6 +411,8 @@ impl Scanner {
         &self,
         dir_key: &str,
         inherited: Option<&(Classification, RuleScope)>,
+        memo: &classifier::ClassifyMemo,
+        depth: usize,
         build: &mut EntryBuild,
         index: &mut DirIndex,
     ) -> Agg {
@@ -351,7 +429,12 @@ impl Scanner {
         let mut kids = build.children.remove(dir_key).unwrap_or_default();
         kids.sort_by(|a, b| a.name.cmp(&b.name));
 
-        let mut subdirs: Vec<(crate::mft::MftEntry, Classification, RuleScope)> = Vec::new();
+        let mut subdirs: Vec<(
+            crate::mft::MftEntry,
+            Classification,
+            RuleScope,
+            classifier::ClassifyMemo,
+        )> = Vec::new();
         let mut children: Vec<IndexChild> = Vec::new();
         for kid in &kids {
             if self.cancel.load(Ordering::Relaxed) {
@@ -368,19 +451,19 @@ impl Scanner {
             }
             let kid_path = PathBuf::from(&kid.path);
             if kid.is_dir {
-                let (class, scope) = classifier::classify_child_from(
+                let (class, scope, child_memo) = classifier::classify_dir_memo(
+                    memo,
+                    std::ffi::OsStr::new(&kid.name),
                     &kid_path,
-                    true,
                     Some(&(dir_class.clone(), dir_scope)),
-                    self.base_skip(),
                 );
-                subdirs.push((kid.clone(), class, scope));
+                subdirs.push((kid.clone(), class, scope, child_memo));
             } else {
-                let (class, _) = classifier::classify_child_from(
+                let (class, _) = classifier::classify_file_memo(
+                    memo,
+                    std::ffi::OsStr::new(&kid.name),
                     &kid_path,
-                    false,
                     Some(&(dir_class.clone(), dir_scope)),
-                    self.base_skip(),
                 );
                 agg.bytes += kid.allocated_bytes;
                 agg.files += 1;
@@ -405,10 +488,21 @@ impl Scanner {
             }
         }
 
-        for (sub, class, scope) in subdirs {
+        // The walker's depth cap, mirrored: below it the virtual
+        // walk stops descending and reports the directories as
+        // skipped instead of recursing without bound.
+        if depth >= MAX_DEPTH {
+            for (sub, ..) in &subdirs {
+                build.skipped.push(sub.path.clone());
+            }
+            subdirs.clear();
+        }
+        for (sub, class, scope, sub_memo) in subdirs {
             let sub_agg = self.build_dir(
                 &sub.path,
                 Some(&(class.clone(), scope)),
+                &sub_memo,
+                depth + 1,
                 build,
                 index,
             );
@@ -555,10 +649,16 @@ impl Scanner {
         }
     }
 
+    // The walk state is threaded explicitly (rather than bundled)
+    // so the parallel recursion stays allocation-free; the count
+    // grew with the classifier memo and the depth cap.
+    #[allow(clippy::too_many_arguments)]
     fn walk_dir(
         &self,
         dir: &Path,
         inherited: Option<&(Classification, RuleScope)>,
+        memo: &classifier::ClassifyMemo,
+        depth: usize,
         root_dev: u64,
         shared: &Arc<Mutex<Shared>>,
         index: &mut DirIndex,
@@ -595,7 +695,15 @@ impl Scanner {
         entries.sort();
 
         // First pass: files counted here, subdirectories collected.
-        let mut subdirs: Vec<(PathBuf, Classification, RuleScope)> = Vec::new();
+        // Classification goes through the per-directory memo: each
+        // child costs one name scan instead of a rebuild of its
+        // whole ancestor chain (see classifier::ClassifyMemo).
+        let mut subdirs: Vec<(
+            PathBuf,
+            Classification,
+            RuleScope,
+            classifier::ClassifyMemo,
+        )> = Vec::new();
         let mut children: Vec<IndexChild> = Vec::new();
         for path in &entries {
             if self.cancel.load(Ordering::Relaxed) {
@@ -637,21 +745,21 @@ impl Scanner {
                     lock_shared(shared).skipped.push(path_to_string(path));
                     continue;
                 }
-                let (class, scope) = classifier::classify_child_from(
+                let (class, scope, child_memo) = classifier::classify_dir_memo(
+                    memo,
+                    path.file_name().unwrap_or_default(),
                     path,
-                    true,
                     Some(&(dir_class.clone(), dir_scope)),
-                    self.base_skip(),
                 );
-                subdirs.push((path.clone(), class, scope));
+                subdirs.push((path.clone(), class, scope, child_memo));
             } else if ft.is_file() {
-                let (class, _) = classifier::classify_child_from(
+                let (class, _) = classifier::classify_file_memo(
+                    memo,
+                    path.file_name().unwrap_or_default(),
                     path,
-                    false,
                     Some(&(dir_class.clone(), dir_scope)),
-                    self.base_skip(),
                 );
-                let counted = counted_bytes(&md, shared);
+                let counted = counted_bytes(path, &md, shared);
                 agg.bytes += counted;
                 agg.files += 1;
                 {
@@ -681,13 +789,27 @@ impl Scanner {
 
         // Second pass: subdirectories in parallel. Each sub-walk builds its own
         // index fragment, merged afterwards to keep locking coarse.
+        // At the depth cap the walk stops descending: real trees are
+        // never this deep, and unbounded recursion on a pathological
+        // (or hostile) tree would overflow the stack. Capped
+        // directories land in the skipped list, like links and
+        // cross-volume mounts, so the omission is visible.
+        if depth >= MAX_DEPTH {
+            let mut s = lock_shared(shared);
+            for (sub, ..) in &subdirs {
+                s.skipped.push(path_to_string(sub));
+            }
+            subdirs.clear();
+        }
         let fragments: Vec<(Agg, DirIndex, IndexChild)> = subdirs
             .into_par_iter()
-            .map(|(sub, class, scope)| {
+            .map(|(sub, class, scope, sub_memo)| {
                 let mut sub_index = DirIndex::default();
                 let sub_agg = self.walk_dir(
                     &sub,
                     Some(&(class.clone(), scope)),
+                    &sub_memo,
+                    depth + 1,
                     root_dev,
                     shared,
                     &mut sub_index,
@@ -838,7 +960,18 @@ fn mtime_ms(md: &std::fs::Metadata) -> i64 {
     }
 }
 
-fn counted_bytes(md: &std::fs::Metadata, shared: &Arc<Mutex<Shared>>) -> u64 {
+// `path` is only consulted on Windows (see below); on other
+// platforms the metadata carries everything.
+#[cfg_attr(not(windows), allow(unused_variables))]
+fn counted_bytes(path: &Path, md: &std::fs::Metadata, shared: &Arc<Mutex<Shared>>) -> u64 {
+    // The byte-accounting rule measures ALLOCATED bytes. On Windows
+    // that needs the path (`GetCompressedFileSizeW`); metadata alone
+    // only carries the logical length, so the walker measures
+    // through the path-aware helper there. On Unix the block count
+    // rides in the metadata already.
+    #[cfg(windows)]
+    let allocated = allocated_size_for_path(path);
+    #[cfg(not(windows))]
     let allocated = allocated_size(md);
     #[cfg(unix)]
     {
@@ -853,8 +986,9 @@ fn counted_bytes(md: &std::fs::Metadata, shared: &Arc<Mutex<Shared>>) -> u64 {
     }
     #[cfg(windows)]
     {
-        if file_nlink_windows(md) > 1 {
-            if let Some(key) = file_index_key(md) {
+        let _ = md;
+        if let Some((key, nlink)) = file_identity_windows(path) {
+            if nlink > 1 {
                 let mut s = lock_shared(shared);
                 if !s.hardlinks.insert(key) {
                     return 0;
@@ -862,11 +996,17 @@ fn counted_bytes(md: &std::fs::Metadata, shared: &Arc<Mutex<Shared>>) -> u64 {
             }
         }
     }
-    let _ = md;
     allocated
 }
 
-/// Allocated size on disk for a file.
+/// Allocated size on disk for a file, from metadata alone.
+///
+/// On Unix this is the block count (what the file actually
+/// occupies). On Windows metadata cannot answer the question — the
+/// allocated size needs the path for `GetCompressedFileSizeW` — so
+/// this returns the LOGICAL length there, and callers producing
+/// user-facing figures on Windows must use
+/// [`allocated_size_for_path`] instead (the scanner does).
 pub fn allocated_size(md: &std::fs::Metadata) -> u64 {
     #[cfg(unix)]
     {
@@ -879,14 +1019,6 @@ pub fn allocated_size(md: &std::fs::Metadata) -> u64 {
     }
     #[cfg(windows)]
     {
-        // Prefer the compressed size so sparse / compressed files report the
-        // space they actually occupy; fall back to logical length.
-        if let Some(p) = current_path_hint() {
-            let _ = p;
-        }
-        let _ = md;
-        // The scanner path uses GetCompressedFileSizeW with the real path in
-        // `allocated_size_for_path`; here we only have metadata.
         return md.len();
     }
     #[allow(unreachable_code)]
@@ -913,11 +1045,6 @@ pub fn allocated_size_for_path(path: &Path) -> u64 {
 }
 
 #[cfg(windows)]
-fn current_path_hint() -> Option<PathBuf> {
-    None
-}
-
-#[cfg(windows)]
 fn compressed_file_size_w(path: &Path) -> Option<u64> {
     use std::os::windows::ffi::OsStrExt;
     #[link(name = "kernel32")]
@@ -939,16 +1066,89 @@ fn compressed_file_size_w(path: &Path) -> Option<u64> {
     Some(((high as u64) << 32) | low as u64)
 }
 
-#[cfg(windows)]
-fn file_nlink_windows(_md: &std::fs::Metadata) -> u64 {
-    // std does not expose the Windows file index / link count portably; the
-    // scanner treats files as singly linked unless a file index is available.
-    1
+/// A file's stable identity on this machine: (volume, file id).
+/// Two paths with the same identity are the same file (hard links).
+/// The Unix form is (device, inode); the Windows form is (volume
+/// serial number, 64-bit file index) from
+/// `GetFileInformationByHandle`. `None` when the platform cannot
+/// provide an identity or the file cannot be opened — callers then
+/// treat the file as unique, which can only over-count, never
+/// mis-attribute. (Today's caller is the duplicates finder's
+/// Windows branch; Unix callers read the same identity straight
+/// from metadata, so on a Unix build this helper is unused.)
+#[cfg_attr(not(windows), allow(dead_code))]
+pub(crate) fn file_identity(path: &Path) -> Option<(u64, u64)> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        let md = std::fs::metadata(path).ok()?;
+        Some((md.dev(), md.ino()))
+    }
+    #[cfg(windows)]
+    {
+        file_identity_windows(path).map(|(key, _nlink)| key)
+    }
+    #[cfg(not(any(unix, windows)))]
+    {
+        let _ = path;
+        None
+    }
 }
 
 #[cfg(windows)]
-fn file_index_key(_md: &std::fs::Metadata) -> Option<(u64, u64)> {
-    None
+#[repr(C)]
+struct ByHandleFileInformation {
+    file_attributes: u32,
+    creation_time: u64,
+    last_access_time: u64,
+    last_write_time: u64,
+    volume_serial_number: u32,
+    file_size_high: u32,
+    file_size_low: u32,
+    number_of_links: u32,
+    file_index_high: u32,
+    file_index_low: u32,
+}
+
+#[cfg(windows)]
+extern "system" {
+    fn GetFileInformationByHandle(
+        handle: *mut std::ffi::c_void,
+        info: *mut ByHandleFileInformation,
+    ) -> i32;
+}
+
+/// Windows file identity plus its hard-link count, from one handle
+/// query: `((volume serial, file index), nlink)`. `None` when the
+/// file cannot be opened (locked system files, races) or the query
+/// fails.
+#[cfg(windows)]
+pub(crate) fn file_identity_windows(path: &Path) -> Option<((u64, u64), u64)> {
+    use std::os::windows::io::AsRawHandle;
+    let file = std::fs::File::open(path).ok()?;
+    let mut info = ByHandleFileInformation {
+        file_attributes: 0,
+        creation_time: 0,
+        last_access_time: 0,
+        last_write_time: 0,
+        volume_serial_number: 0,
+        file_size_high: 0,
+        file_size_low: 0,
+        number_of_links: 0,
+        file_index_high: 0,
+        file_index_low: 0,
+    };
+    let ok = unsafe {
+        GetFileInformationByHandle(file.as_raw_handle(), &mut info)
+    };
+    if ok == 0 {
+        return None;
+    }
+    let index = ((info.file_index_high as u64) << 32) | info.file_index_low as u64;
+    Some((
+        (info.volume_serial_number as u64, index),
+        info.number_of_links as u64,
+    ))
 }
 
 fn device_of(md: &std::fs::Metadata) -> u64 {
@@ -984,7 +1184,14 @@ fn is_reparse_point(md: &std::fs::Metadata) -> bool {
 
 /// Recursive size of a single path without following symlinks. Used by the
 /// developer-tools analyzers and application data measurement.
+/// Recursion stops at the same depth cap as the scanner
+/// ([`MAX_DEPTH`]); a subtree below it measures as 0 rather than
+/// overflowing the stack.
 pub fn measure_path(path: &Path) -> u64 {
+    measure_path_depth(path, 0)
+}
+
+fn measure_path_depth(path: &Path, depth: usize) -> u64 {
     let md = match std::fs::symlink_metadata(path) {
         Ok(m) => m,
         Err(_) => return 0,
@@ -995,6 +1202,9 @@ pub fn measure_path(path: &Path) -> u64 {
     if md.is_file() {
         return allocated_size_for_path(path);
     }
+    if depth >= MAX_DEPTH {
+        return 0;
+    }
     let mut total = 0u64;
     if let Ok(read) = std::fs::read_dir(path) {
         for entry in read.flatten() {
@@ -1004,7 +1214,7 @@ pub fn measure_path(path: &Path) -> u64 {
                     continue;
                 }
                 if m.is_dir() {
-                    total += measure_path(&p);
+                    total += measure_path_depth(&p, depth + 1);
                 } else if m.is_file() {
                     total += allocated_size_for_path(&p);
                 }
@@ -1015,8 +1225,13 @@ pub fn measure_path(path: &Path) -> u64 {
 }
 
 /// Logical size total (sum of file lengths) used in places where tests and
-/// callers reason about exact byte counts.
+/// callers reason about exact byte counts. Depth-capped like
+/// [`measure_path`].
 pub fn measure_logical(path: &Path) -> u64 {
+    measure_logical_depth(path, 0)
+}
+
+fn measure_logical_depth(path: &Path, depth: usize) -> u64 {
     let md = match std::fs::symlink_metadata(path) {
         Ok(m) => m,
         Err(_) => return 0,
@@ -1027,10 +1242,13 @@ pub fn measure_logical(path: &Path) -> u64 {
     if md.is_file() {
         return md.len();
     }
+    if depth >= MAX_DEPTH {
+        return 0;
+    }
     let mut total = 0u64;
     if let Ok(read) = std::fs::read_dir(path) {
         for entry in read.flatten() {
-            total += measure_logical(&entry.path());
+            total += measure_logical_depth(&entry.path(), depth + 1);
         }
     }
     total

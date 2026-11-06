@@ -1,7 +1,10 @@
 //! Duplicate finder: group by size, confirm with a partial hash, then a full
 //! SHA-256. Hidden folders, application data, dependency folders and package
-//! caches are skipped; hard links count once; likely filesystem clones are
-//! flagged because removing them frees little space.
+//! caches are skipped; hard links count once (on Windows too, via the
+//! volume-serial + file-index identity the scanner uses); likely filesystem
+//! clones are flagged because removing them frees little space — the clone
+//! heuristic itself is Unix-only today, so on Windows copies are told apart
+//! purely by hard-link identity, which is what `wasted_bytes` relies on.
 
 use crate::model::*;
 use rayon::prelude::*;
@@ -57,17 +60,47 @@ fn is_same_file(a: &Path, b: &Path) -> bool {
             _ => false,
         }
     }
-    #[cfg(not(unix))]
+    #[cfg(windows)]
+    {
+        // Same identity the scanner dedupes on: (volume serial,
+        // file index) from GetFileInformationByHandle.
+        match (
+            crate::scanner::file_identity(a),
+            crate::scanner::file_identity(b),
+        ) {
+            (Some(x), Some(y)) => x == y,
+            _ => false,
+        }
+    }
+    #[cfg(not(any(unix, windows)))]
     {
         let _ = (a, b);
         false
     }
 }
 
+/// Fill `buf` from `file`, looping over short reads: one `read`
+/// call is not obliged to fill the buffer (pipes, network and
+/// cloud-backed files all return short reads), and a partial-hash
+/// window that silently shrank would group files by whatever
+/// prefix happened to arrive. Returns the byte count (short only
+/// at EOF or on error).
+fn read_fill(file: &mut std::fs::File, buf: &mut [u8]) -> usize {
+    let mut filled = 0;
+    while filled < buf.len() {
+        match file.read(&mut buf[filled..]) {
+            Ok(0) => break,
+            Ok(n) => filled += n,
+            Err(_) => break,
+        }
+    }
+    filled
+}
+
 fn hash_partial(path: &Path) -> Option<String> {
     let mut file = std::fs::File::open(path).ok()?;
     let mut buf = vec![0u8; PARTIAL_BYTES];
-    let n = file.read(&mut buf).ok()?;
+    let n = read_fill(&mut file, &mut buf);
     buf.truncate(n);
     // Also sample the tail so files sharing a header still diverge.
     let len = file.metadata().ok()?.len();
@@ -75,10 +108,9 @@ fn hash_partial(path: &Path) -> Option<String> {
         use std::io::{Seek, SeekFrom};
         if file.seek(SeekFrom::End(-(PARTIAL_BYTES as i64))).is_ok() {
             let mut tail = vec![0u8; PARTIAL_BYTES];
-            if let Ok(m) = file.read(&mut tail) {
-                tail.truncate(m);
-                buf.extend_from_slice(&tail);
-            }
+            let m = read_fill(&mut file, &mut tail);
+            tail.truncate(m);
+            buf.extend_from_slice(&tail);
         }
     }
     let mut hasher = Sha256::new();
@@ -104,8 +136,14 @@ pub fn hash_full(path: &Path) -> Option<String> {
 /// hidden folders and the dependency/cache folders in `skipped_dir`.
 /// Subdirectories are walked in parallel (the same shape as the scanner's
 /// walk); the resulting order is unspecified, exactly as directory read
-/// order was in the serial version.
+/// order was in the serial version. Descent stops at the scanner's
+/// depth cap ([`crate::scanner::MAX_DEPTH`]): files in a directory
+/// at the cap are still collected, its subdirectories are not.
 pub(crate) fn collect_files(root: &Path) -> Vec<PathBuf> {
+    collect_files_depth(root, 0)
+}
+
+fn collect_files_depth(root: &Path, depth: usize) -> Vec<PathBuf> {
     let Ok(read) = std::fs::read_dir(root) else {
         return Vec::new();
     };
@@ -124,10 +162,10 @@ pub(crate) fn collect_files(root: &Path) -> Vec<PathBuf> {
                     .file_name()
                     .map(|n| n.to_string_lossy().to_string())
                     .unwrap_or_default();
-                if skipped_dir(&name) {
+                if skipped_dir(&name) || depth >= crate::scanner::MAX_DEPTH {
                     Vec::new()
                 } else {
-                    collect_files(&path)
+                    collect_files_depth(&path, depth + 1)
                 }
             } else if md.is_file() && md.len() > 0 {
                 vec![path]
@@ -181,10 +219,17 @@ pub fn find_duplicates(root: &Path) -> Vec<DuplicateGroup> {
         by_full.entry((size, hash)).or_default().push(p);
     }
     let mut groups: Vec<DuplicateGroup> = Vec::new();
-    for ((size, hash), fpaths) in by_full {
+    for ((size, hash), mut fpaths) in by_full {
         if fpaths.len() < 2 {
             continue;
         }
+        // Deterministic output: the parallel collection above makes
+        // input order arbitrary, so paths sort BEFORE the group is
+        // built — the keeper (`DuplicateGroup::wasted_bytes` treats
+        // files[0] as the keeper) and the hard-link flags are both
+        // defined relative to the first entry, so that entry must
+        // be a stable one. Groups below sort by (wasted desc, hash).
+        fpaths.sort();
         let first = fpaths[0].clone();
         let dups: Vec<DuplicateFile> = fpaths
             .iter()
@@ -205,7 +250,11 @@ pub fn find_duplicates(root: &Path) -> Vec<DuplicateGroup> {
             files: dups,
         });
     }
-    groups.sort_by_key(|g| std::cmp::Reverse(g.wasted_bytes()));
+    groups.sort_by(|a, b| {
+        b.wasted_bytes()
+            .cmp(&a.wasted_bytes())
+            .then(a.hash.cmp(&b.hash))
+    });
     groups
 }
 
@@ -366,7 +415,12 @@ pub fn find_similar_images(root: &Path) -> Vec<SimilarGroup> {
         .filter(|files| files.len() >= 2)
         .map(|mut files| {
             // Keeper rule unchanged: largest LOGICAL file first.
-            files.sort_by_key(|(_, logical)| std::cmp::Reverse(*logical));
+            // Path breaks size ties so the keeper — and the whole
+            // rendering — is deterministic across runs.
+            files.sort_by(|a, b| {
+                b.1.cmp(&a.1)
+                    .then(a.0.path.cmp(&b.0.path))
+            });
             let files: Vec<SimilarImage> = files.into_iter().map(|(img, _)| img).collect();
             // Wasted is allocated-based: every non-keeper copy's
             // allocated bytes (files[0] is the keeper).
@@ -377,7 +431,14 @@ pub fn find_similar_images(root: &Path) -> Vec<SimilarGroup> {
             }
         })
         .collect();
-    groups.sort_by_key(|g| std::cmp::Reverse(g.wasted_bytes));
+    groups.sort_by(|a, b| {
+        b.wasted_bytes.cmp(&a.wasted_bytes).then(
+            a.files
+                .first()
+                .map(|f| f.path.as_str())
+                .cmp(&b.files.first().map(|f| f.path.as_str())),
+        )
+    });
     groups
 }
 
