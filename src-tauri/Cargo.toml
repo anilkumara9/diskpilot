@@ -1,12 +1,12 @@
 [package]
 name = "diskpilot"
-version = "0.5.1"
+version = "0.6.0"
 description = "DiskPilot — storage intelligence for Windows"
 authors = ["DiskPilot contributors"]
 edition = "2021"
 rust-version = "1.82"
 license = "MIT"
-homepage = "https://tauri.app"
+homepage = "https://github.com/anilkumara9/diskpilot"
 
 [lib]
 name = "diskpilot_lib"

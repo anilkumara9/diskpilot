@@ -830,7 +830,7 @@ dependencies = [
 
 [[package]]
 name = "diskpilot"
-version = "0.5.1"
+version = "0.6.0"
 dependencies = [
  "diskpilot-core",
  "serde",
@@ -847,7 +847,7 @@ dependencies = [
 
 [[package]]
 name = "diskpilot-core"
-version = "0.1.0"
+version = "0.6.0"
 dependencies = [
  "dirs 6.0.0",
  "fs2",
