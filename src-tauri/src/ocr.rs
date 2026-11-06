@@ -21,43 +21,112 @@ use diskpilot_core::AppState;
 
 use crate::ShellState;
 
-/// Recognized-text cache: core cache key → recognized text. Only
-/// positive results are cached — a file with no text (or an engine
-/// without a language pack that day) is retried on a later pass
-/// rather than being pinned as permanently textless.
-type OcrCache = HashMap<String, String>;
+/// How many recognized texts the cache keeps. When a pass pushes
+/// it past the cap, the least-recently-inserted entries are evicted
+/// (see the `OcrCache` note) — recent screenshots are the ones users
+/// search for, and their text is the last worth losing.
+const MAX_CACHE_ENTRIES: usize = 5_000;
+
+/// Recognized-text cache: (core cache key, recognized text) pairs
+/// IN INSERTION ORDER. A Vec rather than a map so the eviction
+/// order above is real, and so the disk format — a JSON array of
+/// pairs — preserves it across runs. (Caches written by earlier
+/// versions were a JSON object; loading still accepts those, their
+/// order simply becomes whatever the old file held.) Only positive
+/// results are cached — a file with no text (or an engine without a
+/// language pack that day) is retried on a later pass rather than
+/// being pinned as permanently textless.
+type OcrCache = Vec<(String, String)>;
 
 fn load_cache(path: &Path) -> OcrCache {
-    std::fs::read_to_string(path)
-        .ok()
-        .and_then(|text| serde_json::from_str(&text).ok())
+    let Ok(text) = std::fs::read_to_string(path) else {
+        return Vec::new();
+    };
+    if let Ok(pairs) = serde_json::from_str::<OcrCache>(&text) {
+        return pairs;
+    }
+    // Legacy format: a plain key → text object.
+    serde_json::from_str::<HashMap<String, String>>(&text)
+        .map(|map| map.into_iter().collect())
         .unwrap_or_default()
 }
 
-fn save_cache(path: &Path, cache: &OcrCache) {
-    // Written via a temp file so a crash mid-write cannot corrupt
-    // the previous cache (same pattern as settings persistence).
+fn cache_get<'a>(cache: &'a OcrCache, key: &str) -> Option<&'a str> {
+    cache
+        .iter()
+        .find(|(k, _)| k == key)
+        .map(|(_, text)| text.as_str())
+}
+
+fn cache_insert(cache: &mut OcrCache, key: String, text: String) {
+    if let Some(slot) = cache.iter_mut().find(|(k, _)| *k == key) {
+        slot.1 = text;
+    } else {
+        cache.push((key, text));
+    }
+}
+
+/// The file path inside a core cache key (`path|modifiedMs|bytes`).
+/// Parsed from the right: Windows file names cannot contain `|`,
+/// so the last two `|`-separated fields are always the mtime and
+/// size (and on other hosts a `|` inside a name still parses
+/// correctly, since only trailing fields are stripped).
+fn cache_key_path(key: &str) -> Option<&str> {
+    let (head, _bytes) = key.rsplit_once('|')?;
+    let (path, _modified_ms) = head.rsplit_once('|')?;
+    Some(path)
+}
+
+/// Drop cache entries whose file no longer exists (deleted or
+/// moved since it was recognized). Runs at load, once per pass;
+/// each check is one metadata call.
+fn prune_missing_files(cache: &mut OcrCache) {
+    cache.retain(|(key, _)| {
+        cache_key_path(key)
+            .map(|path| Path::new(path).exists())
+            .unwrap_or(false)
+    });
+}
+
+/// Evict least-recently-inserted entries until the cache is within
+/// its cap.
+fn evict_over_cap(cache: &mut OcrCache) {
+    if cache.len() > MAX_CACHE_ENTRIES {
+        cache.drain(..cache.len() - MAX_CACHE_ENTRIES);
+    }
+}
+
+fn save_cache(path: &Path, cache: &OcrCache, generation: u64) {
+    // Written via a temp file so a crash mid-write cannot
+    // corrupt the previous cache (same pattern as settings
+    // persistence). The temp name is unique to this pass
+    // (generation-suffixed), so two passes writing around the same
+    // moment never share a temp path.
     let Ok(text) = serde_json::to_string(cache) else {
         return;
     };
-    let tmp = path.with_extension("json.tmp");
+    let tmp = path.with_extension(format!("json.tmp{generation}"));
     if std::fs::write(&tmp, text).is_ok() {
         let _ = std::fs::rename(&tmp, path);
     }
 }
 
-/// Write recognized text (path → text) into the index entries of
-/// the engine state, in place. Entries without a text keep
-/// whatever they had (normally nothing).
+/// Write recognized text into the index entries of the engine
+/// state, in place. `texts` is keyed by the core cache key
+/// (path + mtime + size), and each entry is matched by ITS key —
+/// never by path alone — so a file that changed since it was
+/// recognized (different key) is not decorated with another
+/// version's text. A key match REPLACES the entry's text: the key
+/// identifies the exact bytes the text was read from, and a newer
+/// pass's reading of those same bytes supersedes an older one.
 fn apply_text(engine: &mut AppState, texts: &HashMap<String, String>) {
     let Some(index) = engine.index.as_mut() else {
         return;
     };
     for file in &mut index.files {
-        if file.ocr_text.is_none() {
-            if let Some(text) = texts.get(&file.path) {
-                file.ocr_text = Some(text.clone());
-            }
+        let key = ocr::cache_key(&file.path, file.modified_ms, file.bytes);
+        if let Some(text) = texts.get(&key) {
+            file.ocr_text = Some(text.clone());
         }
     }
 }
@@ -123,15 +192,19 @@ pub fn spawn_pass(app: AppHandle, generation: u64) {
 
         let cache_file: PathBuf = state.ocr_cache_file();
         let mut cache = load_cache(&cache_file);
+        // Hygiene before anything reads the cache: entries for
+        // files that no longer exist are dead weight (and their
+        // keys could collide with a future file reusing the path).
+        prune_missing_files(&mut cache);
 
         // Cache hits are applied first, so search sees previously
         // recognized text immediately; only misses cost engine time.
         let mut misses: Vec<OcrCandidate> = Vec::new();
         let mut hits: HashMap<String, String> = HashMap::new();
         for candidate in candidates {
-            match cache.get(&candidate.cache_key) {
+            match cache_get(&cache, &candidate.cache_key) {
                 Some(text) => {
-                    hits.insert(candidate.path.clone(), text.clone());
+                    hits.insert(candidate.cache_key.clone(), text.to_string());
                 }
                 None => misses.push(candidate),
             }
@@ -174,17 +247,29 @@ pub fn spawn_pass(app: AppHandle, generation: u64) {
         // Cache results even when a newer scan superseded this pass
         // mid-flight (the keys stay valid); write into the index
         // only when this pass still belongs to the current scan.
-        let mut by_path: HashMap<String, String> = HashMap::new();
-        for (key, path, text) in fresh {
-            cache.insert(key, text.clone());
-            by_path.insert(path, text);
+        let mut by_key: HashMap<String, String> = HashMap::new();
+        for (key, _path, text) in fresh {
+            cache_insert(&mut cache, key.clone(), text.clone());
+            by_key.insert(key, text);
         }
-        save_cache(&cache_file, &cache);
-        if generation_counter.load(Ordering::SeqCst) == generation {
-            if let Ok(mut engine) = state.engine.lock() {
-                apply_text(&mut engine, &by_path);
+        evict_over_cap(&mut cache);
+        save_cache(&cache_file, &cache, generation);
+        if let Ok(mut engine) = state.engine.lock() {
+            // The generation is re-checked WHILE HOLDING the engine
+            // lock. A newer scan bumps the generation when it starts
+            // — before it can store anything — and storing takes this
+            // same lock, so under the lock the check is decisive: a
+            // mismatch means a newer scan owns (or is about to own)
+            // the index and this pass must not touch it; a match
+            // means any scan starting later replaces the whole index
+            // wholesale after this apply, discarding it harmlessly.
+            // Checking before locking left a window where a scan
+            // could store a fresh index and this pass would then
+            // decorate it with the previous scan's text.
+            if generation_counter.load(Ordering::SeqCst) == generation {
+                apply_text(&mut engine, &by_key);
             }
-        }
+        };
     });
 }
 
@@ -212,28 +297,69 @@ mod tests {
         assert!(load_cache(&path).is_empty(), "missing file → empty");
 
         let mut cache = OcrCache::new();
-        cache.insert("a.png|1|2".to_string(), "hello".to_string());
-        save_cache(&path, &cache);
+        cache_insert(&mut cache, "a.png|1|2".to_string(), "hello".to_string());
+        save_cache(&path, &cache, 3);
         assert_eq!(load_cache(&path), cache);
+        assert!(
+            !path.with_extension("json.tmp3").exists(),
+            "the per-pass temp file is renamed away"
+        );
 
         std::fs::write(&path, "{not json").unwrap();
         assert!(load_cache(&path).is_empty(), "damaged file → empty");
     }
 
     #[test]
-    fn apply_text_fills_only_entries_without_text() {
+    fn cache_still_loads_the_legacy_object_format() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("ocr_cache.json");
+        std::fs::write(&path, r#"{"a.png|1|2": "hello"}"#).unwrap();
+        let cache = load_cache(&path);
+        assert_eq!(cache_get(&cache, "a.png|1|2"), Some("hello"));
+    }
+
+    #[test]
+    fn cache_prunes_dead_files_and_evicts_oldest_first() {
+        let dir = tempfile::tempdir().unwrap();
+        let alive = dir.path().join("alive.png");
+        std::fs::write(&alive, b"x").unwrap();
+        let alive_key = format!("{}|1|2", alive.to_string_lossy());
+        let mut cache = OcrCache::new();
+        cache_insert(&mut cache, "gone.png|1|2".to_string(), "dead".to_string());
+        cache_insert(&mut cache, alive_key.clone(), "live".to_string());
+        prune_missing_files(&mut cache);
+        assert_eq!(cache.len(), 1);
+        assert_eq!(cache_get(&cache, &alive_key), Some("live"));
+
+        let mut big: OcrCache = (0..MAX_CACHE_ENTRIES + 3)
+            .map(|i| (format!("f{i}.png|1|2"), format!("text {i}")))
+            .collect();
+        evict_over_cap(&mut big);
+        assert_eq!(big.len(), MAX_CACHE_ENTRIES);
+        assert_eq!(
+            big[0].0, "f3.png|1|2",
+            "the least-recently-inserted entries go first"
+        );
+    }
+
+    #[test]
+    fn apply_text_matches_by_cache_key_and_replaces_on_key_match() {
         let mut engine = AppState::new();
         engine.index = Some(DirIndex {
             files: vec![
                 entry("/root/a.png", None),
-                entry("/root/b.png", Some("already")),
+                entry("/root/b.png", Some("stale")),
                 entry("/root/c.png", None),
             ],
             ..Default::default()
         });
+        let key = |p: &str| ocr::cache_key(p, 0, 10);
         let texts: HashMap<String, String> = [
-            ("/root/a.png".to_string(), "fresh".to_string()),
-            ("/root/b.png".to_string(), "replacement".to_string()),
+            (key("/root/a.png"), "fresh".to_string()),
+            (key("/root/b.png"), "replacement".to_string()),
+            // Text keyed for a DIFFERENT version of c.png (mtime 9):
+            // it must not land on the current entry.
+            (ocr::cache_key("/root/c.png", 9, 10), "wrong version".to_string()),
         ]
         .into_iter()
         .collect();
@@ -242,10 +368,10 @@ mod tests {
         assert_eq!(files[0].ocr_text.as_deref(), Some("fresh"));
         assert_eq!(
             files[1].ocr_text.as_deref(),
-            Some("already"),
-            "existing text is never overwritten"
+            Some("replacement"),
+            "a key-matched newer reading replaces the older one"
         );
-        assert_eq!(files[2].ocr_text, None);
+        assert_eq!(files[2].ocr_text, None, "no key match, no text");
     }
 
     #[test]
