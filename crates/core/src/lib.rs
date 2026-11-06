@@ -4,6 +4,7 @@
 //! (explain only) -> planner (preview) -> safety gate (validate) ->
 //! executor (act, record). Only the executor removes anything.
 
+pub mod appjunk;
 pub mod apps;
 pub mod assistant;
 pub mod cards;
@@ -18,11 +19,13 @@ pub mod drives;
 pub mod duplicates;
 pub mod error;
 pub mod explorer;
+pub mod export;
 pub mod extensions;
 pub mod forecast;
 pub mod games;
 pub mod history;
 pub mod live_apply;
+pub mod maintenance;
 pub mod media;
 pub mod media_meta;
 pub mod mft;
@@ -32,15 +35,18 @@ pub mod ocr;
 pub mod privacy;
 pub mod provenance;
 pub mod recommend;
+pub mod relocate;
 pub mod safety;
 pub mod scanner;
 pub mod search;
 pub mod secrets;
+pub mod smart;
 pub mod snapshot;
 pub mod snapshot_diff;
 pub mod state;
 pub mod usn;
 pub mod usn_volume;
+pub mod winget;
 
 pub use error::{CoreError, CoreResult};
 pub use model::*;
