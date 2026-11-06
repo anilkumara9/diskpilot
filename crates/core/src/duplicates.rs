@@ -489,10 +489,13 @@ mod similar_tests {
         let groups = find_similar_images(root);
         assert_eq!(groups.len(), 1);
         let group = &groups[0];
+        // File name via the path API: `f.path` is a platform-spelled
+        // string (`\` separators on Windows), so splitting on '/'
+        // would return the whole path there.
         let names: Vec<&str> = group
             .files
             .iter()
-            .map(|f| f.path.rsplit('/').next().unwrap())
+            .map(|f| Path::new(&f.path).file_name().unwrap().to_str().unwrap())
             .collect();
         assert_eq!(group.files.len(), 3);
         assert!(names.contains(&"a.png") && names.contains(&"b.png") && names.contains(&"c.png"));

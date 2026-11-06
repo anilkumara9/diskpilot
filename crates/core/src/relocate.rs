@@ -139,34 +139,69 @@ mod tests {
 
     const GB: u64 = 1_000_000_000;
 
+    /// Root the test paths are built from. A bare `/home/...`
+    /// spelling is absolute on Unix but only root-relative on
+    /// Windows (`Path::is_absolute()` requires a drive letter
+    /// there), which made every "expects Ok" case fail the
+    /// absoluteness gate on Windows before reaching the logic under
+    /// test. Building from segments keeps the same branches
+    /// exercised on both platforms.
+    #[cfg(windows)]
+    const TEST_ROOT: &str = r"C:\";
+    #[cfg(not(windows))]
+    const TEST_ROOT: &str = "/";
+
+    fn abs(segments: &[&str]) -> PathBuf {
+        let mut p = PathBuf::from(TEST_ROOT);
+        for s in segments {
+            p.push(s);
+        }
+        p
+    }
+
+    /// Directories that are absolute AND protected on the platform
+    /// running the test: the protected list carries both spellings,
+    /// but a foreign spelling is not absolute here and would be
+    /// rejected at the absoluteness gate instead of the protection
+    /// check this test targets.
+    #[cfg(windows)]
+    const PROTECTED_DIRS: [&str; 2] = [r"C:\Windows\System32", r"C:\Program Files\App"];
+    #[cfg(not(windows))]
+    const PROTECTED_DIRS: [&str; 2] = ["/etc/nginx", "/usr/lib"];
+
+    #[cfg(windows)]
+    const PROTECTED_PARENT: &str = r"C:\Windows";
+    #[cfg(not(windows))]
+    const PROTECTED_PARENT: &str = "/etc";
+
     #[test]
     fn happy_path_returns_joined_destination() {
         let dest = validate_relocation(
-            Path::new("/home/user/Games/BigGame"),
-            Path::new("/mnt/data"),
+            &abs(&["home", "user", "Games", "BigGame"]),
+            &abs(&["mnt", "data"]),
             40 * GB,
             100 * GB,
         )
         .unwrap();
-        assert_eq!(dest, PathBuf::from("/mnt/data/BigGame"));
+        assert_eq!(dest, abs(&["mnt", "data", "BigGame"]));
     }
 
     #[test]
     fn root_source_has_no_file_name() {
-        assert!(validate_relocation(Path::new("/"), Path::new("/mnt/data"), 0, 100 * GB).is_err());
+        assert!(validate_relocation(&abs(&[]), &abs(&["mnt", "data"]), 0, 100 * GB).is_err());
     }
 
     #[test]
     fn relative_paths_rejected() {
         assert!(validate_relocation(
             Path::new("Games/BigGame"),
-            Path::new("/mnt/data"),
+            &abs(&["mnt", "data"]),
             GB,
             100 * GB
         )
         .is_err());
         assert!(validate_relocation(
-            Path::new("/home/user/Games"),
+            &abs(&["home", "user", "Games"]),
             Path::new("mnt/data"),
             GB,
             100 * GB
@@ -176,23 +211,16 @@ mod tests {
 
     #[test]
     fn protected_sources_rejected() {
-        // Unix protected prefixes exercise the same list on this host;
-        // the Windows spellings ride the identical code path.
+        for dir in PROTECTED_DIRS {
+            assert!(
+                validate_relocation(Path::new(dir), &abs(&["mnt", "data"]), GB, 100 * GB).is_err()
+            );
+        }
+        // Report-only locations are protected too (name-based, so
+        // the same spelling is protected on both platforms).
         assert!(validate_relocation(
-            Path::new("/etc/nginx"),
-            Path::new("/mnt/data"),
-            GB,
-            100 * GB
-        )
-        .is_err());
-        assert!(
-            validate_relocation(Path::new("/usr/lib"), Path::new("/mnt/data"), GB, 100 * GB)
-                .is_err()
-        );
-        // Report-only locations are protected too.
-        assert!(validate_relocation(
-            Path::new("/home/user/Windows.old"),
-            Path::new("/mnt/data"),
+            &abs(&["home", "user", "Windows.old"]),
+            &abs(&["mnt", "data"]),
             GB,
             100 * GB
         )
@@ -201,19 +229,22 @@ mod tests {
 
     #[test]
     fn destination_inside_source_rejected() {
-        let src = Path::new("/home/user/Games");
-        assert!(validate_relocation(src, Path::new("/home/user/Games"), GB, 100 * GB).is_err());
-        assert!(validate_relocation(src, Path::new("/home/user/Games/Sub"), GB, 100 * GB).is_err());
+        let src = abs(&["home", "user", "Games"]);
+        assert!(validate_relocation(&src, &src, GB, 100 * GB).is_err());
+        assert!(
+            validate_relocation(&src, &abs(&["home", "user", "Games", "Sub"]), GB, 100 * GB)
+                .is_err()
+        );
         // A sibling whose name merely shares a prefix is fine.
-        assert!(validate_relocation(src, Path::new("/home/user/Games2"), GB, 100 * GB).is_ok());
+        assert!(validate_relocation(&src, &abs(&["home", "user", "Games2"]), GB, 100 * GB).is_ok());
     }
 
     #[test]
     fn destination_equal_to_source_rejected() {
         // dest_parent == source's parent -> dest == source.
         assert!(validate_relocation(
-            Path::new("/home/user/Games"),
-            Path::new("/home/user"),
+            &abs(&["home", "user", "Games"]),
+            &abs(&["home", "user"]),
             GB,
             100 * GB
         )
@@ -226,8 +257,8 @@ mod tests {
         // in a different case. Raw Path equality misses it; the
         // normalized comparison must not.
         assert!(validate_relocation(
-            Path::new("/home/user/Games"),
-            Path::new("/HOME/USER"),
+            &abs(&["home", "user", "Games"]),
+            &abs(&["HOME", "USER"]),
             GB,
             100 * GB
         )
@@ -237,8 +268,8 @@ mod tests {
     #[test]
     fn destination_in_protected_territory_rejected() {
         assert!(validate_relocation(
-            Path::new("/home/user/Games"),
-            Path::new("/etc"),
+            &abs(&["home", "user", "Games"]),
+            Path::new(PROTECTED_PARENT),
             GB,
             100 * GB
         )
@@ -254,13 +285,13 @@ mod tests {
 
     #[test]
     fn free_space_must_cover_source_plus_headroom() {
-        let src = Path::new("/home/user/Games");
-        let dst = Path::new("/mnt/data");
+        let src = abs(&["home", "user", "Games"]);
+        let dst = abs(&["mnt", "data"]);
         // Exactly enough: 100 GB source + 5 GB headroom.
-        assert!(validate_relocation(src, dst, 100 * GB, 105 * GB).is_ok());
+        assert!(validate_relocation(&src, &dst, 100 * GB, 105 * GB).is_ok());
         // One byte short.
-        assert!(validate_relocation(src, dst, 100 * GB, 105 * GB - 1).is_err());
+        assert!(validate_relocation(&src, &dst, 100 * GB, 105 * GB - 1).is_err());
         // Saturating: a near-u64::MAX source can never fit anywhere.
-        assert!(validate_relocation(src, dst, u64::MAX, u64::MAX).is_err());
+        assert!(validate_relocation(&src, &dst, u64::MAX, u64::MAX).is_err());
     }
 }
