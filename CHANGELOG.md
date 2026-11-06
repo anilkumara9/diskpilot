@@ -105,6 +105,72 @@ based on Keep a Changelog, and the project follows semantic versioning.
   groups), and the treemap, biggest-changes panel, forecast card and
   settings forms were brought to one finish.
 
+### Fixed
+
+- **Fast scan robustness** — a crafted or damaged Master File Table
+  can no longer crash the fast-scan parser: truncated attribute
+  headers are skipped per the parser's contract, run-derived sizes
+  use saturating arithmetic bounded by the volume's real size,
+  4Kn-sector drives read a full boot sector, and a `$MFT` claiming
+  to be larger than its volume is rejected up front (the standard
+  scanner takes over). Case-variant names of one file in a
+  directory now assemble as one entry, and very deep directory
+  chains assemble in linear time instead of stalling the scan.
+- **Correct sizes on Windows** — the standard scanner now measures
+  allocated bytes through the file path on Windows (as the
+  byte-accounting rule requires) instead of falling back to logical
+  lengths, and counts each hard link once there too, using the
+  volume serial + file index identity; the duplicates finder uses
+  the same identity, so its "wasted bytes" no longer charges for
+  hard-linked copies.
+- **Deep and wide scans** — classification work is shared across
+  each directory's children instead of rebuilt per file (deep
+  trees scan in a fraction of the former time), every walk stops
+  at a 512-level depth cap and reports what it skipped, duplicate
+  collection is depth-capped the same way, and scans run on a
+  thread whose stack is sized for the cap.
+- **Honest cleanup plans** — a plan's per-item sizes are the scan's
+  measured bytes for that exact path (never an even split of a
+  recommendation total), a path the scan cannot verify is dropped
+  from the plan, and asking to permanently delete a plan that does
+  not allow it no longer consumes the single-use plan — the same
+  plan can still be executed as a move to the Recycle Bin.
+- **No phantom folder changes** — "biggest changes" compares
+  folders on one consistent basis across both scans, so a folder
+  dropping out of one scan's top-folders list is compared at its
+  file-derived size instead of being reported as fully removed
+  and re-added.
+- **Live index soundness** — journal path resolution keys its
+  cache by the full file reference (sequence included), so a
+  recycled record number never resolves to the previous file's
+  path; a hard-link change marks the index stale on every
+  platform; a byte delta that would drive a folder total negative
+  marks the batch stale instead of silently clamping; and an
+  index holding two paths that differ only by case marks the
+  batch stale instead of orphaning one entry.
+- **Assistant** — the assistant now actually speaks each
+  provider's API: Anthropic's Messages format with tool blocks,
+  and the Chat Completions format for OpenAI and OpenRouter, with
+  the read-only tools offered and their results returned matched
+  by call id (previously every provider received the Anthropic
+  shape and tools were never offered). The tool loop stops after
+  five rounds, and conversation history sent to a provider keeps
+  only user and assistant turns plus their paired tool results.
+- **Duplicate results are stable** — duplicate and similar-image
+  groups render in a deterministic order across runs.
+- **Search and forecast edges** — an absurd "last N days" search
+  window clamps to 100 years (and the interpretation chip says
+  so) instead of overflowing; a nearly-flat growth forecast no
+  longer projects a "drive full" date billions of years out —
+  it reports growth with no deadline.
+- **Small hardening** — the download-provenance reader caps the
+  Zone.Identifier stream at 1 MB; the OneDrive "free up space"
+  containment check rejects `..` path components outright; a
+  Docker action that runs and fails now reports `success: false`
+  with the process output instead of looking like a transport
+  error; partial-hash sampling reads its full windows even when
+  the filesystem returns short reads.
+
 ## [0.5.1] — 2026-11-06 — Windows release
 
 First Windows release of DiskPilot: storage intelligence for Windows 10
