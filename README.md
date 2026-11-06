@@ -60,6 +60,28 @@ Scans you start yourself never raise alerts. An optional **launch at
 sign-in** setting starts DiskPilot in the tray automatically, so the
 watch is on whenever you are signed in.
 
+### Fast scans & a live index (NTFS)
+
+When DiskPilot runs with administrator rights and the scan target is a
+whole NTFS drive, the scanner reads the drive's Master File Table
+directly instead of walking the directory tree, so a full-drive scan
+finishes in a small fraction of the time. In every other situation —
+a standard launch, a folder target, a non-NTFS volume, or any read
+problem — the standard scanner is used, automatically and invisibly;
+the results are identical either way, and every scan records which
+engine produced it.
+
+Between scans, a **live index** follows the volume's USN change
+journal and applies creations, changes, renames, and deletions to the
+index, so search and the size views stay current within about a
+minute — while DiskPilot is running (sitting in the tray counts). It
+needs the same administrator volume access as the fast scan; without
+it, it quietly stays off and the index refreshes on each scan. If the
+journal has wrapped or a change cannot be applied exactly, the index
+is marked stale rather than approximated, and the next scan
+reconciles it. The Overview shows a quiet *Live index* marker while
+it is active, and the feature can be turned off in Settings.
+
 ### Health
 
 One page that answers "is this PC okay?": every drive with a plain
@@ -83,6 +105,12 @@ week over 5 MB` — and DiskPilot shows how it understood you as a row of
 removable chips (kind, size, date, source) before running a
 closed-grammar search over the scan index. Searches you run often can
 be **saved** and re-run against the latest scan in one click.
+
+Search also reads *inside* your images: after a scan, Windows'
+built-in OCR — on-device, nothing sent anywhere — reads the text in
+screenshots and images, and a hit that matched only through that text
+carries a **Text match** marker, so the invoice screenshot is findable
+by the words in it. The reading can be turned off in Settings.
 
 A **Map** tab renders the current folder as a treemap — every folder
 and large file a block sized by its bytes, colored by category — for
@@ -208,6 +236,12 @@ Every cleanup action and every scan is appended to a local SQLite log:
 timestamp, operation, paths, bytes reclaimed, errors. If DiskPilot did
 it, it is in History — the audit trail for "what did this ever do?".
 
+A cleanup run can also be **undone** from its History entry: while its
+items are still in the Recycle Bin, one Restore action puts the whole
+run back in a single step and reports exactly what came back, what
+could not be restored, and what was permanently deleted and is gone
+for good.
+
 ### Recycle Bin — restore, then empty
 
 The Recycle Bin dialog lists the bin's current contents before
@@ -215,6 +249,13 @@ anything happens. Each item can be **restored** to its original
 location — refused when something already sits there — and emptying
 the bin is a two-step confirm over exactly the listed items, with live
 progress and a Stop button.
+
+### First run
+
+The first launch opens a short guided setup instead of the empty app:
+what DiskPilot does, the folder it should watch, and the Watch
+schedule and alert thresholds — all held as drafts until **Start
+first scan** applies them, or skipped in one click.
 
 ### Settings & exclusions
 
