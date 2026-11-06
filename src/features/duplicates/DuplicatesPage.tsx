@@ -259,16 +259,14 @@ function ExactDuplicatesView({
           title="Duplicates"
           subtitle="Files with identical size are confirmed with SHA-256 before they are grouped. Hidden folders, AppData, dependency folders, and package caches are skipped; hard links count once."
           showScanControl={false}
-          actions={
-            <>
-              <DuplicatesModeSwitch mode={mode} onChange={onModeChange} />
-              <Button variant="primary" disabled={selected.size === 0} onClick={openReview}>
-                <ShieldCheck className="size-4" aria-hidden="true" />
-                Review cleanup{selected.size > 0 ? ` · ${formatBytes(selectedBytes)}` : ""}
-              </Button>
-            </>
-          }
         />
+        <div className="flex items-center justify-between gap-3 pb-4">
+          <DuplicatesModeSwitch mode={mode} onChange={onModeChange} />
+          <Button variant="primary" disabled={selected.size === 0} onClick={openReview}>
+            <ShieldCheck className="size-4" aria-hidden="true" />
+            Review cleanup{selected.size > 0 ? ` · ${formatBytes(selectedBytes)}` : ""}
+          </Button>
+        </div>
         {error ? <p role="alert" className="pb-3 text-[12px] text-critical">{error}</p> : null}
         {revealError ? <p role="alert" className="pb-3 text-[12px] text-critical">{revealError}</p> : null}
         {failures.length > 0 ? (
@@ -477,8 +475,10 @@ function SimilarImagesView({
           title="Duplicates"
           subtitle="Photos that look alike — re-saves, resized copies, and near-identical shots — grouped by comparing image content rather than bytes."
           showScanControl={false}
-          actions={<DuplicatesModeSwitch mode={mode} onChange={onModeChange} />}
         />
+        <div className="flex items-center justify-between gap-3 pb-4">
+          <DuplicatesModeSwitch mode={mode} onChange={onModeChange} />
+        </div>
         {error ? <p role="alert" className="pb-3 text-[12px] text-critical">{error}</p> : null}
         {revealError ? <p role="alert" className="pb-3 text-[12px] text-critical">{revealError}</p> : null}
 
