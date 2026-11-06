@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { squarifyTreemap, type TreemapRect } from "./treemap";
+import { partitionTreemap, squarifyTreemap, type TreemapRect } from "./treemap";
 
 const RECT: TreemapRect = { x: 0, y: 0, width: 200, height: 100 };
 const EPS = 1e-6;
@@ -84,5 +84,48 @@ describe("squarifyTreemap", () => {
       const ratio = Math.max(node.rect.width / node.rect.height, node.rect.height / node.rect.width);
       expect(ratio).toBeLessThanOrEqual(2.01);
     }
+  });
+});
+
+describe("partitionTreemap", () => {
+  const entry = (bytes: number) => ({ bytes });
+
+  it("shows everything when the level is small", () => {
+    const items = [entry(300), entry(200), entry(100)];
+    const { shown, rest, restBytes } = partitionTreemap(items);
+    expect(shown.map((i) => i.bytes)).toEqual([300, 200, 100]);
+    expect(rest).toEqual([]);
+    expect(restBytes).toBe(0);
+  });
+
+  it("stops at the block cap and folds the tail", () => {
+    const items = Array.from({ length: 200 }, () => entry(10));
+    const { shown, rest, restBytes } = partitionTreemap(items);
+    expect(shown).toHaveLength(140);
+    expect(rest).toHaveLength(60);
+    expect(restBytes).toBe(600);
+  });
+
+  it("stops once the shown blocks cover 99.5% of the level", () => {
+    // One giant entry plus a long tail of crumbs: the giant alone
+    // covers 99.9%, so the crumbs fold even though the cap is far away.
+    const items = [entry(999_000), ...Array.from({ length: 50 }, () => entry(20))];
+    const { shown, rest } = partitionTreemap(items);
+    expect(shown).toHaveLength(1);
+    expect(rest).toHaveLength(50);
+  });
+
+  it("always shows at least the largest entry, and drops non-positive entries", () => {
+    const items = [entry(0), entry(-4), entry(7)];
+    const { shown, rest } = partitionTreemap(items);
+    expect(shown.map((i) => i.bytes)).toEqual([7]);
+    expect(rest).toEqual([]);
+  });
+
+  it("honours a custom cap and coverage", () => {
+    const items = Array.from({ length: 10 }, (_, i) => entry(100 - i * 10));
+    const { shown, rest } = partitionTreemap(items, 3, 0.995);
+    expect(shown).toHaveLength(3);
+    expect(rest).toHaveLength(7);
   });
 });

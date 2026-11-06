@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ChevronRight, CloudUpload, File, Folder, FolderOpen, Search, X } from "lucide-react";
+import { ChevronRight, CloudUpload, CornerLeftUp, File, Folder, FolderOpen, Search, X } from "lucide-react";
 import * as api from "@/lib/api";
 import { useAppStore } from "@/lib/store";
 import { filterByQuery, sortExplorerRows, type FileSortKey, type SortDirection } from "@/lib/analysis";
 import { categoryMeta } from "@/lib/categories";
-import { basename, displayPath, formatBytes, formatDate, parentPath } from "@/lib/format";
+import { basename, displayPath, formatBytes, formatDate } from "@/lib/format";
+import { partitionTreemap } from "@/lib/treemap";
 import { tierMeta } from "@/lib/tiers";
 import type { CloudStatus, DirectoryEntry, MediaInfo, Recommendation } from "@/lib/types";
 import { Button } from "@/components/ui/button";
@@ -23,10 +24,6 @@ import { cn } from "@/lib/utils";
 
 /** Extensions the shell's media-info reader understands (EXIF). */
 const IMAGE_EXTENSIONS = new Set(["png", "jpg", "jpeg", "gif", "bmp", "webp", "tif", "tiff", "heic", "heif"]);
-
-/** How many individual file blocks the map shows before the rest are
-    folded into one aggregate block. */
-const MAP_FILE_LIMIT = 48;
 
 /** True when `path` is the cloud root itself or lives under it. */
 export function isPathUnder(path: string, root: string): boolean {
@@ -199,43 +196,30 @@ export function ExplorerView({
   const selectedInCloud =
     selected?.kind === "file" && cloud ? isPathUnder(selected.path, cloud.rootPath) : false;
 
-  /* Map blocks for the current level: every folder, the largest
-     files individually, and the long tail folded into one aggregate. */
+  /* Map blocks for the current level: folders and files compete
+     for blocks purely by size — the partition keeps showing the
+     largest entries until 140 blocks or 99.5% of the level's bytes
+     are covered, and the long tail folds into one waffle aggregate. */
   const treemapBlocks = useMemo<TreemapBlock[]>(() => {
-    const blocks: TreemapBlock[] = [];
-    const folders = rows.filter((r) => r.kind === "folder");
-    const files = [...rows.filter((r) => r.kind === "file")].sort((a, b) => b.bytes - a.bytes);
-    for (const row of folders) {
+    const { shown, rest, restBytes } = partitionTreemap(rows);
+    const blocks: TreemapBlock[] = shown.map((row) => ({
+      id: row.path,
+      name: row.name,
+      bytes: row.bytes,
+      colorVar: categoryMeta(row.category).colorVar,
+      isDir: row.kind === "folder",
+      path: row.path,
+    }));
+    if (rest.length > 0) {
       blocks.push({
-        id: row.path,
-        name: row.name,
-        bytes: row.bytes,
-        colorVar: categoryMeta(row.category).colorVar,
-        isDir: true,
-        path: row.path,
-      });
-    }
-    const shownFiles = files.slice(0, MAP_FILE_LIMIT);
-    const restFiles = files.slice(MAP_FILE_LIMIT);
-    for (const row of shownFiles) {
-      blocks.push({
-        id: row.path,
-        name: row.name,
-        bytes: row.bytes,
-        colorVar: categoryMeta(row.category).colorVar,
-        isDir: false,
-        path: row.path,
-      });
-    }
-    if (restFiles.length > 0) {
-      blocks.push({
-        id: `${currentPath}::other-files`,
-        name: `${restFiles.length} more files`,
-        bytes: restFiles.reduce((acc, r) => acc + r.bytes, 0),
+        id: `${currentPath}::other-items`,
+        name: `${rest.length} more ${rest.some((r) => r.kind === "folder") ? "items" : "files"}`,
+        bytes: restBytes,
         colorVar: categoryMeta("unknown").colorVar,
         isDir: false,
         path: currentPath,
         aggregate: true,
+        count: rest.length,
       });
     }
     return blocks;
@@ -277,24 +261,44 @@ export function ExplorerView({
   return (
     <div className={cn("flex min-h-0 gap-4", embedded ? "h-full" : "")}>
       <div className="flex min-w-0 flex-1 flex-col">
-        {/* Breadcrumb */}
-        <nav aria-label="Breadcrumb" className="flex flex-wrap items-center gap-0.5 pb-2">
-          {crumbs.map((crumb, i) => (
-            <span key={crumb.path} className="flex items-center gap-0.5">
-              {i > 0 ? <ChevronRight className="size-3.5 text-subtle" aria-hidden="true" /> : null}
-              <button
-                type="button"
-                onClick={() => navigateTo(crumb.path)}
-                aria-current={crumb.path === currentPath ? "location" : undefined}
-                className={cn(
-                  "rounded-md px-1.5 py-1 text-[12px] transition-colors duration-120 hover:bg-hover",
-                  crumb.path === currentPath ? "font-semibold text-foreground" : "text-muted",
+        {/* Breadcrumb: an up-level button, quiet ancestor buttons,
+            and the current folder as a raised chip. */}
+        <nav aria-label="Breadcrumb" className="flex flex-wrap items-center gap-1 pb-2">
+          {crumbs.length > 1 ? (
+            <Button
+              variant="ghost"
+              size="icon"
+              aria-label="Go up one level"
+              title="Go up one level"
+              onClick={() => navigateTo(crumbs[crumbs.length - 2].path)}
+            >
+              <CornerLeftUp className="size-4" aria-hidden="true" />
+            </Button>
+          ) : null}
+          {crumbs.map((crumb, i) => {
+            const isCurrent = crumb.path === currentPath;
+            return (
+              <span key={crumb.path} className="flex items-center gap-1">
+                {i > 0 ? <ChevronRight className="size-3.5 text-subtle" aria-hidden="true" /> : null}
+                {isCurrent ? (
+                  <span
+                    aria-current="location"
+                    className="rounded-full bg-panel-raised px-2 py-0.5 text-[12px] font-medium leading-[18px] text-foreground ring-1 ring-border"
+                  >
+                    {i === 0 ? displayPath(crumb.path, homeDir) : crumb.name}
+                  </span>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => navigateTo(crumb.path)}
+                    className="rounded-md px-1.5 py-1 text-[12px] text-muted transition-colors duration-120 hover:bg-hover hover:text-foreground"
+                  >
+                    {i === 0 ? displayPath(crumb.path, homeDir) : crumb.name}
+                  </button>
                 )}
-              >
-                {i === 0 ? displayPath(crumb.path, homeDir) : crumb.name}
-              </button>
-            </span>
-          ))}
+              </span>
+            );
+          })}
         </nav>
 
         {/* Filters */}
@@ -430,18 +434,6 @@ export function ExplorerView({
           {mode === "map"
             ? "Block size is the item's size. Click a folder to open it; click a file to inspect it."
             : "Double-click a folder to open it. Select any row to see its classification and details."}
-          {currentPath.replace(/[\\/]+$/, "").toLowerCase() !== rootPath.replace(/[\\/]+$/, "").toLowerCase() ? (
-            <>
-              {" "}
-              <button
-                type="button"
-                className="font-medium text-foreground underline-offset-2 hover:underline"
-                onClick={() => navigateTo(parentPath(currentPath) === currentPath ? rootPath : parentPath(currentPath))}
-              >
-                Go up one level
-              </button>
-            </>
-          ) : null}
         </p>
       </div>
 

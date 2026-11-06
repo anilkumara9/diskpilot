@@ -113,6 +113,46 @@ function layoutInto(items: ScaledItem[], rect: TreemapRect, out: TreemapNode[]):
   layoutInto(rest, remaining, out);
 }
 
+export interface TreemapPartition<T> {
+  /** Items worth their own block, largest first. */
+  shown: T[];
+  /** The long tail, largest first — rendered as one aggregate. */
+  rest: T[];
+  /** Sum of the tail's bytes (the aggregate block's value). */
+  restBytes: number;
+}
+
+/**
+ * Decide which level entries earn their own block on the map.
+ * Largest first: keep showing entries until either `maxBlocks`
+ * blocks are shown or the shown entries cover `coverage` of the
+ * level's total bytes — whichever comes first. Everything after
+ * that folds into the aggregate. Non-positive entries never show
+ * (they have no area) and do not count toward the total.
+ */
+export function partitionTreemap<T extends { bytes: number }>(
+  items: T[],
+  maxBlocks = 140,
+  coverage = 0.995,
+): TreemapPartition<T> {
+  const sorted = items
+    .filter((i) => Number.isFinite(i.bytes) && i.bytes > 0)
+    .sort((a, b) => b.bytes - a.bytes);
+  const total = sorted.reduce((acc, i) => acc + i.bytes, 0);
+  const shown: T[] = [];
+  let covered = 0;
+  let index = 0;
+  while (index < sorted.length) {
+    if (shown.length >= maxBlocks) break;
+    if (shown.length > 0 && total > 0 && covered / total >= coverage) break;
+    shown.push(sorted[index]);
+    covered += sorted[index].bytes;
+    index += 1;
+  }
+  const rest = sorted.slice(index);
+  return { shown, rest, restBytes: rest.reduce((acc, i) => acc + i.bytes, 0) };
+}
+
 /**
  * Lay `items` out inside `rect`, largest first. Non-positive or
  * non-finite values are dropped (a zero-byte item has no area to

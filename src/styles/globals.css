@@ -32,6 +32,8 @@
   --cat-binary-data: #8a7f73;
   --cat-system-files: #6b7280;
   --cat-unknown: #a1a1aa;
+  /* Storage map tile tint: category colour mixed into the panel. */
+  --map-tint: 22%;
   color-scheme: light;
 }
 
@@ -65,6 +67,7 @@
   --cat-binary-data: #9a8f84;
   --cat-system-files: #7c8494;
   --cat-unknown: #5b5f68;
+  --map-tint: 33%;
   color-scheme: dark;
 }
 
