@@ -89,20 +89,20 @@ fn build_nvme_health_request() -> Vec<u8> {
     put_u32(&mut buffer, 0, 1); // Version
     put_u32(&mut buffer, 4, 84); // Length
     put_u32(&mut buffer, 8, 3); // ProtocolType = ProtocolTypeNvme
-    put_u32(&mut buffer, 12, STORAGE_PROTOCOL_COMMAND_FLAG_ADAPTER_REQUEST);
+    put_u32(
+        &mut buffer,
+        12,
+        STORAGE_PROTOCOL_COMMAND_FLAG_ADAPTER_REQUEST,
+    );
     put_u32(&mut buffer, 24, 64); // CommandLength
     put_u32(&mut buffer, 36, NVME_LOG_PAGE_LEN as u32); // DataFromDeviceTransferLength
     put_u32(&mut buffer, 40, 10); // TimeOutValue (seconds)
     put_u32(&mut buffer, 52, NVME_DATA_OFFSET as u32); // DataFromDeviceBufferOffset
     put_u32(&mut buffer, NVME_COMMAND_OFFSET, 0x02); // CDW0: Get Log Page
     put_u32(&mut buffer, NVME_COMMAND_OFFSET + 4, 0xFFFF_FFFF); // NSID
-    // CDW10: LID 02h in the low byte, NUMD (dwords − 1 = 127) in
-    // bits 16..=31 — 512 bytes total. CDW11 stays zero.
-    put_u32(
-        &mut buffer,
-        NVME_COMMAND_OFFSET + 40,
-        0x02 | (127 << 16),
-    );
+                                                                // CDW10: LID 02h in the low byte, NUMD (dwords − 1 = 127) in
+                                                                // bits 16..=31 — 512 bytes total. CDW11 stays zero.
+    put_u32(&mut buffer, NVME_COMMAND_OFFSET + 40, 0x02 | (127 << 16));
     buffer
 }
 

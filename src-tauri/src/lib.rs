@@ -378,11 +378,7 @@ fn scan_path_from_args(args: &[String]) -> Option<String> {
 /// does. Anything else is returned untouched.
 fn normalize_scan_path(raw: &str) -> String {
     let bytes = raw.as_bytes();
-    if bytes.len() == 3
-        && bytes[0].is_ascii_alphabetic()
-        && bytes[1] == b':'
-        && bytes[2] == b'"'
-    {
+    if bytes.len() == 3 && bytes[0].is_ascii_alphabetic() && bytes[1] == b':' && bytes[2] == b'"' {
         return format!("{}:\\", &raw[..2]);
     }
     if let Some(stripped) = raw.strip_suffix('"') {

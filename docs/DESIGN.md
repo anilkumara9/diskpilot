@@ -361,9 +361,10 @@ separated from the nav by a hairline and 12 px of air.
 - **Automatic maintenance settings** — a Settings section in the
   standard row form: the shared Switch enables it (off by
   default); when on, a Daily/Weekly segmented control in the tab
-  strip's dress and the age threshold as a number field in the
-  Watch structure (96 px input, fixed 132 px unit span — "days
-  (7–365)"), clamped to 7–365 on save. The section states its
+  strip's dress — a true radio group (roving tabindex, arrow
+  keys move and commit the selection) — and the age threshold
+  as a number field in the Watch structure (96 px input, fixed
+  132 px unit span — "days (7–365)"), clamped to 7–365 on save. The section states its
   whole contract in one paragraph — permanently removes Recycle
   Bin items older than the age set, clears old temporary files
   through the manual cleanup's safety checks, every run recorded
@@ -374,7 +375,13 @@ separated from the nav by a hairline and 12 px of air.
   registration the shell reports (disabled until read), a failed
   read shows as an alert line with Retry rather than a guessed
   state, and a failed toggle shows its reason and leaves the
-  switch where the registration actually is.
+  switch where the registration actually is (a successful toggle
+  is confirmed by re-reading the registration, not by trusting
+  the click). A delivered "Analyze" intent is deduped per
+  delivery, not per session: only the duplicate delivery of one
+  request (mount read racing the launch event) is swallowed,
+  while its scan runs and for a few seconds after it starts;
+  analyzing the same folder again later scans again.
 - **Guided cleanup items** — recommendations another tool owns
   (Windows.old) render with no checkbox, a muted "Guided" tag beside
   the tier badge (a plain ring-bordered chip, never a tier colour),
@@ -472,9 +479,12 @@ separated from the nav by a hairline and 12 px of air.
   is heavier than a restore): it names where the folder currently
   sits and where it moves back to, warns that a large folder can
   take a while, and cannot be dismissed mid-move; a failure keeps
-  the dialog open with the reason. Success leaves a callout-spec
-  banner in the entry — the move is undone and the folder is back
-  at its original location.
+  the dialog open with the reason — the failure alert lives only
+  in the dialog, never duplicated under the button. Success
+  leaves a callout-spec banner in the entry — the move is undone
+  and the folder is back at its original location. A relocation
+  a later relocate-undo entry already reversed renders a "Move
+  undone" caption instead of the Undo button.
 - **Text match chip** — a search hit that matched only through
   text read inside the file carries the neutral marker tag
   "Text match" beside its name (tooltip: "Matched text inside
@@ -564,11 +574,17 @@ separated from the nav by a hairline and 12 px of air.
   size, and a Clean button; with more than one group the section
   header carries Clean all. Cleaning moves cache CONTENTS to the
   Recycle Bin — the section says so in a caption under the list —
-  and the outcome is the shared three-state banner in a callout
-  panel above the list (success names the bytes moved; partial
-  counts the failed locations; total failure is an error). The
-  section then re-measures. Nothing found means no section; a
-  failed read renders the section with an error note and Retry.
+  and the outcome is the shared banner in a callout panel above
+  the list (success names the bytes moved; partial counts the
+  failed locations; total failure is an error; a clean that
+  attempted nothing — the caches were already empty or gone —
+  is a neutral note, never a green success). A group whose
+  measurement stopped early carries the caption "Only part of
+  this cache could be measured." The section then re-measures;
+  if that re-measure fails, the stale sizes clear and a note
+  under the banner says the sizes could not be refreshed.
+  Nothing found means no section; a failed read renders the
+  section with an error note and Retry.
 - **Compress & save** — a section at the foot of the Cleanup
   page, below the cards and tier groups: large, long-untouched
   folders the shell offers for NTFS compression. The
@@ -626,13 +642,23 @@ separated from the nav by a hairline and 12 px of air.
   moving within a drive frees nothing — with the exact landing
   path previewed ("It will move to …"); when the drive list
   cannot be read, a plain destination-folder field takes its
-  place. The description carries the whole contract: the contents
-  move, a link stays at the original location so apps and games
-  keep working, and the move can be undone from History. While
-  moving, the dialog cannot be dismissed and says so ("Moving…
-  large folders can take a while"); a failure stays open with the
-  shell's reason. A completed move rescans the current root from
-  either entry page, so sizes never describe the pre-move disk.
+  place, captioned as the fallback it is. Preview and the value
+  sent to the shell are one normalized string: a typed bare
+  drive root ("D:") becomes "D:\" in both (a bare "D:" is a
+  drive-relative path, somewhere else entirely), and a typed
+  same-drive destination earns a soft warning that the shell
+  will refuse it — the shell stays the validator. The
+  description carries the whole contract: the contents move, a
+  link stays at the original location so apps and games keep
+  working, links inside the folder are not moved, and the move
+  can be undone from History. While moving, the dialog cannot
+  be dismissed and says so ("Moving… large folders can take a
+  while"); a failure stays open with the shell's reason. A move
+  that completes with a warning from the shell does not
+  auto-close: the dialog holds a success panel showing the
+  warning, closed by the user. A completed move rescans the
+  current root from either entry page, so sizes never describe
+  the pre-move disk.
 - **Applications updates** — the Applications page opens with an
   Updates section: winget's outdated list, behind an explicit
   Check for updates (checking changes nothing). Rows are the app
@@ -645,7 +671,11 @@ separated from the nav by a hairline and 12 px of air.
   the row. While any update runs, all update actions disable
   (winget runs one queue). No winget on the PC is a quiet bordered
   note; a failed check is an error note with Retry; an empty list
-  is the positive line "Everything is up to date."
+  is the positive line "Everything is up to date." — earned only
+  by a clean check: when winget also reported an error, the error
+  stands alone. With more than three updates, a caption under
+  the Update all action sets the expectation that each app
+  updates one at a time.
 - **CSV export** — beside the Overview's Export report button, an
   Export CSV menu with two items (Files CSV, Categories CSV) —
   the HTML report's exact feedback contract through the shared

@@ -221,8 +221,7 @@ pub async fn undo_relocation(
     });
     if recorded.is_err() {
         result.warning = Some(
-            "The folder was moved back, but the undo couldn't be recorded in History."
-                .to_string(),
+            "The folder was moved back, but the undo couldn't be recorded in History.".to_string(),
         );
     }
     Ok(result)
@@ -352,14 +351,10 @@ fn relocate_impl(source: &str, dest_dir: &str) -> Result<RelocateResult, Relocat
     // Link-ness is judged on the spelling the user gave:
     // canonicalizing first would resolve a junction to its target
     // and hide the fact that the path is a link at all.
-    let md = std::fs::symlink_metadata(&given_source).map_err(|_| {
-        RelocateError::Message(format!("that folder no longer exists: {source}"))
-    })?;
+    let md = std::fs::symlink_metadata(&given_source)
+        .map_err(|_| RelocateError::Message(format!("that folder no longer exists: {source}")))?;
     if md.file_type().is_symlink() || win::is_reparse_point(&given_source) {
-        return Err(format!(
-            "{source} is already a link — it cannot be relocated again"
-        )
-        .into());
+        return Err(format!("{source} is already a link — it cannot be relocated again").into());
     }
     if !md.is_dir() {
         return Err(format!("that path is not a folder: {source}").into());
@@ -374,27 +369,22 @@ fn relocate_impl(source: &str, dest_dir: &str) -> Result<RelocateResult, Relocat
     // protected folder would otherwise slip a protected tree past
     // both the shell check below and the core's validation. The
     // user's original spelling is kept for display and History.
-    let source_path = resolved_spelling(&given_source).ok_or_else(|| {
-        RelocateError::Message(format!("that folder no longer exists: {source}"))
-    })?;
+    let source_path = resolved_spelling(&given_source)
+        .ok_or_else(|| RelocateError::Message(format!("that folder no longer exists: {source}")))?;
     let dest_path = resolved_spelling(&given_dest).ok_or_else(|| {
-        RelocateError::Message(format!(
-            "the destination folder does not exist: {dest_dir}"
-        ))
+        RelocateError::Message(format!("the destination folder does not exist: {dest_dir}"))
     })?;
     if is_protected_location(&source_path) {
-        return Err(format!(
-            "protected system location, never relocated: {source}"
-        )
-        .into());
+        return Err(format!("protected system location, never relocated: {source}").into());
     }
 
     // (c) Measure.
     let (bytes, files) = walk_tree(&source_path);
 
     // (d) Different volumes, and room at the destination.
-    let source_volume = win::volume_root(&source_path)
-        .ok_or_else(|| RelocateError::Message("could not determine the source drive".to_string()))?;
+    let source_volume = win::volume_root(&source_path).ok_or_else(|| {
+        RelocateError::Message("could not determine the source drive".to_string())
+    })?;
     let dest_volume = win::volume_root(&dest_path).ok_or_else(|| {
         RelocateError::Message("could not determine the destination drive".to_string())
     })?;
