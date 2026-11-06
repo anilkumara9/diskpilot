@@ -164,6 +164,21 @@ based on Keep a Changelog, and the project follows semantic versioning.
   *Analyze with DiskPilot*, for folders and drives: it opens
   DiskPilot already scanning that location. Off by default;
   turning it off removes the entry.
+- **Collapsible sidebar** — the sidebar collapses to a 64 px icon
+  rail from a footer toggle (and expands again the same way):
+  navigation items keep their accessible names and tooltips,
+  badges become small icon dots, and the preference persists
+  across launches.
+- **Drive-health dot** — the sidebar footer shows the worst SMART
+  status across the machine's physical drives as a small
+  tier-coloured dot, read once per launch (silently absent when
+  drive health can't be read), with the per-drive summary in its
+  tooltip.
+- **Navigation badges** — Cleanup carries a pill with the last
+  scan's reclaimable size, and Applications carries a count pill
+  from the last completed software-update check, persisted across
+  restarts. Badges only ever describe a check that already
+  happened — nothing checks in the background to feed them.
 
 ### Changed
 

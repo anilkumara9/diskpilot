@@ -167,9 +167,15 @@ inject paths. The safety gate then validates every resolved path:
 - no symlink, junction or reparse point in the path or any parent.
 
 The resulting `CleanupPlan` lists exact paths and bytes, warnings, and
-any rejected items (with reasons). It records whether permanent
-deletion is allowed — only when *every* item is regenerable. Plans are
-single-use and expire 10 minutes after creation.
+any rejected items (with reasons). Each item's bytes are the scan
+index's measured allocated bytes for that exact path — never a share
+of a recommendation total; a path the scan cannot verify is dropped
+from the plan rather than estimated. The plan records whether
+permanent deletion is allowed — only when *every* item is
+regenerable. Plans are single-use and expire 10 minutes after
+creation, and asking to execute a plan in a mode it does not allow is
+refused *before* the plan is consumed, so the same plan can still be
+executed the allowed way.
 
 ### Executor (`cleanup`)
 
@@ -258,6 +264,77 @@ History.
   `%ProgramData%\Epic\EpicGamesLauncher\Data\Manifests`, grouped by
   the folder containing each install location. Malformed manifests
   are skipped; no launcher installed means an empty report.
+- **Storage extensions (`extensions`)** — per-extension aggregation
+  over a scan index (allocated bytes and file counts, extensionless
+  files grouped, case-folded) behind the Storage Types view, plus
+  the largest files of any one type. Pure index math — the figures
+  can never disagree with the other views of the same scan.
+- **App junk (`appjunk`)** — a curated rule table of known,
+  regenerable per-app cache locations (Discord, Slack, Teams,
+  Chrome, Edge, Firefox, VS Code, NVIDIA, the DirectX shader cache,
+  Windows Update downloads, Explorer thumbnail/icon caches),
+  expressed as templates over the standard Windows roots (one
+  single-segment wildcard for browser-style profile folders, one
+  filename glob for cache databases). `measure_app_junk` resolves
+  the rules against caller-supplied roots, walks each location with
+  the scanner's allocated-size rule — bounded, never following
+  symlinks — and returns one group per app. Claims are collapsed
+  before measuring: a location nested inside another rule's location
+  (or the same directory reached twice) is counted once, and a group
+  whose walk hit the depth/entry bounds is flagged `truncated`
+  rather than presented as exact. Profiles, history, cookies and
+  offline/downloaded data are never in the table by construction.
+  Cleaning is a shell command (below), not a planner flow: it
+  re-measures server-side, acts only on the fresh measurement's
+  paths, and moves contents to the Recycle Bin item by item.
+- **Drive health (`smart`)** — pure parsers for the two SMART wire
+  formats: the 512-byte ATA attribute table (30 records, raw values
+  as 6-byte little-endian) and the NVMe SMART/Health log page, read
+  at the specification's offsets. Constructors turn parsed data into
+  a `DriveHealth` (life left, temperature, power-on hours, power
+  cycles, reallocated sectors, media errors) and `classify` reduces
+  it to Healthy / Caution / Critical / Unknown. Two honesty rules
+  are encoded, not documented around: ATA attribute 231 is dual-use
+  (SSD life on some drives, temperature on others), so life is taken
+  from it only when attribute 194 independently secures the
+  temperature — otherwise 231's byte is the temperature fallback and
+  no life is reported; and an all-zero NVMe log (a short or zeroed
+  read) yields Unknown vitals, never a fabricated healthy drive.
+  Values a drive does not report stay `None` end to end.
+- **Winget (`winget`)** — a pure parser for `winget upgrade` table
+  output: column spans come from the header line (winget pads names,
+  so rows are sliced by offsets, never split on whitespace), spinner
+  garbage and CRLF redraws before the header are skipped, and the
+  pinned-packages section and summary footer terminate the table.
+  Rows whose package ID fails `is_valid_package_id` — including IDs
+  winget itself truncated with an ellipsis — are dropped inside the
+  parser, and when the (localized) header words are not English the
+  parser falls back to the separator line's dash geometry, so
+  non-English Windows still parses. The shell re-validates every ID
+  against a fresh listing before running anything (below).
+- **Relocation validation (`relocate`)** — the pure half of folder
+  moves: `validate_relocation` rejects a source with no file name,
+  anything on the shared protected/report-only lists, a destination
+  parent at or inside the source (compared on normalized,
+  case-folded spellings — the identity check included, so a
+  case-variant spelling of the source's own parent cannot name the
+  source as its own destination), and a destination without the
+  source's bytes plus headroom (`max(64 MiB, 5%)`, overflow-checked).
+  Volume comparison and filesystem existence are the shell's half.
+- **Maintenance policy (`maintenance`)** — pure scheduling and
+  selection for automatic maintenance: `maintenance_due` (daily ≥
+  20 h, weekly ≥ 6.5 days, saturating arithmetic so a future
+  last-run is never due) and `select_bin_purge`, which selects
+  Recycle Bin items strictly older than the age cutoff (an item
+  exactly at the cutoff is kept; the age is floored at one day).
+  The shell runner adds the execution discipline (below).
+- **Export (`export`)** — CSV renderings of a scan (largest files;
+  category totals), RFC-4180 quoting with two hardening rules: both
+  outputs begin with a UTF-8 byte-order mark so Excel detects the
+  encoding, and any field starting with `=`, `+`, `-`, `@`, a tab
+  or a carriage return is prefixed with a single quote, so a crafted
+  file name on disk cannot become a spreadsheet formula in the
+  user's own export.
 
 ## Assistant (`assistant`)
 
@@ -407,6 +484,123 @@ same "what changed since X" stream Windows itself maintains.
   launch-at-login (the per-user Run key on Windows, re-applied at
   startup so it self-heals) and the Quick Search popup window,
   toggled globally by Ctrl+Shift+Space and hidden on focus loss.
+- **Drive health IO (`smart_io.rs`)** — Windows-only device reads
+  behind `get_drive_health`: physical drives are probed in order,
+  the storage descriptor gives model and bus type (the serial number
+  is never read), capacity and failure prediction come from their
+  IOCTLs, and the health bytes come from an ATA pass-through
+  (SMART READ DATA, with the mandatory signature cylinders) or, for
+  NVMe, an `IOCTL_STORAGE_PROTOCOL_COMMAND` Get Log Page request
+  built by a pure, unit-tested constructor whose field offsets match
+  the platform header exactly (84-byte header, command at offset 80,
+  adapter-request flag `0x80000000`); a response counts as read only
+  when the driver's status field reports success (`1`). Handles are
+  opened read/write with a zero-access fallback, every per-drive
+  failure degrades that drive to Unknown vitals or skips it, and the
+  raw bytes are interpreted only by the core's `smart` parsers. Off
+  Windows the command returns an empty list.
+- **Software updates IO (`winget_io.rs`)** — locates `winget` (PATH,
+  then the WindowsApps alias), runs it with an argument vector and
+  no window, captures output with timeouts (120 s to list, 600 s
+  per update), and parses it with the core's `winget` parser.
+  `update_software` validates every requested ID twice —
+  `is_valid_package_id` *and* membership in a fresh listing made
+  inside the same call — and refuses non-members without running
+  anything; an empty ID list means "everything in that fresh list",
+  processed through the same per-ID loop (never a shell-out to
+  `winget upgrade --all`). Outcomes carry the process's real exit
+  status and output tail per package, and the run is recorded in
+  History.
+- **Relocation IO (`relocate_io.rs`)** — the executing half of
+  folder moves. Order is the safety property: judge link-ness on
+  the user's spelling, then canonicalize for the protection checks
+  and the core's `validate_relocation`; measure the source (files
+  only, links skipped); require a different destination volume;
+  copy with `robocopy` (`/XJ`, so junctions inside the tree are
+  skipped exactly as the measuring walk skips them); verify the
+  copy's file count *and* allocated bytes against the source; only
+  then delete the original with the link-safe delete and create the
+  junction (`FSCTL_SET_REPARSE_POINT`, mount-point tag, `\??\`
+  substitute name). A junction failure rolls back by copying back —
+  and the rollback is verified to the same count-and-bytes standard
+  before the working copy is removed; a partial delete of the
+  original records a `relocate-failed` History entry naming both
+  paths. Undo re-validates the History entry, confirms the source
+  is still a junction pointing at the recorded target, and reverses
+  the same way; an interrupted undo (source already a partial real
+  directory, target intact) can be resumed under the same entry's
+  authorization. A move whose History record fails still completes,
+  with a `warning` on the result saying Undo is unavailable for it.
+- **Maintenance runner (`maintenance.rs`)** — `run_if_due` is hooked
+  into the Watch scheduler's loop and a startup catch-up; it owns
+  no timer of its own and can never propagate an error into the
+  scheduler. When the core policy says a run is due it (a) purges
+  Recycle Bin items the policy selected — re-reading each item's
+  `$I` record at delete time and skipping the item entirely if the
+  record is gone, unparseable, or no longer past the cutoff — and
+  (b) clears old temporary files *only* through the planner:
+  recommendations are filtered to the Safe temp classification,
+  built into a plan, taken with `take_plan_for_mode(Permanent)`,
+  and executed by the executor; a gate refusal is a silent skip.
+  There is no direct delete call for temp files. Every run —
+  partial failures included — is recorded in History and stamps
+  `last_maintenance_ms`, so a broken item retries at most once per
+  window.
+- **Startup manager (`startup.rs`)** — enumerates the per-user and
+  machine-wide `Run` / `RunOnce` values and the Startup folders
+  (including entries DiskPilot itself disabled, shown as disabled).
+  Toggling re-enumerates and matches by opaque ID — the UI's paths
+  are never trusted — and moves the *raw* registry value (type and
+  data preserved, with rollback) to a `…-DisabledByDiskPilot`
+  sibling key, or renames the folder item into a `Disabled by
+  DiskPilot` subfolder without overwriting. Machine-wide changes
+  fail with a plain "run as administrator" message. Changes are
+  recorded in History with empty paths (real startup paths would
+  corrupt the History restore accounting).
+- **Explorer integration & launch intent (`commands.rs`, `lib.rs`)**
+  — an optional per-user registration under
+  `HKCU\Software\Classes\{Directory,Drive}\shell\DiskPilot` whose
+  command is `"<exe>" --scan "%1"`; disabling deletes both keys.
+  The shell parses `--scan` from argv at startup into a take-once
+  `launch_intent` slot the frontend claims via `get_launch_intent`;
+  the single-instance plugin (registered first) forwards a second
+  launch's path into the same slot, emits `launch-scan`, and focuses
+  the main window. Received paths are normalized before use — a
+  drive root arrives mangled by the trailing-backslash quote escape
+  (`C:"`) and is repaired to `C:\`. The frontend dedupes per
+  delivery, not per path, so re-analyzing the same folder an hour
+  later scans again.
+- **Updater (`lib.rs`)** — the Tauri updater plugin with signed
+  artifacts: releases publish a `latest.json` (see
+  [RELEASING.md](RELEASING.md)), the app checks once per launch and
+  on demand from Settings, and a package that fails signature
+  verification is refused, never installed. The endpoint is baked
+  into `tauri.conf.json` and assumes the repository is named
+  `diskpilot`.
+
+## Frontend state & the sidebar (`src/`)
+
+The Zustand store is the single source of UI truth; pages hold no
+scan state of their own, and load-once surfaces refetch when a scan
+finishes. The sidebar is state-driven in three ways worth recording:
+
+- **Drive-health dot.** The footer shows the worst SMART status
+  across physical drives, fed by a single `get_drive_health` read
+  per launch (silent on failure — an unreadable system simply shows
+  no dot). Statuses map to the tier colours; the tooltip carries the
+  per-drive summary.
+- **Badges are information, never alarms.** Cleanup's pill shows the
+  last scan's actionable (reclaimable) bytes — the Cleanup page's
+  own headline figure; Applications' pill shows the update count
+  from the last *completed* winget check, persisted (store +
+  versioned localStorage) so it survives restarts. Nothing ever
+  checks in the background to feed a badge.
+- **Collapsed mode.** The sidebar collapses from 220 px to a 64 px
+  icon rail (accessible names and tooltips retained; badges become
+  icon dots) via `settings.sidebarCollapsed`. The shell settings
+  struct predates the field, so the preference is mirrored to
+  localStorage and the mirror wins at startup. The Quick Search
+  window is a separate root with no sidebar and is unaffected.
 
 ## Data flow, end to end
 
