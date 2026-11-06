@@ -394,6 +394,36 @@ separated from the nav by a hairline and 12 px of air.
   states the boundary plainly: uninstalls happen in Steam or
   Epic — DiskPilot never removes game files. No libraries found
   is the standard medallion empty state.
+- **Welcome (first run)** — a full-window surface that replaces
+  the shell (sidebar hidden, drag region kept) exactly when setup
+  was never finished or skipped and no scan exists; it waits for
+  startup to settle and never appears when settings failed to
+  load. One scrolling 640 px column: the logo mark, a Display
+  welcome line, three value rows (36 px raised icon tile,
+  semibold title, muted line), then the setup — the scan-root
+  row and the Watch rows in their Settings form. Every choice is
+  a draft: the primary "Start first scan" persists them all,
+  with `onboarded`, through the settings save flow and starts
+  the scan; "Skip setup" persists `onboarded` alone. It never
+  replays.
+- **History restore** — a cleanup entry with items the shell can
+  still restore carries a Restore action in its detail area;
+  permanent-only and zero-restorable entries carry nothing. The
+  confirm is inline — the question ("Restore N items to their
+  original locations?") replaces the button, with Restore and
+  Cancel — and the outcome stays in the entry as a callout-spec
+  banner: the restored count, the first failure when any item
+  failed, and the permanently deleted count when items were
+  skipped. The list refreshes behind it; the banner survives the
+  refresh.
+- **Text match chip** — a search hit that matched only through
+  text read inside the file carries the neutral marker tag
+  "Text match" beside its name (tooltip: "Matched text inside
+  this file"). A plain marker, never a tier tag. Used in Storage
+  search results and Quick Search. The reading itself is the
+  Settings → Scanning toggle "Read text in images", on by
+  default; reading is on-device (Windows built-in OCR) and the
+  text is never sent anywhere.
 
 ## Charts
 
