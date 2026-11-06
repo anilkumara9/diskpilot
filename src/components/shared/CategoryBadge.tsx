@@ -24,9 +24,9 @@ export function CategoryBadge({
 }) {
   const meta = categoryMeta(category);
   return (
-    <span className={cn("inline-flex items-center gap-1.5 text-[12px] text-foreground", className)}>
+    <span className={cn("inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap text-[12px] text-foreground", className)}>
       <CategoryDot category={category} />
-      {showLabel ? <span>{meta.label}</span> : null}
+      {showLabel ? <span className="whitespace-nowrap">{meta.label}</span> : null}
     </span>
   );
 }

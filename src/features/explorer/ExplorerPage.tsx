@@ -4,7 +4,7 @@ import * as api from "@/lib/api";
 import { useAppStore } from "@/lib/store";
 import { filterByQuery, sortExplorerRows, type FileSortKey, type SortDirection } from "@/lib/analysis";
 import { categoryMeta } from "@/lib/categories";
-import { basename, displayPath, formatBytes, formatDate } from "@/lib/format";
+import { basename, displayPath, formatBytes, formatCount, formatDate } from "@/lib/format";
 import { partitionTreemap } from "@/lib/treemap";
 import { tierMeta } from "@/lib/tiers";
 import type { CloudStatus, DirectoryEntry, MediaInfo, Recommendation } from "@/lib/types";
@@ -24,6 +24,9 @@ import { cn } from "@/lib/utils";
 
 /** Extensions the shell's media-info reader understands (EXIF). */
 const IMAGE_EXTENSIONS = new Set(["png", "jpg", "jpeg", "gif", "bmp", "webp", "tif", "tiff", "heic", "heif"]);
+
+/** How many rows the list view renders at once (see visibleRows). */
+export const ROW_RENDER_CAP = 1000;
 
 /** True when `path` is the cloud root itself or lives under it. */
 export function isPathUnder(path: string, root: string): boolean {
@@ -121,12 +124,16 @@ export function ExplorerView({
   const requestSeq = useRef(0);
 
   /* The cloud folder (if any) decides whether the inspector offers
-     "Free up space" for the selected file. Best-effort. */
+     "Free up space" for the selected file. Best-effort: a failed
+     read simply leaves the action un-offered. */
   useEffect(() => {
     let live = true;
-    void api.getCloudStatus().then((status) => {
-      if (live) setCloud(status);
-    });
+    void api
+      .getCloudStatus()
+      .then((status) => {
+        if (live) setCloud(status);
+      })
+      .catch(() => undefined);
     return () => {
       live = false;
     };
@@ -171,10 +178,16 @@ export function ExplorerView({
     return [...sorted.filter((r) => r.kind === "folder"), ...sorted.filter((r) => r.kind === "file")];
   }, [entries, query, categoryFilter, sortKey, direction]);
 
+  /* The list renders at most the first ROW_RENDER_CAP rows: a folder
+     with tens of thousands of children must not become tens of
+     thousands of DOM rows. The map view is uncapped — its partition
+     already folds the long tail into one aggregate block. */
+  const visibleRows = useMemo(() => rows.slice(0, ROW_RENDER_CAP), [rows]);
+
   const selected = rows.find((r) => r.path === selectedPath) ?? null;
   const selectedRec = selected ? recommendationFor(selected.path, recommendations) : null;
   const classification = selected?.entry.classification ?? null;
-  const maxBytes = rows.length > 0 ? Math.max(...rows.map((r) => r.bytes), 1) : 1;
+  const maxBytes = rows.reduce((acc, r) => Math.max(acc, r.bytes), 1);
 
   /* EXIF for the selected image, loaded lazily; the cancelled flag
      keeps a slow read from landing on a newer selection. */
@@ -185,9 +198,12 @@ export function ExplorerView({
     const ext = selectedFilePath.split(".").pop()?.toLowerCase() ?? "";
     if (!IMAGE_EXTENSIONS.has(ext)) return;
     let live = true;
-    void api.getMediaInfo(selectedFilePath).then((info) => {
-      if (live) setMediaInfo(info);
-    });
+    void api
+      .getMediaInfo(selectedFilePath)
+      .then((info) => {
+        if (live) setMediaInfo(info);
+      })
+      .catch(() => undefined);
     return () => {
       live = false;
     };
@@ -345,8 +361,8 @@ export function ExplorerView({
             )}
           </div>
         ) : (
-        <div className="min-h-0 flex-1 overflow-y-auto rounded-[10px] border border-border">
-          <table className="w-full border-collapse">
+        <div className="min-h-0 flex-1 overflow-auto rounded-[10px] border border-border">
+          <table className="w-full min-w-[620px] border-collapse">
             <thead className="sticky top-0 bg-panel">
               <tr className="border-b border-border text-left">
                 <th scope="col" className="px-3 py-2">
@@ -362,17 +378,27 @@ export function ExplorerView({
               </tr>
             </thead>
             <tbody>
-              {rows.map((row) => {
+              {visibleRows.map((row) => {
                 const rec = recommendationFor(row.path, recommendations);
                 const isSelected = row.path === selectedPath;
                 return (
                   <tr
                     key={row.path}
+                    tabIndex={0}
+                    aria-selected={isSelected}
                     onClick={() => setSelectedPath(row.path)}
                     onDoubleClick={() => {
                       if (row.kind === "folder") navigateTo(row.path);
                     }}
-                    aria-selected={isSelected}
+                    onKeyDown={(event) => {
+                      /* Rows are openable from the keyboard exactly as
+                         with the mouse: Enter/Space opens a folder,
+                         and selects a file for the inspector. */
+                      if (event.key !== "Enter" && event.key !== " ") return;
+                      event.preventDefault();
+                      if (row.kind === "folder") navigateTo(row.path);
+                      else setSelectedPath(row.path);
+                    }}
                     className={cn(
                       "h-8 cursor-default border-b border-border/60 transition-colors duration-120 hover:bg-hover",
                       isSelected && "bg-selected hover:bg-selected",
@@ -385,7 +411,7 @@ export function ExplorerView({
                         ) : (
                           <File className="size-4 shrink-0 text-subtle" aria-hidden="true" />
                         )}
-                        <span className="truncate text-[13px] text-foreground" title={row.path}>{row.name}</span>
+                        <span className="file-name truncate text-[13px] text-foreground" title={row.path}>{row.name}</span>
                       </span>
                     </td>
                     <td className="px-3 py-1"><CategoryBadge category={row.category} /></td>
@@ -410,6 +436,14 @@ export function ExplorerView({
                   </tr>
                 );
               })}
+              {entries !== null && rows.length > ROW_RENDER_CAP ? (
+                <tr>
+                  <td colSpan={4} className="px-3 py-2 text-center text-[12px] text-muted">
+                    Showing the first {formatCount(ROW_RENDER_CAP)} of {formatCount(rows.length)} items —
+                    refine by opening a subfolder.
+                  </td>
+                </tr>
+              ) : null}
               {entries !== null && rows.length === 0 ? (
                 <tr>
                   <td colSpan={4} className="px-3 py-8 text-center text-[12px] text-muted">
@@ -433,7 +467,7 @@ export function ExplorerView({
         <p className="pt-2 text-[12px] text-muted">
           {mode === "map"
             ? "Block size is the item's size. Click a folder to open it; click a file to inspect it."
-            : "Double-click a folder to open it. Select any row to see its classification and details."}
+            : "Double-click a folder to open it, or focus a row and press Enter. Select any row to see its classification and details."}
         </p>
       </div>
 
@@ -513,10 +547,13 @@ export function ExplorerView({
             } else {
               setBanner({
                 kind: "success",
-                message: `${selected.name} is now online-only in ${cloud.provider}. It downloads again when opened.`,
+                message: `${selected.name} is marked online-only in ${cloud.provider} — ${cloud.provider} releases the space as it syncs. It downloads again when opened.`,
               });
             }
-            void api.getCloudStatus().then(setCloud);
+            void api
+              .getCloudStatus()
+              .then(setCloud)
+              .catch(() => undefined);
           }}
         />
       ) : null}
