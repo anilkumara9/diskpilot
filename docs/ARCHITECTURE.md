@@ -379,8 +379,11 @@ same "what changed since X" stream Windows itself maintains.
 - **Recycle Bin (`recycle_bin.rs`)** — `$Recycle.Bin` inventory from
   the on-disk `$I…` metadata: listing, item-by-item emptying,
   restoring one item to its recorded original path (refused when the
-  destination exists again), and a whole-bin empty through
-  `SHEmptyRecycleBinW`. Report export is a command too: the
+  destination exists again). "Empty bin" is also per-item: every ID
+  is re-validated against the machine's real `$Recycle.Bin` roots
+  and exactly the listed payload + metadata pairs are removed one
+  by one — there is no whole-bin API call, so items that arrive
+  after the listing are never touched. Report export is a command too: the
   frontend's HTML is written through the dialog plugin's Rust-side
   save dialog, so it needs no capability permission.
 - **Scan history (`scan_history.rs`)** — every completed scan

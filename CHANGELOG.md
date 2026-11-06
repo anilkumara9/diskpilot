@@ -170,6 +170,39 @@ based on Keep a Changelog, and the project follows semantic versioning.
   with the process output instead of looking like a transport
   error; partial-hash sampling reads its full windows even when
   the filesystem returns short reads.
+- **Duplicate removal is bound to the reviewed group** — copies
+  are removed only as members of the exact group the last
+  duplicates report served: the group hash must name a served
+  group, the keeper and every copy must belong to it, the keeper
+  itself is refused, zero-byte groups are refused (every empty
+  file is "identical" to every other), and each copy is still
+  re-verified byte-for-byte against the keeper immediately
+  before the move.
+- **Recycle Bin hardening** — item IDs are accepted only under
+  a real `$Recycle.Bin` root on this machine (a folder merely
+  named `$Recycle.Bin` no longer qualifies), and what History
+  records for an emptying comes from the server-side `$I…`
+  metadata, never the webview's copy of the listing.
+- **Restore safety** — restoring an item refuses destinations
+  inside protected locations (system folders, protected file
+  names) and never overwrites: the move itself guarantees an
+  existing destination is left untouched.
+- **Scan history durability** — the scan-history file is
+  written atomically (temp file + rename), and loading skips
+  malformed entries instead of discarding the whole series.
+- **Watch alerts name the drive** — the scheduled-scan
+  low-space toast names the drive that is running out of space
+  (the free figure is drive-wide), not the scanned folder.
+- **OCR cache correctness** — recognized text is bound to the
+  exact file version it was read from (path + modification
+  time + size), so an edited screenshot never matches its old
+  text; cache entries for deleted files are pruned and the
+  cache is capped (5,000 entries, oldest evicted first).
+- **Live index responsiveness** — applying a journal batch no
+  longer holds the engine lock while paths are resolved, so a
+  batch cannot stall every other command; changes under
+  folders the scan itself excluded are skipped, matching what
+  the scan would have seen.
 
 ## [0.5.1] — 2026-11-06 — Windows release
 
