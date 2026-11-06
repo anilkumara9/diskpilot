@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { AlertTriangle, CheckCircle2, Trash2 } from "lucide-react";
+import { AlertTriangle, CheckCircle2, Trash2, Undo2 } from "lucide-react";
 import * as api from "@/lib/api";
 import { useAppStore } from "@/lib/store";
 import { displayPath, formatBytes, formatDate } from "@/lib/format";
@@ -23,6 +23,9 @@ export function EmptyRecycleBinDialog({ open, onClose }: { open: boolean; onClos
   const [progress, setProgress] = useState<EmptyRecycleBinProgress | null>(null);
   const [result, setResult] = useState<CleanupResult | null>(null);
   const [runError, setRunError] = useState<string | null>(null);
+  const [restoringId, setRestoringId] = useState<string | null>(null);
+  const [restoreError, setRestoreError] = useState<string | null>(null);
+  const [confirmArmed, setConfirmArmed] = useState(false);
 
   const load = useCallback(async () => {
     setItems(null);
@@ -30,6 +33,8 @@ export function EmptyRecycleBinDialog({ open, onClose }: { open: boolean; onClos
     setProgress(null);
     setResult(null);
     setRunError(null);
+    setRestoreError(null);
+    setConfirmArmed(false);
     try {
       setItems(await api.getRecycleBinItems());
     } catch (err) {
@@ -40,6 +45,27 @@ export function EmptyRecycleBinDialog({ open, onClose }: { open: boolean; onClos
   useEffect(() => {
     if (open) void load();
   }, [open, load]);
+
+  /* The armed "click again" state disarms itself after a few seconds
+     so a stray first click can never linger as consent. */
+  useEffect(() => {
+    if (!confirmArmed) return;
+    const timer = window.setTimeout(() => setConfirmArmed(false), 4000);
+    return () => window.clearTimeout(timer);
+  }, [confirmArmed]);
+
+  const restore = async (item: RecycleBinItem) => {
+    setRestoringId(item.id);
+    setRestoreError(null);
+    try {
+      await api.restoreRecycleItem(item.id);
+      await load();
+    } catch (err) {
+      setRestoreError(err instanceof Error ? err.message : "The item could not be restored.");
+    } finally {
+      setRestoringId(null);
+    }
+  };
 
   const totalBytes = (items ?? []).reduce((acc, item) => acc + item.bytes, 0);
 
@@ -104,9 +130,20 @@ export function EmptyRecycleBinDialog({ open, onClose }: { open: boolean; onClos
               {items ? `${items.length} item${items.length === 1 ? "" : "s"} · ${formatBytes(totalBytes)}` : ""}
             </span>
             <Button variant="secondary" onClick={onClose}>Cancel</Button>
-            <Button variant="destructive" onClick={() => void start()} disabled={!items || items.length === 0}>
+            <Button
+              variant="destructive"
+              onClick={() => {
+                if (confirmArmed) {
+                  setConfirmArmed(false);
+                  void start();
+                } else {
+                  setConfirmArmed(true);
+                }
+              }}
+              disabled={!items || items.length === 0}
+            >
               <Trash2 className="size-4" aria-hidden="true" />
-              Empty Recycle Bin
+              {confirmArmed ? "Click again to permanently empty" : "Empty Recycle Bin"}
             </Button>
           </>
         )
@@ -114,6 +151,7 @@ export function EmptyRecycleBinDialog({ open, onClose }: { open: boolean; onClos
     >
       {loadError ? <p role="alert" className="text-[12px] text-critical">{loadError}</p> : null}
       {runError ? <p role="alert" className="text-[12px] text-critical">{runError}</p> : null}
+      {restoreError ? <p role="alert" className="text-[12px] text-critical">{restoreError}</p> : null}
 
       {items === null && !loadError ? (
         <SkeletonRows rows={5} />
@@ -142,6 +180,17 @@ export function EmptyRecycleBinDialog({ open, onClose }: { open: boolean; onClos
                   {isCurrent ? <span className="text-accent">Removing…</span> : null}
                   {isDone && !isCurrent ? <CheckCircle2 className="size-3.5 text-tier-safe" aria-hidden="true" /> : null}
                   {formatBytes(item.bytes)}
+                  {!running && !finished ? (
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      disabled={restoringId === item.id}
+                      onClick={() => void restore(item)}
+                    >
+                      <Undo2 className="size-3.5" aria-hidden="true" />
+                      {restoringId === item.id ? "Restoring…" : "Restore"}
+                    </Button>
+                  ) : null}
                 </span>
               </li>
             );

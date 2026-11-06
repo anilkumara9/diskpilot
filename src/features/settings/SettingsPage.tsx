@@ -5,7 +5,7 @@ import { useAppStore } from "@/lib/store";
 import { displayPath } from "@/lib/format";
 import { removeSavedSearch } from "@/lib/search";
 import { exclusionsToText, parseExclusions, sameExclusions } from "@/lib/settings";
-import type { AssistantProvider, ThemePreference } from "@/lib/types";
+import type { AssistantProvider, AutoScanSchedule, ThemePreference } from "@/lib/types";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { Button } from "@/components/ui/button";
 import { Checkbox, Input, Select, Textarea } from "@/components/ui/input";
@@ -208,6 +208,130 @@ export function SavedSearchesSettings() {
   );
 }
 
+export function WatchSettings() {
+  const settings = useAppStore((s) => s.settings);
+  const updateSettings = useAppStore((s) => s.updateSettings);
+  const [lowDraft, setLowDraft] = useState(() => String(settings.lowSpaceAlertGb));
+  const [growthDraft, setGrowthDraft] = useState(() => String(settings.growthAlertGb));
+  const [autostart, setAutostart] = useState<boolean | null>(null);
+  const [autostartBusy, setAutostartBusy] = useState(false);
+
+  /* The toggle reflects the registration actually in effect, which
+     the shell reports — off Windows there is nothing to register,
+     so it stays off there. */
+  useEffect(() => {
+    let live = true;
+    void api.getAutostart().then((value) => {
+      if (live) setAutostart(value);
+    });
+    return () => {
+      live = false;
+    };
+  }, []);
+
+  const commitNumber = (raw: string, apply: (n: number) => Partial<typeof settings>) => {
+    const value = Number(raw);
+    if (Number.isFinite(value) && value >= 0) {
+      void updateSettings(apply(value));
+    }
+  };
+
+  const toggleAutostart = async (checked: boolean) => {
+    setAutostartBusy(true);
+    try {
+      const applied = await api.setAutostart(checked);
+      setAutostart(applied);
+      await updateSettings({ autoStart: applied });
+    } finally {
+      setAutostartBusy(false);
+    }
+  };
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-start justify-between gap-4">
+        <span>
+          <span className="block text-[13px] font-medium text-foreground">Scheduled scans</span>
+          <span className="block text-[12px] leading-4 text-muted">
+            While DiskPilot is running in the tray, it rescans on this schedule and can alert you.
+          </span>
+        </span>
+        <Select
+          aria-label="Scheduled scans"
+          value={settings.autoScan}
+          onChange={(e) => void updateSettings({ autoScan: e.target.value as AutoScanSchedule })}
+          className="w-[160px] shrink-0"
+        >
+          <option value="off">Off</option>
+          <option value="daily">Daily</option>
+          <option value="weekly">Weekly</option>
+        </Select>
+      </div>
+
+      <div className="flex items-center justify-between gap-4">
+        <label htmlFor="low-space-alert" className="text-[13px] font-medium text-foreground">
+          Alert when free space drops below
+        </label>
+        <span className="flex shrink-0 items-center gap-2">
+          <Input
+            id="low-space-alert"
+            type="number"
+            min={0}
+            step={1}
+            value={lowDraft}
+            onChange={(e) => setLowDraft(e.target.value)}
+            onBlur={() => commitNumber(lowDraft, (n) => ({ lowSpaceAlertGb: n }))}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") (e.target as HTMLInputElement).blur();
+            }}
+            className="w-[110px]"
+          />
+          <span className="text-[12px] text-muted">GB</span>
+        </span>
+      </div>
+
+      <div className="flex items-center justify-between gap-4">
+        <label htmlFor="growth-alert" className="text-[13px] font-medium text-foreground">
+          Alert when the disk grows by more than
+        </label>
+        <span className="flex shrink-0 items-center gap-2">
+          <Input
+            id="growth-alert"
+            type="number"
+            min={0}
+            step={1}
+            value={growthDraft}
+            onChange={(e) => setGrowthDraft(e.target.value)}
+            onBlur={() => commitNumber(growthDraft, (n) => ({ growthAlertGb: n }))}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") (e.target as HTMLInputElement).blur();
+            }}
+            className="w-[110px]"
+          />
+          <span className="text-[12px] text-muted">GB between checks</span>
+        </span>
+      </div>
+
+      <label className="flex cursor-pointer items-center justify-between gap-4 border-t border-border pt-3">
+        <span>
+          <span className="block text-[13px] font-medium text-foreground">
+            Start DiskPilot when you sign in to Windows
+          </span>
+          <span className="block text-[12px] leading-4 text-muted">
+            DiskPilot starts in the tray, so scheduled scans and alerts are always watching.
+          </span>
+        </span>
+        <Checkbox
+          checked={autostart ?? settings.autoStart}
+          disabled={autostartBusy}
+          onChange={(e) => void toggleAutostart(e.target.checked)}
+          aria-label="Start DiskPilot when you sign in to Windows"
+        />
+      </label>
+    </div>
+  );
+}
+
 export function SettingsPage() {
   const settings = useAppStore((s) => s.settings);
   const env = useAppStore((s) => s.env);
@@ -247,6 +371,13 @@ export function SettingsPage() {
             </p>
           </div>
           <ExclusionsSettings />
+        </Section>
+
+        <Section
+          title="Watch"
+          description="Scheduled scans and alerts run while DiskPilot is in the tray. Alerts are raised after a scheduled scan, never during one you started yourself."
+        >
+          <WatchSettings />
         </Section>
 
         <Section

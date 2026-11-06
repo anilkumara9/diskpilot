@@ -7,6 +7,7 @@ import {
   Download,
   Film,
   Images,
+  Info,
   PackageOpen,
   ShieldCheck,
   Sparkles,
@@ -323,7 +324,9 @@ export function RecommendationRow({
 }) {
   const homeDir = useAppStore((s) => s.env?.homeDir);
   const [expanded, setExpanded] = useState(false);
-  const selectable = recommendation.tier !== "keep";
+  /* Guided items (e.g. Windows.old) belong to another tool: DiskPilot
+     explains the route but never selects or plans them. */
+  const selectable = recommendation.tier !== "keep" && !recommendation.guidedOnly;
   const Icon = expanded ? ChevronDown : ChevronRight;
 
   return (
@@ -355,12 +358,23 @@ export function RecommendationRow({
             <span className="block truncate text-[12px] text-muted">{recommendation.source} · {recommendation.paths.length} item{recommendation.paths.length === 1 ? "" : "s"}</span>
           </span>
         </button>
+        {recommendation.guidedOnly ? (
+          <span className="shrink-0 rounded bg-panel-raised px-1.5 py-0.5 text-[11px] font-medium leading-[14px] text-muted ring-1 ring-border">
+            Guided
+          </span>
+        ) : null}
         <TierBadge tier={recommendation.tier} />
         <span className="w-[92px] shrink-0 text-right text-[13px] tabular text-foreground">{formatBytes(recommendation.bytes)}</span>
       </div>
 
       {expanded ? (
         <div className="animate-fade-in space-y-3 pb-3 pl-[52px] pr-2">
+          {recommendation.guidedOnly && recommendation.guidance ? (
+            <div className="flex gap-3 rounded-[10px] border border-border bg-panel-raised px-4 py-3">
+              <Info className="mt-0.5 size-4 shrink-0 text-muted" aria-hidden="true" />
+              <p className="text-[12px] leading-4 text-muted">{recommendation.guidance}</p>
+            </div>
+          ) : null}
           <dl className="grid gap-3 md:grid-cols-3">
             <div>
               <dt className="text-[12px] font-medium text-foreground">Why this was detected</dt>
@@ -438,13 +452,14 @@ export function RecommendationsPage() {
   };
 
   /** Select or clear exactly one tier's recommendations. Items that
-      render without a checkbox (Keep tier) are never selectable and
-      are skipped, matching their disabled state in the list. */
+      render without a checkbox (Keep tier, guided-only items) are
+      never selectable and are skipped, matching their disabled state
+      in the list. */
   const setTierSelection = (items: Recommendation[], select: boolean) => {
     setSelected((prev) => {
       const next = new Set(prev);
       for (const rec of items) {
-        if (rec.tier === "keep") continue;
+        if (rec.tier === "keep" || rec.guidedOnly) continue;
         if (select) next.add(rec.id); else next.delete(rec.id);
       }
       return next;
@@ -452,10 +467,17 @@ export function RecommendationsPage() {
   };
 
   const review = async () => {
+    /* Defensive: a guided-only id must never reach plan building,
+       even if one somehow landed in the selection set. */
+    const ids = [...selected].filter((id) => {
+      const rec = recommendations.find((r) => r.id === id);
+      return rec !== undefined && !rec.guidedOnly;
+    });
+    if (ids.length === 0) return;
     setBuilding(true);
     setPlanError(null);
     try {
-      const built = await api.buildCleanupPlan([...selected]);
+      const built = await api.buildCleanupPlan(ids);
       setPlan(built);
     } catch (err) {
       setPlanError(err instanceof Error ? err.message : "A cleanup plan could not be built.");
