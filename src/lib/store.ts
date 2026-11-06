@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import type {
   AppSettings,
+  CandidateGroup,
   DiskInfo,
   EnvironmentInfo,
   PageId,
@@ -35,6 +36,7 @@ interface AppState {
   summary: ScanSummary | null;
   comparison: ScanComparison | null;
   recommendations: Recommendation[];
+  cleanupCards: CandidateGroup[];
   banner: StatusBannerState;
   recycleBinOpen: boolean;
   highlightedRecommendationIds: string[];
@@ -69,6 +71,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   summary: null,
   comparison: null,
   recommendations: [],
+  cleanupCards: [],
   banner: null,
   recycleBinOpen: false,
   highlightedRecommendationIds: [],
@@ -89,13 +92,14 @@ export const useAppStore = create<AppState>((set, get) => ({
     set({ env, settings });
     applyTheme(settings.theme);
 
-    const [disk, summary, recommendations, comparison] = await Promise.all([
+    const [disk, summary, recommendations, cleanupCards, comparison] = await Promise.all([
       api.getDiskInfo(settings.scanRoot || undefined),
       api.getScanSummary(),
       api.getRecommendations(),
+      api.getCleanupCards(),
       api.getScanComparison(),
     ]);
-    set({ disk, summary, recommendations, comparison });
+    set({ disk, summary, recommendations, cleanupCards, comparison });
 
     if (!listenersBound) {
       listenersBound = true;
@@ -130,8 +134,13 @@ export const useAppStore = create<AppState>((set, get) => ({
   },
 
   refreshRecommendations: async () => {
-    const recommendations = await api.getRecommendations();
-    set({ recommendations });
+    // Cards derive from the same stored scan as the recommendations,
+    // so the two always refresh together.
+    const [recommendations, cleanupCards] = await Promise.all([
+      api.getRecommendations(),
+      api.getCleanupCards(),
+    ]);
+    set({ recommendations, cleanupCards });
   },
 
   refreshComparison: async () => {

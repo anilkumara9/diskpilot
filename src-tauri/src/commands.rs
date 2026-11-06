@@ -477,6 +477,44 @@ pub fn get_recommendations(state: State<'_, ShellState>) -> CmdResult<Vec<Recomm
     Ok(engine.recommendations.clone())
 }
 
+/// Clean Up card candidates (old installers, forgotten downloads, old
+/// screenshots, big old videos) for the current scan, computed by the
+/// core when the scan was stored. Empty until a scan has run.
+#[tauri::command]
+pub fn get_cleanup_cards(
+    state: State<'_, ShellState>,
+) -> CmdResult<Vec<diskpilot_core::cards::CandidateGroup>> {
+    let engine = state
+        .engine
+        .lock()
+        .map_err(|_| "engine lock poisoned".to_string())?;
+    Ok(engine.cleanup_cards.clone())
+}
+
+/// Build a cleanup plan from Clean Up card candidate IDs only — never
+/// paths. The core planner resolves the IDs against the engine's own
+/// stored card groups, validates every path through the safety gate,
+/// and freezes a single-use plan that expires after 10 minutes. Card
+/// plans are Trash-only: the core never allows permanent deletion for
+/// them. Execution reuses `execute_cleanup_plan` — card plan IDs live
+/// in the same planner as recommendation plan IDs.
+#[tauri::command]
+pub fn build_card_cleanup_plan(
+    state: State<'_, ShellState>,
+    candidate_ids: Vec<String>,
+) -> CmdResult<CleanupPlan> {
+    let ctx = SafetyContext::new(state.scan_root());
+    let mut engine = state
+        .engine
+        .lock()
+        .map_err(|_| "engine lock poisoned".to_string())?;
+    let groups = engine.cleanup_cards.clone();
+    engine
+        .planner
+        .build_plan_for_candidates(&candidate_ids, &groups, &ctx, now_ms())
+        .map_err(err)
+}
+
 /// Build a cleanup plan from recommendation IDs only — never paths.
 /// The core planner resolves the IDs against its own recommendations,
 /// validates every path through the safety gate, and freezes the result

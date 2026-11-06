@@ -136,6 +136,28 @@ export interface CleanupPlan {
 
 export type CleanupMode = "recycleBin" | "permanent";
 
+/* ---------- Clean Up cards (core `cards` module) ---------- */
+
+/** One file offered by a Clean Up card. `id` is core-assigned and
+    stable for the scan (a hash of the path); cleanup plans are built
+    from these ids only, never from paths sent by the client. */
+export interface CandidateFile {
+  id: string;
+  path: string;
+  name: string;
+  bytes: number;
+  modifiedMs: number;
+}
+
+/** All files for one Clean Up card. The core returns only non-empty
+    groups, in fixed card order. */
+export interface CandidateGroup {
+  card: string;
+  title: string;
+  files: CandidateFile[];
+  totalBytes: number;
+}
+
 export interface CleanupFailure {
   path: string;
   message: string;

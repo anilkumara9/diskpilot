@@ -215,6 +215,8 @@ pub fn run() {
             commands::get_scan_comparison,
             commands::list_directory,
             commands::get_recommendations,
+            commands::get_cleanup_cards,
+            commands::build_card_cleanup_plan,
             commands::build_cleanup_plan,
             commands::execute_cleanup_plan,
             commands::get_history,

@@ -2,6 +2,7 @@
 //! from the engine's own recommendations, validated through the safety gate,
 //! and frozen into a single-use plan that expires after ten minutes.
 
+use crate::cards::CandidateGroup;
 use crate::error::{CoreError, CoreResult};
 use crate::model::*;
 use crate::recommend;
@@ -30,8 +31,6 @@ impl Planner {
         ctx: &SafetyContext,
         now: i64,
     ) -> CleanupPlan {
-        self.counter += 1;
-        let id = format!("plan-{}-{}", now, self.counter);
         let mut items: Vec<PlanItem> = Vec::new();
         let mut warnings: Vec<String> = Vec::new();
         let mut rejected: Vec<String> = Vec::new();
@@ -92,9 +91,75 @@ impl Planner {
         // Recompute item bytes honestly: a recommendation with several paths
         // stores per-path bytes in its plan item from the recommendation
         // total split above; single-path items keep the full amount.
-        let total: u64 = items.iter().map(|i| i.bytes).sum();
         let allow_permanent =
             all_regenerable && !recommendation_ids.is_empty() && !items.is_empty();
+        self.register_plan(now, items, warnings, rejected, allow_permanent)
+    }
+
+    /// Build a plan from Clean Up card candidate IDs.
+    ///
+    /// The safety model is identical to [`Planner::build_plan`]: the
+    /// caller sends IDs only, paths are resolved against `groups` —
+    /// card data the core itself computed from its own scan index —
+    /// and every resolved path passes the same safety gate before it
+    /// enters the plan. Unknown IDs land in the plan's `rejected` list
+    /// rather than failing the build, mirroring the recommendation
+    /// flow, so this returns `Ok` for any ID list.
+    ///
+    /// One deliberate difference: `allow_permanent` is **always false**.
+    /// Card candidates are ordinary user files (installers, downloads,
+    /// photos, videos), not regenerable caches, so card plans can only
+    /// ever be executed as Move to Recycle Bin — the executor refuses
+    /// permanent deletion for plans that do not allow it.
+    pub fn build_plan_for_candidates(
+        &mut self,
+        candidate_ids: &[String],
+        groups: &[CandidateGroup],
+        ctx: &SafetyContext,
+        now_ms: i64,
+    ) -> CoreResult<CleanupPlan> {
+        let mut items: Vec<PlanItem> = Vec::new();
+        let mut rejected: Vec<String> = Vec::new();
+        let mut seen_paths: Vec<String> = Vec::new();
+        for cid in candidate_ids {
+            let Some(candidate) = groups
+                .iter()
+                .flat_map(|g| g.files.iter())
+                .find(|f| &f.id == cid)
+            else {
+                rejected.push(format!("unknown candidate id: {}", cid));
+                continue;
+            };
+            if seen_paths.contains(&candidate.path) {
+                continue;
+            }
+            seen_paths.push(candidate.path.clone());
+            match safety::validate(&PathBuf::from(&candidate.path), ctx) {
+                Ok(_) => items.push(PlanItem {
+                    path: candidate.path.clone(),
+                    bytes: candidate.bytes,
+                }),
+                Err(e) => rejected.push(format!("{}: {}", candidate.path, e)),
+            }
+        }
+        Ok(self.register_plan(now_ms, items, Vec::new(), rejected, false))
+    }
+
+    /// Mint, store and return a plan. The single place plans are
+    /// created, so every entry point shares the ID scheme, the
+    /// ten-minute expiry and the single-use bookkeeping enforced by
+    /// [`Planner::take_plan`].
+    fn register_plan(
+        &mut self,
+        now: i64,
+        items: Vec<PlanItem>,
+        warnings: Vec<String>,
+        rejected: Vec<String>,
+        allow_permanent: bool,
+    ) -> CleanupPlan {
+        self.counter += 1;
+        let id = format!("plan-{}-{}", now, self.counter);
+        let total_bytes: u64 = items.iter().map(|i| i.bytes).sum();
         let plan = CleanupPlan {
             id: id.clone(),
             created_at_ms: now,
@@ -102,7 +167,7 @@ impl Planner {
             items,
             warnings,
             rejected,
-            total_bytes: total,
+            total_bytes,
             allow_permanent,
         };
         self.plans.insert(id, plan.clone());

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type {
   AssistantReply,
+  CandidateGroup,
   ChatMessage,
   DockerActionRequest,
   DockerActionPreview,
@@ -158,6 +159,33 @@ describe("shell contract shapes", () => {
     };
     expect(group.files[0].bytes).toBeGreaterThan(group.files[1].bytes);
     expect(group.wastedBytes).toBe(1200);
+  });
+
+  it("cleanup card groups carry candidate files with core-assigned ids", () => {
+    const group: CandidateGroup = {
+      card: "old-installers",
+      title: "Old installers",
+      files: [
+        {
+          id: "0123456789abcdef",
+          path: "C:\\Users\\me\\Downloads\\driver.msi",
+          name: "driver.msi",
+          bytes: 4096,
+          modifiedMs: 1700000000000,
+        },
+      ],
+      totalBytes: 4096,
+    };
+    expect(Object.keys(group).sort()).toEqual(["card", "files", "title", "totalBytes"]);
+    expect(Object.keys(group.files[0]).sort()).toEqual([
+      "bytes",
+      "id",
+      "modifiedMs",
+      "name",
+      "path",
+    ]);
+    expect(group.files[0].id).toHaveLength(16);
+    expect(group.totalBytes).toBe(group.files[0].bytes);
   });
 
   it("environment, scan progress and assistant shapes match the shell", () => {

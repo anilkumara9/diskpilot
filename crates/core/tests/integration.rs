@@ -572,3 +572,238 @@ fn assistant_tool_loop_with_scripted_client() {
     let answer = session.ask(&mut client, "what uses space?").unwrap();
     assert!(answer.contains("biggest category"));
 }
+
+// ---------------------------------------------------------------------------
+// Clean Up cards (crates/core/src/cards.rs)
+//
+// Fixture files are always created "now", so card age thresholds are
+// tested by passing a FUTURE now_ms to cleanup_cards: at +200 days every
+// fixture file is 200 days old, at +45 days only the 30-day installer
+// threshold is crossed, and so on.
+// ---------------------------------------------------------------------------
+
+use diskpilot_core::cards::{cleanup_cards, CandidateFile, CandidateGroup};
+
+const DAY: i64 = 86_400_000;
+
+fn cards_fixture(dir: &Path) {
+    // Installers living in Downloads: exclusivity must put them in
+    // old-installers ONLY, never in forgotten-downloads.
+    write_file(&dir.join("Downloads/SetupTool.exe"), 5000);
+    write_file(&dir.join("Downloads/driver.msi"), 4000);
+    write_file(&dir.join("Downloads/forgotten.zip"), 3000);
+    // Zero-byte installer name: skipped everywhere.
+    write_file(&dir.join("Downloads/setup-empty.exe"), 0);
+    // Screenshots by name and by folder; a plain photo is neither.
+    write_file(&dir.join("Pictures/Screenshot 2024.png"), 2000);
+    write_file(&dir.join("Pictures/Screenshots/shot.jpg"), 1500);
+    write_file(&dir.join("Pictures/photo.jpg"), 2500);
+    // One video over the 100 MB floor, one under it.
+    write_file(&dir.join("Videos/big.mp4"), 100_000_001);
+    write_file(&dir.join("Videos/small.mp4"), 5000);
+    write_file(&dir.join("misc/readme.txt"), 1000);
+}
+
+fn card_group<'a>(groups: &'a [CandidateGroup], card: &str) -> Option<&'a CandidateGroup> {
+    groups.iter().find(|g| g.card == card)
+}
+
+fn card_names(group: &CandidateGroup) -> Vec<&str> {
+    group.files.iter().map(|f| f.name.as_str()).collect()
+}
+
+#[test]
+fn cleanup_cards_classify_with_exclusivity() {
+    let dir = tempfile::tempdir().unwrap();
+    cards_fixture(dir.path());
+    let (_summary, index) = Scanner::new(dir.path()).scan();
+    let t0 = index.files.iter().map(|f| f.modified_ms).max().unwrap();
+    let groups = cleanup_cards(&index, t0 + 200 * DAY);
+
+    // Fixed card order, all four present.
+    let order: Vec<&str> = groups.iter().map(|g| g.card.as_str()).collect();
+    assert_eq!(
+        order,
+        vec![
+            "old-installers",
+            "forgotten-downloads",
+            "old-screenshots",
+            "big-old-videos"
+        ]
+    );
+    let titles: Vec<&str> = groups.iter().map(|g| g.title.as_str()).collect();
+    assert_eq!(
+        titles,
+        vec![
+            "Old installers",
+            "Forgotten downloads",
+            "Old screenshots",
+            "Big old videos"
+        ]
+    );
+
+    let installers = card_group(&groups, "old-installers").unwrap();
+    let mut names = card_names(installers);
+    names.sort();
+    assert_eq!(names, vec!["SetupTool.exe", "driver.msi"]);
+    // Files sorted largest first; the group total is the file sum.
+    assert!(installers
+        .files
+        .windows(2)
+        .all(|w| w[0].bytes >= w[1].bytes));
+    assert_eq!(
+        installers.total_bytes,
+        installers.files.iter().map(|f| f.bytes).sum::<u64>()
+    );
+    // Ids are the stable 16-hex-char path hashes.
+    assert!(installers
+        .files
+        .iter()
+        .all(|f| f.id.len() == 16 && f.id.chars().all(|c| c.is_ascii_hexdigit())));
+
+    // Exclusivity: the Downloads installers are NOT here.
+    let downloads = card_group(&groups, "forgotten-downloads").unwrap();
+    assert_eq!(card_names(downloads), vec!["forgotten.zip"]);
+
+    let shots = card_group(&groups, "old-screenshots").unwrap();
+    let mut names = card_names(shots);
+    names.sort();
+    assert_eq!(names, vec!["Screenshot 2024.png", "shot.jpg"]);
+
+    let videos = card_group(&groups, "big-old-videos").unwrap();
+    assert_eq!(card_names(videos), vec!["big.mp4"]);
+
+    // The zero-byte installer, the plain photo, the small video and the
+    // readme appear in no card at all: 6 candidates in total.
+    let total: usize = groups.iter().map(|g| g.files.len()).sum();
+    assert_eq!(total, 6);
+    let all_names: Vec<&str> = groups.iter().flat_map(|g| card_names(g)).collect();
+    for absent in ["setup-empty.exe", "photo.jpg", "small.mp4", "readme.txt"] {
+        assert!(
+            !all_names.contains(&absent),
+            "{absent} must not be a candidate"
+        );
+    }
+}
+
+#[test]
+fn cleanup_cards_age_thresholds() {
+    let dir = tempfile::tempdir().unwrap();
+    cards_fixture(dir.path());
+    let (_summary, index) = Scanner::new(dir.path()).scan();
+    let t0 = index.files.iter().map(|f| f.modified_ms).max().unwrap();
+
+    // Brand-new files: no card fires.
+    assert!(cleanup_cards(&index, t0).is_empty());
+    // At +45 days only the 30-day installer threshold is crossed.
+    let groups = cleanup_cards(&index, t0 + 45 * DAY);
+    assert_eq!(groups.len(), 1);
+    assert_eq!(groups[0].card, "old-installers");
+    // At +100 days the 90-day cards join; videos (180 days) still wait.
+    let groups = cleanup_cards(&index, t0 + 100 * DAY);
+    let order: Vec<&str> = groups.iter().map(|g| g.card.as_str()).collect();
+    assert_eq!(
+        order,
+        vec!["old-installers", "forgotten-downloads", "old-screenshots"]
+    );
+}
+
+#[test]
+fn card_plan_is_trash_only_single_use_with_expiry() {
+    let dir = tempfile::tempdir().unwrap();
+    cards_fixture(dir.path());
+    let (_summary, index) = Scanner::new(dir.path()).scan();
+    let t0 = index.files.iter().map(|f| f.modified_ms).max().unwrap();
+    let groups = cleanup_cards(&index, t0 + 200 * DAY);
+    let installers = card_group(&groups, "old-installers").unwrap();
+    let ids: Vec<String> = installers.files.iter().map(|f| f.id.clone()).collect();
+
+    let c = ctx(dir.path());
+    let now = 5_000_000i64;
+    let mut planner = Planner::new();
+    let plan = planner
+        .build_plan_for_candidates(&ids, &groups, &c, now)
+        .unwrap();
+    // Trash-only, hard rule — even though these are regenerable
+    // installer downloads, permanent deletion is never offered.
+    assert!(!plan.allow_permanent);
+    assert_eq!(plan.items.len(), 2);
+    assert_eq!(plan.total_bytes, installers.total_bytes);
+    assert!(plan.rejected.is_empty());
+    // Same single-use + expiry semantics as recommendation plans.
+    assert!(planner.take_plan(&plan.id, now + 1000).is_ok());
+    assert!(planner.take_plan(&plan.id, now + 1000).is_err());
+    let plan2 = planner
+        .build_plan_for_candidates(&ids, &groups, &c, now)
+        .unwrap();
+    assert!(planner
+        .take_plan(
+            &plan2.id,
+            now + diskpilot_core::cleanup::planner::PLAN_TTL_MS + 1
+        )
+        .is_err());
+}
+
+#[test]
+fn card_plan_rejects_unknown_ids_and_protected_paths() {
+    let dir = tempfile::tempdir().unwrap();
+    cards_fixture(dir.path());
+    let (_summary, index) = Scanner::new(dir.path()).scan();
+    let t0 = index.files.iter().map(|f| f.modified_ms).max().unwrap();
+    let groups = cleanup_cards(&index, t0 + 200 * DAY);
+    let valid = card_group(&groups, "forgotten-downloads").unwrap().files[0]
+        .id
+        .clone();
+
+    let c = ctx(dir.path());
+    let mut planner = Planner::new();
+    let plan = planner
+        .build_plan_for_candidates(
+            &[valid, "deadbeefdeadbeef".to_string()],
+            &groups,
+            &c,
+            6_000_000,
+        )
+        .unwrap();
+    assert_eq!(plan.items.len(), 1);
+    assert_eq!(plan.rejected.len(), 1);
+    assert!(plan.rejected[0].contains("unknown candidate id"));
+
+    // A fabricated group pointing at a protected location: the
+    // planner does not trust that groups came from detection — the
+    // safety gate judges every resolved path.
+    let hostile = CandidateGroup {
+        card: "old-installers".to_string(),
+        title: "Old installers".to_string(),
+        files: vec![CandidateFile {
+            id: "0123456789abcdef".to_string(),
+            path: "/etc/hostname".to_string(),
+            name: "hostname".to_string(),
+            bytes: 10,
+            modified_ms: 1,
+        }],
+        total_bytes: 10,
+    };
+    let plan = planner
+        .build_plan_for_candidates(&["0123456789abcdef".to_string()], &[hostile], &c, 6_000_000)
+        .unwrap();
+    assert!(plan.items.is_empty());
+    assert_eq!(plan.rejected.len(), 1);
+    assert!(plan.rejected[0].contains("/etc/hostname"));
+    assert!(!plan.allow_permanent);
+}
+
+#[test]
+fn state_stores_cleanup_cards_with_scan() {
+    let dir = tempfile::tempdir().unwrap();
+    cards_fixture(dir.path());
+    let (summary, index) = Scanner::new(dir.path()).scan();
+    let mut state = diskpilot_core::AppState::new();
+    state.store_scan(summary, index);
+    // Fixture files were created just now, so no age threshold is
+    // crossed and the stored groups match a fresh detection pass.
+    assert!(state.cleanup_cards.is_empty());
+    state.clear_scan();
+    assert!(state.cleanup_cards.is_empty());
+    assert!(state.recommendations.is_empty());
+}

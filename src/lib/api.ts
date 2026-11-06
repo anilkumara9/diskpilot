@@ -2,6 +2,7 @@ import type {
   AppEntry,
   AppSettings,
   AssistantReply,
+  CandidateGroup,
   ChatMessage,
   CleanupMode,
   CleanupPlan,
@@ -130,6 +131,26 @@ export async function getRecommendations(): Promise<Recommendation[]> {
 export async function buildCleanupPlan(ids: string[]): Promise<CleanupPlan> {
   requireDesktop();
   return invoke<CleanupPlan>("build_cleanup_plan", { recommendationIds: ids });
+}
+
+/** Clean Up card candidates for the current scan (old installers,
+    forgotten downloads, old screenshots, big old videos). Empty until
+    a scan has run. */
+export async function getCleanupCards(): Promise<CandidateGroup[]> {
+  if (!inDesktopApp()) return [];
+  try {
+    return await invoke<CandidateGroup[]>("get_cleanup_cards");
+  } catch {
+    return [];
+  }
+}
+
+/** Build a Trash-only cleanup plan from card candidate ids. The
+    returned plan executes through `executeCleanupPlan` like any
+    other plan. */
+export async function buildCardCleanupPlan(ids: string[]): Promise<CleanupPlan> {
+  requireDesktop();
+  return invoke<CleanupPlan>("build_card_cleanup_plan", { candidateIds: ids });
 }
 
 export async function executeCleanupPlan(

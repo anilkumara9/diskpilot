@@ -4,15 +4,26 @@ import {
   ChevronDown,
   ChevronRight,
   Command,
+  Download,
+  Film,
+  Images,
+  PackageOpen,
   ShieldCheck,
   Sparkles,
+  type LucideIcon,
 } from "lucide-react";
 import { useAppStore } from "@/lib/store";
 import * as api from "@/lib/api";
 import { actionableBytes, groupRecommendationsByTier } from "@/lib/analysis";
-import { displayPath, formatBytes, formatDate } from "@/lib/format";
+import { cardSubtitle, selectedCandidateBytes } from "@/lib/cards";
+import { displayPath, formatBytes, formatDate, formatRelative } from "@/lib/format";
 import { CONFIDENCE_LABEL, tierMeta } from "@/lib/tiers";
-import type { CleanupMode, CleanupPlan, Recommendation } from "@/lib/types";
+import type {
+  CandidateGroup,
+  CleanupMode,
+  CleanupPlan,
+  Recommendation,
+} from "@/lib/types";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/input";
@@ -157,6 +168,146 @@ export function CleanupDialog({
   );
 }
 
+/* ---------------- Clean Up cards ---------------- */
+
+const CARD_ICONS: Record<string, LucideIcon> = {
+  "old-installers": PackageOpen,
+  "forgotten-downloads": Download,
+  "old-screenshots": Images,
+  "big-old-videos": Film,
+};
+
+export function CleanupCard({
+  group,
+  onReview,
+}: {
+  group: CandidateGroup;
+  onReview: () => void;
+}) {
+  const Icon = CARD_ICONS[group.card] ?? Sparkles;
+  return (
+    <button
+      type="button"
+      onClick={onReview}
+      className="flex items-start gap-3 rounded-[10px] border border-border bg-panel-raised px-4 py-3 text-left transition-colors duration-120 hover:border-border-strong"
+    >
+      <span className="mt-0.5 flex size-8 shrink-0 items-center justify-center rounded-md bg-accent/10 text-accent">
+        <Icon className="size-4" aria-hidden="true" />
+      </span>
+      <span className="min-w-0 flex-1">
+        <span className="flex items-baseline justify-between gap-2">
+          <span className="truncate text-[13px] font-medium text-foreground">{group.title}</span>
+          <span className="shrink-0 text-[13px] tabular text-foreground">{formatBytes(group.totalBytes)}</span>
+        </span>
+        <span className="mt-0.5 block text-[12px] leading-4 text-muted">{cardSubtitle(group.card)}</span>
+        <span className="mt-1.5 flex items-center justify-between gap-2">
+          <span className="text-[12px] tabular text-subtle">
+            {group.files.length} file{group.files.length === 1 ? "" : "s"}
+          </span>
+          <span className="flex items-center gap-0.5 text-[12px] font-medium text-accent">
+            Review
+            <ChevronRight className="size-3.5" aria-hidden="true" />
+          </span>
+        </span>
+      </span>
+    </button>
+  );
+}
+
+/** Pick exactly which of a card's files go into a cleanup plan. The
+    plan itself is built by the core from candidate ids and reviewed
+    in the shared CleanupDialog; card plans are always Recycle Bin
+    only, which that dialog reflects via the plan's allowPermanent. */
+export function CardReviewDialog({
+  group,
+  onClose,
+  onPlan,
+}: {
+  group: CandidateGroup;
+  onClose: () => void;
+  onPlan: (plan: CleanupPlan) => void;
+}) {
+  const homeDir = useAppStore((s) => s.env?.homeDir);
+  const [selected, setSelected] = useState<ReadonlySet<string>>(
+    () => new Set(group.files.map((f) => f.id)),
+  );
+  const [building, setBuilding] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const selectedBytes = selectedCandidateBytes(group.files, selected);
+
+  const toggle = (id: string, checked: boolean) => {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (checked) next.add(id); else next.delete(id);
+      return next;
+    });
+  };
+
+  const buildPlan = async () => {
+    setBuilding(true);
+    setError(null);
+    try {
+      const built = await api.buildCardCleanupPlan([...selected]);
+      onPlan(built);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "A cleanup plan could not be built.");
+      setBuilding(false);
+    }
+  };
+
+  return (
+    <Dialog
+      open
+      onClose={onClose}
+      title={group.title}
+      description={`${cardSubtitle(group.card)}. Card cleanups always move files to the Recycle Bin — they are never permanently deleted.`}
+      wide
+      dismissible={!building}
+      footer={
+        <>
+          <span className="mr-auto text-[12px] tabular text-muted">
+            {selected.size} of {group.files.length} files · {formatBytes(selectedBytes)} selected
+          </span>
+          <Button variant="secondary" onClick={onClose} disabled={building}>Cancel</Button>
+          <Button
+            variant="primary"
+            onClick={() => void buildPlan()}
+            disabled={building || selected.size === 0}
+          >
+            <ShieldCheck className="size-4" aria-hidden="true" />
+            {building ? "Building plan…" : "Review cleanup plan"}
+          </Button>
+        </>
+      }
+    >
+      {error ? <p role="alert" className="mb-3 text-[12px] text-critical">{error}</p> : null}
+      <ul className="max-h-[320px] space-y-0.5 overflow-y-auto rounded-md border border-border bg-panel p-2">
+        {group.files.map((file) => (
+          <li
+            key={file.id}
+            className="flex items-center gap-2.5 rounded px-1.5 py-1.5 transition-colors duration-120 hover:bg-hover"
+          >
+            <Checkbox
+              checked={selected.has(file.id)}
+              onChange={(e) => toggle(file.id, e.target.checked)}
+              aria-label={`Select ${file.name}`}
+            />
+            <span className="min-w-0 flex-1">
+              <span className="block truncate text-[13px] text-foreground" title={file.path}>{file.name}</span>
+              <span className="mono-path block truncate text-subtle" title={file.path}>{displayPath(file.path, homeDir)}</span>
+            </span>
+            <span className="shrink-0 text-right">
+              <span className="block text-[12px] tabular text-foreground">{formatBytes(file.bytes)}</span>
+              <span className="block text-[11px] text-subtle">{formatRelative(file.modifiedMs)}</span>
+            </span>
+          </li>
+        ))}
+      </ul>
+    </Dialog>
+  );
+}
+
 /* ---------------- Recommendation row ---------------- */
 
 export function RecommendationRow({
@@ -262,12 +413,14 @@ export function RecommendationRow({
 
 export function RecommendationsPage() {
   const recommendations = useAppStore((s) => s.recommendations);
+  const cleanupCards = useAppStore((s) => s.cleanupCards);
   const highlightedIds = useAppStore((s) => s.highlightedRecommendationIds);
   const setBanner = useAppStore((s) => s.setBanner);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [plan, setPlan] = useState<CleanupPlan | null>(null);
   const [building, setBuilding] = useState(false);
   const [planError, setPlanError] = useState<string | null>(null);
+  const [reviewGroup, setReviewGroup] = useState<CandidateGroup | null>(null);
 
   const groups = useMemo(() => groupRecommendationsByTier(recommendations), [recommendations]);
   const selectedBytes = useMemo(
@@ -332,7 +485,7 @@ export function RecommendationsPage() {
 
         {planError ? <p role="alert" className="pb-3 text-[12px] text-critical">{planError}</p> : null}
 
-        {recommendations.length === 0 ? (
+        {recommendations.length === 0 && cleanupCards.length === 0 ? (
           <EmptyState
             icon={Sparkles}
             className="min-h-[360px]"
@@ -341,11 +494,29 @@ export function RecommendationsPage() {
           />
         ) : (
           <>
-            <p className="pb-2 text-[12px] text-muted">
-              <span className="font-medium tabular text-foreground">{formatBytes(totalActionable)}</span> may be
-              reclaimable across {recommendations.filter((r) => r.tier !== "keep").length} recommendations.
-              Select items, then review the exact plan before anything happens.
-            </p>
+            {recommendations.length > 0 ? (
+              <p className="pb-2 text-[12px] text-muted">
+                <span className="font-medium tabular text-foreground">{formatBytes(totalActionable)}</span> may be
+                reclaimable across {recommendations.filter((r) => r.tier !== "keep").length} recommendations.
+                Select items, then review the exact plan before anything happens.
+              </p>
+            ) : null}
+            {cleanupCards.length > 0 ? (
+              <Section
+                title="Cards"
+                description="Individual files the scan picked out by kind and age. Review a card to choose exactly which files go into a cleanup plan."
+              >
+                <div className="grid gap-3 sm:grid-cols-2">
+                  {cleanupCards.map((group) => (
+                    <CleanupCard
+                      key={group.card}
+                      group={group}
+                      onReview={() => setReviewGroup(group)}
+                    />
+                  ))}
+                </div>
+              </Section>
+            ) : null}
             {groups.map((group) => (
               <Section
                 key={group.tier}
@@ -388,6 +559,17 @@ export function RecommendationsPage() {
           </>
         )}
       </div>
+
+      {reviewGroup ? (
+        <CardReviewDialog
+          group={reviewGroup}
+          onClose={() => setReviewGroup(null)}
+          onPlan={(built) => {
+            setReviewGroup(null);
+            setPlan(built);
+          }}
+        />
+      ) : null}
 
       {plan ? (
         <CleanupDialog

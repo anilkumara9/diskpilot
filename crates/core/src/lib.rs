@@ -6,6 +6,7 @@
 
 pub mod apps;
 pub mod assistant;
+pub mod cards;
 pub mod classifier;
 pub mod cleanup;
 pub mod devtools;
