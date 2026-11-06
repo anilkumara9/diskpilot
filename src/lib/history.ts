@@ -12,6 +12,7 @@ const OPERATION_TITLES: Record<string, string> = {
   duplicates: "Duplicate removal",
   "empty-recycle-bin": "Recycle Bin emptied",
   "docker-action": "Docker action",
+  relocate: "Folder moved",
   scan: "Scan",
 };
 

@@ -3,12 +3,13 @@ import { FolderOpen, Gamepad2, Info } from "lucide-react";
 import { useAppStore } from "@/lib/store";
 import * as api from "@/lib/api";
 import { displayPath, formatBytes, formatCount } from "@/lib/format";
-import type { GamesReport } from "@/lib/types";
+import type { GameEntry, GamesReport } from "@/lib/types";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { Button } from "@/components/ui/button";
 import { Section } from "@/components/ui/section";
 import { SkeletonRows } from "@/components/ui/skeleton";
 import { EmptyState } from "@/components/shared/EmptyState";
+import { MoveFolderDialog } from "@/components/shared/MoveFolderDialog";
 import { SizeBar } from "@/components/shared/SizeBar";
 import { StatStrip } from "@/components/shared/StatStrip";
 
@@ -17,10 +18,12 @@ import { StatStrip } from "@/components/shared/StatStrip";
 export function GamesPage() {
   const homeDir = useAppStore((s) => s.env?.homeDir);
   const finishedAtMs = useAppStore((s) => s.summary?.finishedAtMs);
+  const startScan = useAppStore((s) => s.startScan);
   const [report, setReport] = useState<GamesReport | null>(null);
   const [revealError, setRevealError] = useState<string | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [reloadKey, setReloadKey] = useState(0);
+  const [movingGame, setMovingGame] = useState<GameEntry | null>(null);
 
   /* Games come from the launchers' manifests, not from a scan; the
      page reloads when a scan finishes so installs measured by the
@@ -122,6 +125,9 @@ export function GamesPage() {
                         <span className="w-[92px] shrink-0 text-right text-[13px] tabular text-foreground">
                           {formatBytes(game.bytes)}
                         </span>
+                        <Button variant="ghost" size="sm" onClick={() => setMovingGame(game)}>
+                          Move…
+                        </Button>
                         <Button variant="ghost" size="sm" onClick={() => void reveal(game.path)}>
                           <FolderOpen className="size-3.5" aria-hidden="true" />
                           Reveal
@@ -142,6 +148,20 @@ export function GamesPage() {
             </div>
           </>
         )}
+
+        {movingGame ? (
+          <MoveFolderDialog
+            sourcePath={movingGame.path}
+            sourceBytes={movingGame.bytes}
+            onClose={() => setMovingGame(null)}
+            onMoved={() => {
+              /* The manifests are re-read and the scan root is
+                 rescanned so both views of the game stay true. */
+              setReloadKey((n) => n + 1);
+              void startScan();
+            }}
+          />
+        ) : null}
       </div>
     </div>
   );

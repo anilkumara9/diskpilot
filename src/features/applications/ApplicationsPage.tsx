@@ -4,6 +4,7 @@ import * as api from "@/lib/api";
 import { useAppStore } from "@/lib/store";
 import { displayPath, formatBytes } from "@/lib/format";
 import type { AppEntry } from "@/lib/types";
+import { UpdatesSection } from "@/features/applications/UpdatesSection";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -85,6 +86,7 @@ export function ApplicationsPage() {
           title="Applications"
           subtitle="Installed size plus the data each app keeps in AppData. Sort by total to find the heaviest apps."
         />
+        <UpdatesSection />
         {error ? <p role="alert" className="pb-3 text-[12px] text-critical">{error}</p> : null}
         {revealError ? <p role="alert" className="pb-3 text-[12px] text-critical">{revealError}</p> : null}
 

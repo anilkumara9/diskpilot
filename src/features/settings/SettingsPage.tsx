@@ -2,15 +2,23 @@ import { useEffect, useState } from "react";
 import { Check, FolderOpen, KeyRound, ShieldAlert, Trash2, X } from "lucide-react";
 import * as api from "@/lib/api";
 import { useAppStore } from "@/lib/store";
-import { displayPath } from "@/lib/format";
+import { displayPath, formatDate, formatRelative } from "@/lib/format";
+import { clampMinAgeDays } from "@/lib/maintenance";
 import { removeSavedSearch } from "@/lib/search";
 import { updateStatusLine } from "@/lib/updater";
 import { exclusionsToText, parseExclusions, sameExclusions } from "@/lib/settings";
-import type { AssistantProvider, AutoScanSchedule, ThemePreference } from "@/lib/types";
+import type {
+  AssistantProvider,
+  AutoMaintenanceSettings,
+  AutoScanSchedule,
+  ThemePreference,
+} from "@/lib/types";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { Button } from "@/components/ui/button";
 import { Checkbox, Input, Select, Textarea } from "@/components/ui/input";
 import { Section } from "@/components/ui/section";
+import { Switch } from "@/components/ui/switch";
+import { cn } from "@/lib/utils";
 
 const PROVIDERS: { id: AssistantProvider; label: string; note: string }[] = [
   { id: "anthropic", label: "Anthropic", note: "Requests go to api.anthropic.com." },
@@ -348,6 +356,198 @@ export function WatchSettings() {
   );
 }
 
+export function MaintenanceSettings() {
+  const settings = useAppStore((s) => s.settings);
+  const updateSettings = useAppStore((s) => s.updateSettings);
+  const maintenance = settings.autoMaintenance;
+  const [ageDraft, setAgeDraft] = useState(() => String(maintenance.minAgeDays));
+
+  // Keep the draft in step with the stored value until edited.
+  useEffect(() => {
+    setAgeDraft(String(maintenance.minAgeDays));
+  }, [maintenance.minAgeDays]);
+
+  const apply = (patch: Partial<AutoMaintenanceSettings>) => {
+    void updateSettings({ autoMaintenance: { ...maintenance, ...patch } });
+  };
+
+  const commitAge = () => {
+    const clamped = clampMinAgeDays(Number(ageDraft));
+    setAgeDraft(String(clamped));
+    if (clamped !== maintenance.minAgeDays) apply({ minAgeDays: clamped });
+  };
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center justify-between gap-4">
+        <span>
+          <span className="block text-[13px] font-medium text-foreground">Enabled</span>
+          <span className="block text-[12px] leading-4 text-muted">
+            Runs while DiskPilot is open or in the tray, on the schedule below.
+          </span>
+        </span>
+        <Switch
+          checked={maintenance.enabled}
+          onChange={(checked) => apply({ enabled: checked })}
+          ariaLabel="Enable automatic maintenance"
+        />
+      </div>
+
+      {maintenance.enabled ? (
+        <>
+          <div className="flex items-center justify-between gap-4">
+            <span className="text-[13px] font-medium text-foreground">Frequency</span>
+            <div
+              role="radiogroup"
+              aria-label="Maintenance frequency"
+              className="flex gap-1 rounded-md bg-panel-raised p-1"
+            >
+              {(
+                [
+                  { id: "daily", label: "Daily" },
+                  { id: "weekly", label: "Weekly" },
+                ] as const
+              ).map((option) => (
+                <button
+                  key={option.id}
+                  type="button"
+                  role="radio"
+                  aria-checked={maintenance.frequency === option.id}
+                  onClick={() => apply({ frequency: option.id })}
+                  className={cn(
+                    "h-6 rounded-[5px] px-3 text-[12px] font-medium transition-colors duration-120",
+                    maintenance.frequency === option.id
+                      ? "bg-panel text-foreground shadow-[0_1px_3px_rgba(0,0,0,0.14)] ring-1 ring-border"
+                      : "text-muted hover:text-foreground",
+                  )}
+                >
+                  {option.label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div className="flex items-center justify-between gap-4">
+            <label htmlFor="maintenance-min-age" className="text-[13px] font-medium text-foreground">
+              Remove items older than
+            </label>
+            <span className="flex shrink-0 items-center gap-2">
+              <Input
+                id="maintenance-min-age"
+                type="number"
+                min={7}
+                max={365}
+                step={1}
+                value={ageDraft}
+                onChange={(e) => setAgeDraft(e.target.value)}
+                onBlur={commitAge}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") (e.target as HTMLInputElement).blur();
+                }}
+                className="w-24"
+              />
+              <span className="w-[132px] text-[12px] text-muted">days (7–365)</span>
+            </span>
+          </div>
+        </>
+      ) : null}
+
+      <p className="text-[12px] leading-4 text-muted">
+        When due, DiskPilot permanently removes Recycle Bin items older than the age you set and
+        clears old temporary files through the same safety checks as a manual cleanup. Every run
+        is recorded in History.
+      </p>
+      <p className="text-[12px] leading-4 text-muted">
+        Last run:{" "}
+        <span
+          className="text-foreground"
+          title={settings.lastMaintenanceMs ? formatDate(settings.lastMaintenanceMs) : undefined}
+        >
+          {settings.lastMaintenanceMs ? formatRelative(settings.lastMaintenanceMs) : "Never"}
+        </span>
+      </p>
+    </div>
+  );
+}
+
+export function ExplorerIntegrationSettings() {
+  const [enabled, setEnabled] = useState<boolean | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [reloadKey, setReloadKey] = useState(0);
+
+  /* The switch reflects the registration actually in effect,
+     read from the shell — a failed read says so rather than
+     leaving the switch describing a guessed state. */
+  useEffect(() => {
+    let live = true;
+    api
+      .getExplorerIntegration()
+      .then((value) => {
+        if (!live) return;
+        setEnabled(value);
+        setLoadError(null);
+      })
+      .catch((err: unknown) => {
+        if (live) {
+          setLoadError(
+            err instanceof Error ? err.message : "The Explorer integration state could not be read.",
+          );
+        }
+      });
+    return () => {
+      live = false;
+    };
+  }, [reloadKey]);
+
+  const toggle = async (checked: boolean) => {
+    setBusy(true);
+    setActionError(null);
+    try {
+      await api.setExplorerIntegration(checked);
+      setEnabled(checked);
+    } catch (err) {
+      setActionError(
+        err instanceof Error ? err.message : "The Explorer integration could not be changed.",
+      );
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div>
+      <div className="flex items-center justify-between gap-4">
+        <span>
+          <span className="block text-[13px] font-medium text-foreground">Analyze with DiskPilot</span>
+          <span className="block text-[12px] leading-4 text-muted">
+            Adds &lsquo;Analyze with DiskPilot&rsquo; to the right-click menu for folders and
+            drives.
+          </span>
+        </span>
+        <Switch
+          checked={enabled ?? false}
+          disabled={enabled === null || busy}
+          onChange={(checked) => void toggle(checked)}
+          ariaLabel="Add Analyze with DiskPilot to the Explorer right-click menu"
+        />
+      </div>
+      {loadError ? (
+        <p role="alert" className="mt-2 flex items-center gap-2 text-[12px] text-critical">
+          {loadError}
+          <Button variant="subtle" size="sm" onClick={() => setReloadKey((n) => n + 1)}>
+            Retry
+          </Button>
+        </p>
+      ) : null}
+      {actionError ? (
+        <p role="alert" className="mt-2 text-[12px] text-critical">{actionError}</p>
+      ) : null}
+    </div>
+  );
+}
+
 export function UpdatesSettings() {
   const env = useAppStore((s) => s.env);
   const update = useAppStore((s) => s.update);
@@ -504,6 +704,13 @@ export function SettingsPage() {
         </Section>
 
         <Section
+          title="Automatic maintenance"
+          description="A standing cleanup with a strict age floor — off by default, and every run is recorded."
+        >
+          <MaintenanceSettings />
+        </Section>
+
+        <Section
           title="Saved searches"
           description="Plain-language searches bookmarked from the Storage page. They always run against the latest scan."
         >
@@ -538,6 +745,13 @@ export function SettingsPage() {
             <Trash2 className="size-4" aria-hidden="true" />
             Empty Recycle Bin…
           </Button>
+        </Section>
+
+        <Section
+          title="Explorer integration"
+          description="Right-click any folder or drive in Windows Explorer to scan it here."
+        >
+          <ExplorerIntegrationSettings />
         </Section>
 
         <Section title="About & updates">

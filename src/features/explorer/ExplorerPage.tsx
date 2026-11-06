@@ -17,6 +17,7 @@ import { ClassificationCard } from "@/components/shared/ClassificationCard";
 import { DetailsPanel, DetailRow } from "@/components/shared/DetailsPanel";
 import { EmptyState } from "@/components/shared/EmptyState";
 import { FreeUpSpaceDialog } from "@/components/shared/FreeUpSpaceDialog";
+import { MoveFolderDialog } from "@/components/shared/MoveFolderDialog";
 import { SizeBar } from "@/components/shared/SizeBar";
 import { SortHeader } from "@/components/shared/SortHeader";
 import { TierBadge } from "@/components/shared/TierBadge";
@@ -109,7 +110,10 @@ export function ExplorerView({
   const homeDir = useAppStore((s) => s.env?.homeDir);
   const recommendations = useAppStore((s) => s.recommendations);
   const setBanner = useAppStore((s) => s.setBanner);
+  const startScan = useAppStore((s) => s.startScan);
+  const finishedAtMs = useAppStore((s) => s.summary?.finishedAtMs);
   const [currentPath, setCurrentPath] = useState(rootPath);
+  const [movingRow, setMovingRow] = useState<ExplorerRow | null>(null);
   const [entries, setEntries] = useState<DirectoryEntry[] | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [query, setQuery] = useState("");
@@ -163,6 +167,16 @@ export function ExplorerView({
   useEffect(() => {
     void load(currentPath);
   }, [currentPath, load]);
+
+  /* A finished scan re-measures this folder (a folder move, for
+     one, asks for exactly that): reload the listing so the rows
+     never describe the pre-scan disk. */
+  const seenFinishedAtMs = useRef(finishedAtMs);
+  useEffect(() => {
+    if (seenFinishedAtMs.current === finishedAtMs) return;
+    seenFinishedAtMs.current = finishedAtMs;
+    void load(currentPath);
+  }, [finishedAtMs, currentPath, load]);
 
   const crumbs = useMemo(
     () => breadcrumbsBetween(rootPath, currentPath),
@@ -375,6 +389,9 @@ export function ExplorerView({
                 <th scope="col" className="px-3 py-2 text-right">
                   <SortHeader label="Size" sortKeyValue="size" activeKey={sortKey} direction={direction} onSort={onSort} align="right" />
                 </th>
+                <th scope="col" className="px-1 py-2">
+                  <span className="sr-only">Actions</span>
+                </th>
               </tr>
             </thead>
             <tbody>
@@ -433,12 +450,29 @@ export function ExplorerView({
                         className="mt-0.5"
                       />
                     </td>
+                    <td className="px-1 py-1">
+                      {/* Moving is offered for ordinary folders
+                          only: never for files, and never for
+                          system folders, which are report-only. */}
+                      {row.kind === "folder" && row.category !== "systemFiles" ? (
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            setMovingRow(row);
+                          }}
+                        >
+                          Move…
+                        </Button>
+                      ) : null}
+                    </td>
                   </tr>
                 );
               })}
               {entries !== null && rows.length > ROW_RENDER_CAP ? (
                 <tr>
-                  <td colSpan={4} className="px-3 py-2 text-center text-[12px] text-muted">
+                  <td colSpan={5} className="px-3 py-2 text-center text-[12px] text-muted">
                     Showing the first {formatCount(ROW_RENDER_CAP)} of {formatCount(rows.length)} items —
                     refine by opening a subfolder.
                   </td>
@@ -446,7 +480,7 @@ export function ExplorerView({
               ) : null}
               {entries !== null && rows.length === 0 ? (
                 <tr>
-                  <td colSpan={4} className="px-3 py-8 text-center text-[12px] text-muted">
+                  <td colSpan={5} className="px-3 py-8 text-center text-[12px] text-muted">
                     {entries.length === 0
                       ? "This folder is empty in the scan index."
                       : "No items match"}
@@ -455,7 +489,7 @@ export function ExplorerView({
               ) : null}
               {entries === null ? (
                 <tr>
-                  <td colSpan={4} className="px-3 py-8 text-center text-[12px] text-muted">
+                  <td colSpan={5} className="px-3 py-8 text-center text-[12px] text-muted">
                     Loading folder…
                   </td>
                 </tr>
@@ -529,6 +563,20 @@ export function ExplorerView({
             </div>
           ) : null}
         </DetailsPanel>
+      ) : null}
+
+      {movingRow ? (
+        <MoveFolderDialog
+          sourcePath={movingRow.path}
+          sourceBytes={movingRow.bytes}
+          onClose={() => setMovingRow(null)}
+          onMoved={() => {
+            /* The scan root is rescanned so the index describes
+               the post-move disk; the listing reloads when that
+               scan finishes (see the finishedAtMs effect). */
+            void startScan(rootPath);
+          }}
+        />
       ) : null}
 
       {cloud && selected && selectedInCloud ? (

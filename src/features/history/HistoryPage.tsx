@@ -4,13 +4,14 @@ import * as api from "@/lib/api";
 import { useAppStore } from "@/lib/store";
 import { displayPath, formatBytes, formatDate } from "@/lib/format";
 import { historyDetail, operationTitle } from "@/lib/history";
-import type { HistoryEntry, RestoreCleanupRunResult } from "@/lib/types";
+import type { HistoryEntry, RelocateResult, RestoreCleanupRunResult } from "@/lib/types";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { Input } from "@/components/ui/input";
 import { SkeletonRows } from "@/components/ui/skeleton";
 import { CopyButton } from "@/components/shared/CopyButton";
 import { EmptyState } from "@/components/shared/EmptyState";
 import { RestoreRunAction } from "./RestoreRunAction";
+import { UndoMoveAction } from "./UndoMoveAction";
 
 export function CleanupHistory({
   entries,
@@ -24,6 +25,8 @@ export function CleanupHistory({
   /* Restore outcomes live here, not in the row: refreshing the
      entries after a restore must not unmount the result. */
   const [restoreResults, setRestoreResults] = useState<Record<number, RestoreCleanupRunResult>>({});
+  /* Same holding pattern for relocation undos. */
+  const [relocateResults, setRelocateResults] = useState<Record<number, RelocateResult>>({});
   const total = entries.reduce((acc, e) => acc + e.reclaimedBytes, 0);
   return (
     <div>
@@ -51,6 +54,14 @@ export function CleanupHistory({
               ) : detail?.kind === "reference" ? (
                 <p className="mt-1 pl-[26px] text-[11px] leading-[14px] text-subtle">{detail.label}</p>
               ) : null}
+              {entry.operation === "relocate" && entry.paths.length >= 2 ? (
+                <p className="mt-1 pl-[26px] text-[12px] leading-4 text-muted">
+                  Moved to{" "}
+                  <span className="mono-path" title={entry.paths[1]}>
+                    {displayPath(entry.paths[1], homeDir)}
+                  </span>
+                </p>
+              ) : null}
               {entry.paths.length > 0 ? (
                 <ul className="mt-1 space-y-0.5 pl-[26px]">
                   {entry.paths.slice(0, 6).map((path) => (
@@ -75,6 +86,19 @@ export function CleanupHistory({
                     result={restoreResults[entry.id] ?? null}
                     onCompleted={(result) => {
                       setRestoreResults((prev) => ({ ...prev, [entry.id]: result }));
+                      onRefresh?.();
+                    }}
+                  />
+                </div>
+              ) : null}
+              {(entry.operation === "relocate" && entry.paths.length >= 2) ||
+              relocateResults[entry.id] ? (
+                <div className="mt-2 pl-[26px]">
+                  <UndoMoveAction
+                    entry={entry}
+                    result={relocateResults[entry.id] ?? null}
+                    onCompleted={(result) => {
+                      setRelocateResults((prev) => ({ ...prev, [entry.id]: result }));
                       onRefresh?.();
                     }}
                   />

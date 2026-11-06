@@ -27,6 +27,7 @@ import type {
   CleanupResult,
   Recommendation,
 } from "@/lib/types";
+import { AppJunkSection } from "@/features/recommendations/AppJunkSection";
 import { CompressSaveSection } from "@/features/recommendations/CompressSaveSection";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { Button } from "@/components/ui/button";
@@ -599,9 +600,11 @@ export function RecommendationsPage() {
           </>
         )}
 
-        {/* Below the cleanup content proper: compression is a
-            different offer (nothing is removed), and the section
-            hides itself when the scan found nothing to compress. */}
+        {/* Below the cleanup content proper: app caches are
+            measured live (not from the scan) and compression is a
+            different offer (nothing is removed). Both sections
+            hide themselves when there is nothing to offer. */}
+        <AppJunkSection />
         <CompressSaveSection />
       </div>
 

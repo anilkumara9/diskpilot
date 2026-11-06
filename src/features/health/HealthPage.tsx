@@ -17,6 +17,7 @@ import type {
   ScanHistoryEntry,
   SpaceForecast,
 } from "@/lib/types";
+import { DriveHealthSection } from "@/features/health/DriveHealthSection";
 import { sameRootPath } from "@/features/overview/OverviewPage";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { Chart, type ChartSeries } from "@/components/Chart";
@@ -315,6 +316,10 @@ export function HealthPage() {
             </div>
           )}
         </Section>
+
+        {/* Below the forecast: the drives' physical health, as
+            opposed to the space trend above. */}
+        <DriveHealthSection />
 
         <Section
           title="Watch"

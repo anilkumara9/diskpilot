@@ -1,5 +1,6 @@
-import { lazy, Suspense, useEffect } from "react";
+import { lazy, Suspense, useEffect, useRef } from "react";
 import { AlertTriangle, CheckCircle2, Info, MonitorX, X } from "lucide-react";
+import * as api from "@/lib/api";
 import { useAppStore } from "@/lib/store";
 import { shouldShowWelcome } from "@/lib/welcome";
 import { watchSystemTheme } from "@/lib/theme";
@@ -152,10 +153,46 @@ export default function App() {
   const init = useAppStore((s) => s.init);
   const recycleBinOpen = useAppStore((s) => s.recycleBinOpen);
   const setRecycleBinOpen = useAppStore((s) => s.setRecycleBinOpen);
+  const startScan = useAppStore((s) => s.startScan);
+  const updateSettings = useAppStore((s) => s.updateSettings);
 
   useEffect(() => {
     void init();
   }, [init]);
+
+  /* Launch intent (main window only — the Quick Search window
+     renders its own root and never mounts this component): a
+     folder handed over by Explorer's "Analyze with DiskPilot"
+     becomes the scan root and scans immediately, through the same
+     two store actions the Overview's drive chips use. Consumed
+     once per path per session, so a re-delivered event (or a
+     StrictMode double effect) cannot start a second scan. */
+  const consumedIntents = useRef<ReadonlySet<string>>(new Set());
+  useEffect(() => {
+    if (!ready || !inDesktop) return;
+    let live = true;
+    const consume = async () => {
+      try {
+        const path = await api.getLaunchIntent();
+        if (!live || !path || consumedIntents.current.has(path)) return;
+        consumedIntents.current = new Set(consumedIntents.current).add(path);
+        await updateSettings({ scanRoot: path });
+        await startScan(path);
+      } catch {
+        /* A failed intent read must never break startup; the
+           app simply opens normally. */
+      }
+    };
+    void consume();
+    let unlisten: (() => void) | undefined;
+    void api.onLaunchScan(() => void consume()).then((u) => {
+      unlisten = u;
+    });
+    return () => {
+      live = false;
+      unlisten?.();
+    };
+  }, [ready, inDesktop, startScan, updateSettings]);
 
   useEffect(() => watchSystemTheme(() => useAppStore.getState().settings.theme), []);
 

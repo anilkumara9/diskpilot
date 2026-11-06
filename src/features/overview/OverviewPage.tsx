@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import {
   ArrowRight,
   Bot,
+  ChevronDown,
   Cloud,
   FileDown,
   FolderLock,
@@ -33,7 +34,8 @@ import type {
   ScanSummary,
   SpaceForecast,
 } from "@/lib/types";
-import { Button } from "@/components/ui/button";
+import { Button, buttonVariants } from "@/components/ui/button";
+import { Menu } from "@/components/ui/menu";
 import { Section } from "@/components/ui/section";
 import { Tooltip } from "@/components/ui/tooltip";
 import { Chart, type ChartSeries } from "@/components/Chart";
@@ -773,6 +775,7 @@ export function OverviewPage() {
   const [changes, setChanges] = useState<BiggestChanges | null>(null);
   const [cloud, setCloud] = useState<CloudStatus | null>(null);
   const [exporting, setExporting] = useState(false);
+  const [exportingCsv, setExportingCsv] = useState<"files" | "categories" | null>(null);
   const [watchError, setWatchError] = useState(false);
   const [watchReload, setWatchReload] = useState(0);
 
@@ -842,6 +845,27 @@ export function OverviewPage() {
     }
   };
 
+  /* CSV export follows the report's exact feedback contract: a
+     saved path earns a success banner, a cancelled save dialog
+     stays silent, a failed save is an error banner. */
+  const exportCsv = async (kind: "files" | "categories") => {
+    if (!summary || exportingCsv) return;
+    setExportingCsv(kind);
+    try {
+      const path = await api.exportScanCsv(kind);
+      if (path) {
+        setBanner({ kind: "success", message: `CSV saved to ${path}` });
+      }
+    } catch (err) {
+      setBanner({
+        kind: "error",
+        message: `The CSV could not be saved${err instanceof Error ? `: ${err.message}` : "."}`,
+      });
+    } finally {
+      setExportingCsv(null);
+    }
+  };
+
   return (
     <div className="h-full overflow-y-auto px-6 py-6">
       <div className="max-w-[880px]">
@@ -856,6 +880,32 @@ export function OverviewPage() {
                 <FileDown className="size-4" aria-hidden="true" />
                 {exporting ? "Exporting…" : "Export report"}
               </Button>
+            ) : null}
+            {summary ? (
+              <Menu
+                label="Export CSV"
+                trigger={
+                  <span className={buttonVariants({ variant: "secondary" })}>
+                    <FileDown className="size-4" aria-hidden="true" />
+                    {exportingCsv ? "Exporting…" : "Export CSV"}
+                    <ChevronDown className="size-3.5" aria-hidden="true" />
+                  </span>
+                }
+                items={[
+                  {
+                    id: "files",
+                    label: "Files CSV",
+                    disabled: exportingCsv !== null,
+                    onSelect: () => void exportCsv("files"),
+                  },
+                  {
+                    id: "categories",
+                    label: "Categories CSV",
+                    disabled: exportingCsv !== null,
+                    onSelect: () => void exportCsv("categories"),
+                  },
+                ]}
+              />
             ) : null}
             <ScanControl />
           </div>
