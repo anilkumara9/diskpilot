@@ -246,36 +246,66 @@ separated from the nav by a hairline and 12 px of air.
   renders as a danger-tinted callout (callout spec, critical tint)
   with a Retry action that resends the last message without
   duplicating it.
-- **Drives strip** — one compact card per drive on the Overview
-  (10 px radius, hairline border, `panel-raised` fill): drive label,
-  a 6 px used-space bar in accent, and "{free} free of {total}" in
-  tabular figures. The scan root's card is labelled, never given an
-  action; every other drive gets a subtle "Scan" button. The strip
-  hides itself when the only drive is the scan root's.
+- **Page toolbar** — mode switches and page-level actions (the
+  Duplicates view switch and Review button, the Storage tabs) sit
+  on a toolbar row under the page header, never inside it — so a
+  header description always takes the full column width and wraps
+  in balanced lines, never around the controls.
+- **Overview composition** — one hierarchy, in order: the Display
+  headline with the page's actions on its row; the meta line
+  (drive · total · scan age) on its own full-width line beneath —
+  it never wraps, the drive name truncates instead; the storage
+  strip and its legend; the figures row; Since last scan (with
+  Biggest changes as its panelled sub-section); Forecast; Drives;
+  Start here; Where space goes; Largest consumers; notices;
+  Scan details. New content joins this order — it never inserts
+  itself above the strip.
+- **Drives** — a quiet section after Forecast: one hairline row per
+  drive (drive icon, label, a 4 px Size bar in accent, "{free} free
+  of {total}" in tabular figures, and a trailing action column).
+  The scan root's row is labelled "Scan root"; every other drive
+  gets a subtle "Scan" button. No panels — the rows are a footnote
+  to the figures above. The section hides itself when the only
+  drive is the scan root's.
 - **Forecast card** — the Since-last-scan callout spec, looking
-  forward: a 15 px semibold headline ("fills in about N days", or the
-  flat/shrinking wording when there is no fill-up date), a 12 px
-  muted explanation with the daily rate and projected date, and the
-  scan-history sparkline on the right — an accent polyline (1.5 px)
-  over a dashed `border-strong` baseline, no axes, no fill.
-- **Biggest changes** — two compact lists inside the Since-last-scan
-  section, "Grew most" and "Freed": name over a `mono-path` trimmed
-  path, signed delta right-aligned — review-tier colour for growth,
-  safe-tier green for freed space. A list renders only when it has
-  rows.
+  forward: a label row, a 15 px semibold headline ("fills in about
+  N days", or the flat/shrinking wording when there is no fill-up
+  date), a 12 px muted explanation with the daily rate and
+  projected date — then the scan-history sparkline spanning the
+  card's full width beneath the text (~48 px tall): an accent
+  polyline (1.5 px) over a dashed `border-strong` baseline with a
+  10 % accent area fill, no axes.
+- **Biggest changes** — a callout panel inside the Since-last-scan
+  section, titled "Biggest changes", holding two lists with muted
+  sub-headers, "Grew most" and "Freed": name over a `mono-path`
+  trimmed path, signed delta right-aligned — review-tier colour
+  for growth, safe-tier green for freed space. A list renders only
+  when it has rows.
 - **Cloud card** — a notice-row (callout spec) with a cloud icon: how
   much the provider keeps on this PC, its file count and folder, and
   a "Free up space" action. The confirmation dialog states the
   contract in plain words — files stay in the cloud, re-download when
   opened, nothing is deleted — before the single primary action.
 - **Treemap (Storage Map)** — the current folder level as
-  proportional blocks inside a 10 px-radius panel. Blocks take their
-  category colour as a 26 % tint with a 55 % border of the same
-  colour (colour-mix over tokens, never raw hex), 2 px gaps, name at
-  12 px medium and size at 11 px tabular when the block is big
-  enough, otherwise the tooltip carries both. Folders open on click;
-  files select into the inspector; the aggregate "more files" block
-  is inert. Selection is an inset accent ring.
+  proportional blocks inside a framed surface (hairline border,
+  10 px radius, page background showing through the gaps). A level
+  earns blocks by size: entries show until 140 blocks or 99.5 % of
+  the level's bytes are covered; the rest fold into one aggregate.
+  Blocks are filled with their category colour mixed into the
+  panel colour at the `--map-tint` strength (22 % light, 33 %
+  dark); neighbouring blocks of the same category alternate a
+  ±4-point tint step so individual files read as distinct tiles.
+  No per-block borders — 2 px gaps and a 4 px radius do the
+  separation. Labels: name at 12 px medium with the size at 11 px
+  muted beneath, only when the block fits them (≥ 64 px wide,
+  ≥ 30 px / 46 px tall), otherwise the tooltip carries both. The
+  aggregate is a waffle — a grid of small neutral cells, one per
+  folded item up to 400, with its label on a translucent panel
+  chip — so a long tail reads as many small files, never an empty
+  slab; it is inert. Folders open on click; files select into the
+  inspector. Selection is an inset accent ring. Navigation is the
+  explorer's breadcrumb: an up-level ghost button, quiet ancestor
+  buttons, and the current folder as a raised chip.
 - **Preview inspector** — the explorer's details panel: facts first
   (size, type, category), then a Media section for images (dimensions,
   camera, capture date from EXIF, each shown only when the file
@@ -289,10 +319,17 @@ separated from the nav by a hairline and 12 px of air.
   `selected` background; the footer states the match count and the
   key hints). Empty states follow the standard spec, scaled to the
   panel.
+- **Settings rows** — one control column for the whole page:
+  right-hand controls share a right edge; selects are 160 px
+  (schedule, theme, provider alike); toggles sit at the same right
+  edge; full-width fields (scan root, exclusions, API key) span the
+  column. Labels on the left, descriptions under them in muted
+  12 px — a row never stacks its control under its label.
 - **Watch settings** — a Settings section in the standard row form:
-  the schedule select, the two alert thresholds as number fields with
-  their unit ("GB", "GB between checks") sitting beside the input in
-  muted text, and the sign-in toggle reflecting the registration the
+  the schedule select, the two alert thresholds as number fields in
+  a fixed structure (96 px input, unit in a fixed 132 px span —
+  "GB", "GB between checks" — so both inputs share left and right
+  edges), and the sign-in toggle reflecting the registration the
   shell reports, not the last click.
 - **Guided cleanup items** — recommendations another tool owns
   (Windows.old) render with no checkbox, a muted "Guided" tag beside
