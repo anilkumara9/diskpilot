@@ -106,6 +106,12 @@ pub struct Settings {
     /// the due check in the core is computed against this stamp.
     #[serde(default)]
     pub last_maintenance_ms: Option<i64>,
+    /// Whether the sidebar is in its collapsed (icon rail) mode.
+    /// Persisted here so the choice survives restarts natively;
+    /// `#[serde(default)]` keeps settings files written before the
+    /// collapsible sidebar existed loading as expanded.
+    #[serde(default)]
+    pub sidebar_collapsed: bool,
 }
 
 /// Automatic-maintenance preferences, persisted inside
@@ -182,6 +188,7 @@ impl Default for Settings {
             live_index: default_live_index(),
             auto_maintenance: AutoMaintenanceSettings::default(),
             last_maintenance_ms: None,
+            sidebar_collapsed: false,
         }
     }
 }
@@ -638,5 +645,33 @@ mod tests {
             .map(|s| s.to_string())
             .collect();
         assert_eq!(scan_path_from_args(&empty), None);
+    }
+
+    #[test]
+    fn settings_round_trip_preserves_sidebar_collapsed() {
+        let settings = Settings {
+            sidebar_collapsed: true,
+            ..Settings::default()
+        };
+        let text = serde_json::to_string(&settings).expect("settings serialize");
+        assert!(
+            text.contains("\"sidebarCollapsed\":true"),
+            "serialized settings must carry the camelCase key: {text}"
+        );
+        let restored: Settings = serde_json::from_str(&text).expect("settings deserialize");
+        assert!(restored.sidebar_collapsed);
+    }
+
+    #[test]
+    fn settings_without_sidebar_collapsed_key_load_expanded() {
+        let mut value: serde_json::Value =
+            serde_json::to_value(Settings::default()).expect("settings to value");
+        value
+            .as_object_mut()
+            .expect("settings are a JSON object")
+            .remove("sidebarCollapsed");
+        let restored: Settings =
+            serde_json::from_value(value).expect("older settings file must still load");
+        assert!(!restored.sidebar_collapsed);
     }
 }
