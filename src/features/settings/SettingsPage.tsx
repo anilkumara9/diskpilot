@@ -24,9 +24,21 @@ export function AssistantSettings() {
   const [hasKey, setHasKey] = useState(false);
   const [keyStatus, setKeyStatus] = useState<string | null>(null);
 
+  /* The key status belongs to ONE provider: switching providers
+     resets the draft and any status text, then refetches — the UI
+     must never describe Anthropic's saved key while OpenAI is
+     selected. A failed read says so instead of claiming "no key". */
   useEffect(() => {
     let live = true;
-    void api.hasApiKey(settings.assistantProvider).then((value) => { if (live) setHasKey(value); });
+    setKeyDraft("");
+    setKeyStatus(null);
+    setHasKey(false);
+    void api
+      .hasApiKey(settings.assistantProvider)
+      .then((value) => { if (live) setHasKey(value); })
+      .catch(() => {
+        if (live) setKeyStatus("The saved-key status could not be read from Windows Credential Manager.");
+      });
     return () => { live = false; };
   }, [settings.assistantProvider]);
 
@@ -137,7 +149,8 @@ export function ExclusionsSettings() {
   }, [settings.exclusions, dirty]);
 
   const save = async () => {
-    await updateSettings({ exclusions: parsed });
+    const persisted = await updateSettings({ exclusions: parsed });
+    if (!persisted) return; // the page-level save error explains
     setDraft(exclusionsToText(parsed));
     setSaved(true);
     window.setTimeout(() => setSaved(false), 1600);
@@ -339,6 +352,7 @@ export function SettingsPage() {
   const env = useAppStore((s) => s.env);
   const homeDir = useAppStore((s) => s.env?.homeDir);
   const updateSettings = useAppStore((s) => s.updateSettings);
+  const settingsSaveError = useAppStore((s) => s.settingsSaveError);
   const setRecycleBinOpen = useAppStore((s) => s.setRecycleBinOpen);
 
   const pickRoot = async () => {
@@ -350,6 +364,13 @@ export function SettingsPage() {
     <div className="h-full overflow-y-auto px-6 py-6">
       <div className="max-w-[760px]">
         <PageHeader title="Settings" subtitle="Scanning, appearance, the optional assistant, and safety notes." showScanControl={false} />
+
+        {settingsSaveError ? (
+          <p role="alert" className="mb-4 flex items-center gap-2 rounded-[10px] border border-critical/30 bg-critical/10 px-4 py-3 text-[12px] leading-4 text-critical">
+            <ShieldAlert className="size-4 shrink-0" aria-hidden="true" />
+            Couldn&rsquo;t save — your change will not persist. ({settingsSaveError})
+          </p>
+        ) : null}
 
         <Section title="Scanning" description="The scan root is measured read-only. The default is your user profile folder.">
           <div className="flex items-center gap-2">

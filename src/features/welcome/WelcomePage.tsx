@@ -56,13 +56,21 @@ export function WelcomePage() {
   const startScan = useAppStore((s) => s.startScan);
 
   const [rootDraft, setRootDraft] = useState(settings.scanRoot);
-  const [scheduleDraft, setScheduleDraft] = useState<AutoScanSchedule>(settings.autoScan);
+  /* The page's pitch is "get warned before the disk fills", so the
+     schedule draft starts at Daily — an untouched draft must not
+     silently mean "no watch at all". A schedule the user already
+     chose (weekly) is respected; only the never-configured "off"
+     becomes Daily. The global settings default is unchanged. */
+  const [scheduleDraft, setScheduleDraft] = useState<AutoScanSchedule>(
+    settings.autoScan === "off" ? "daily" : settings.autoScan,
+  );
   const [lowDraft, setLowDraft] = useState(() => String(settings.lowSpaceAlertGb));
   const [growthDraft, setGrowthDraft] = useState(() => String(settings.growthAlertGb));
   /* The sign-in toggle starts from the registration actually in
      effect, exactly as in Settings; null until the shell answers. */
   const [autostartDraft, setAutostartDraft] = useState<boolean | null>(null);
   const [busy, setBusy] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
 
   useEffect(() => {
     let live = true;
@@ -81,12 +89,17 @@ export function WelcomePage() {
 
   const startFirstScan = async () => {
     setBusy(true);
+    setSaveError(null);
     let autoStart = settings.autoStart;
     const wantedAutostart = autostartDraft ?? settings.autoStart;
     if (wantedAutostart !== settings.autoStart) {
       autoStart = await api.setAutostart(wantedAutostart);
     }
-    await updateSettings({
+    /* A failed save must not silently proceed: `onboarded` is what
+       dismisses this page, so leaving on a failed save would strand
+       the user's choices AND their only route back here. Stay, and
+       say why. */
+    const saved = await updateSettings({
       onboarded: true,
       scanRoot: rootDraft,
       autoScan: scheduleDraft,
@@ -94,13 +107,24 @@ export function WelcomePage() {
       growthAlertGb: parseThreshold(growthDraft, settings.growthAlertGb),
       autoStart,
     });
+    if (!saved) {
+      setSaveError("Your setup couldn't be saved — please try again. Nothing was changed.");
+      setBusy(false);
+      return;
+    }
     navigate("overview");
     await startScan();
   };
 
   const skip = async () => {
     setBusy(true);
-    await updateSettings({ onboarded: true });
+    setSaveError(null);
+    const saved = await updateSettings({ onboarded: true });
+    if (!saved) {
+      setSaveError("Setup couldn't be marked as finished — please try again.");
+      setBusy(false);
+      return;
+    }
     navigate("overview");
   };
 
@@ -243,18 +267,25 @@ export function WelcomePage() {
             </div>
           </Section>
 
-          <div className="mt-9 flex items-center gap-3 border-t border-border pt-5">
-            <Button
-              size="lg"
-              variant="primary"
-              disabled={busy || !rootDraft}
-              onClick={() => void startFirstScan()}
-            >
-              Start first scan
-            </Button>
-            <Button variant="ghost" disabled={busy} onClick={() => void skip()}>
-              Skip setup
-            </Button>
+          <div className="mt-9 border-t border-border pt-5">
+            {saveError ? (
+              <p role="alert" className="pb-3 text-[12px] leading-4 text-critical">
+                {saveError}
+              </p>
+            ) : null}
+            <div className="flex items-center gap-3">
+              <Button
+                size="lg"
+                variant="primary"
+                disabled={busy || !rootDraft}
+                onClick={() => void startFirstScan()}
+              >
+                Start first scan
+              </Button>
+              <Button variant="ghost" disabled={busy} onClick={() => void skip()}>
+                Skip setup
+              </Button>
+            </div>
           </div>
         </div>
       </div>
