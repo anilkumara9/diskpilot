@@ -147,7 +147,7 @@ Sidebar header: logo mark (indigo rounded square with a white gauge
 glyph) + "DiskPilot" at 13 px semibold. Top-level items: Overview,
 Health. Groups: **Analyze** — Storage, Media, Duplicates, Downloads,
 Assistant (only when enabled in Settings); **System** — Applications,
-Games, Developer Tools, Docker; **Clean up** — Cleanup (with a
+Games, Startup, Developer Tools, Docker; **Clean up** — Cleanup (with a
 trailing count of actionable recommendations), History. The footer,
 above a hairline, shows scan status (not scanned yet / scanning with an
 indeterminate bar and the current path in 11 px mono / scanned
@@ -470,6 +470,76 @@ separated from the nav by a hairline and 12 px of air.
   with the explanatory alert in the body. Plans are single-use
   and expire after 10 minutes, as the dialog's description
   states.
+- **Switch** — the house toggle for controls that ARE a state:
+  a 32×18 pill track (neutral `selected` grey with a hairline
+  ring off, accent fill on) and a 14 px white knob with a soft
+  shadow, 120 ms transitions throughout. A button with
+  `role="switch"` and `aria-checked`, labelled by the thing it
+  controls. Settings keep their checkbox rows; the switch is
+  for per-item state like Startup entries.
+- **Startup page** — System group; reads the registry Run keys
+  and Startup folders at mount (scan-independent) and re-reads
+  after every toggle. Figure row: Entries / Enabled /
+  Disabled. Entries group by source under "Registry — current
+  user", "Registry — all users", "Startup folder — current
+  user", "Startup folder — all users"; empty groups are
+  omitted. A row is the entry name, its command in mono-path
+  beneath, the target's size when it resolves to a file, a
+  warn marker tag "Target not found" when it does not, and the
+  switch at the right. The switch moves optimistically; a
+  failure reverts it and reports the shell's message as a
+  page-level alert — an entry never looks changed when Windows
+  did not change it. A footer callout carries the honesty
+  note: disabling is reversible and restores exactly, and
+  machine-wide entries need administrator rights. No entries
+  is the medallion empty state ("Nothing opens at sign-in");
+  a failed read is the error state with Retry, never the
+  empty state.
+- **Compress & save** — a section at the foot of the Cleanup
+  page, below the cards and tier groups: large, long-untouched
+  folders the shell offers for NTFS compression. The
+  description states the terms up front (compressed in place;
+  nothing deleted; apps keep working; undo any time). A row is
+  the folder name and path, file count and an "Untouched for
+  N months" age derived from the newest change inside it, its
+  allocated size, and a Compress button. Compress asks first,
+  in the house dialog: what will happen, that large folders
+  can take a while, that it is reversible — plus the folder's
+  size and file count in the footer. The outcome lands in the
+  row: success reads "Compressed — Windows will report the
+  smaller size on the next scan"; failure shows the shell's
+  reason as an alert line. Folders compressed from the page
+  keep their row for the session, badged "Compressed in this
+  session" with a Decompress action — the badge claims
+  exactly that and nothing wider. Already-compressed folders
+  never appear as candidates, and when there are none the
+  section is not rendered at all; a failed candidate read
+  renders the section with an error note and Retry instead of
+  hiding.
+- **Duplicates smart-select bar** — above the exact-copies
+  group list, when groups exist: the label "Select copies:",
+  the rule buttons "Keep newest", "Keep oldest", "Keep
+  shortest path" and "Clear", and the live reclaimable total
+  at the right in the inode-aware figure the review dialog
+  uses. A rule picks a keeper in every group (the rule's key,
+  ties to the lexicographically smallest path — deterministic)
+  and selects every other copy, hard-link copies included;
+  keepers and selection update together, so a keeper is never
+  selected. The bar only builds a selection: the review
+  dialog and byte-for-byte re-verification still stand
+  between it and the Recycle Bin.
+- **Storage Types view** — a fourth Storage tab ("Types"),
+  same tab strip and arrow-key model. Figure row: File
+  types, Largest type (label and size together), Coverage of
+  top 10 against the scan's total bytes. Rows are hairline
+  divided, capped at 50 with a "Showing the 50 largest types"
+  note when the scan has more: the extension as a mono chip
+  (spelled out "(no extension)" for files with none), the
+  file count, the size bar against the largest type at 4 px,
+  and the allocated bytes. A row expands inline to the type's
+  largest files — name, path caption, size, Reveal — fetched
+  on first expansion. With no scan, the view shows the
+  standard Storage empty state like Folders and Map.
 
 ## Charts
 
