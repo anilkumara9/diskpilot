@@ -1,6 +1,7 @@
 import {
   useCallback,
   useEffect,
+  useId,
   useRef,
   type ReactNode,
 } from "react";
@@ -20,6 +21,18 @@ export interface DialogProps {
   dismissible?: boolean;
 }
 
+const FOCUSABLE_SELECTOR =
+  "button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), a[href], [tabindex]:not([tabindex='-1'])";
+
+/**
+ * Stack of currently open dialogs (their registry ids, in open
+ * order). Keyboard handling — Escape and the Tab trap — belongs to
+ * the TOPMOST dialog only: with two dialogs stacked, one Escape
+ * closes one dialog, and Tab can never wander into the dialog (or
+ * page) underneath.
+ */
+const openDialogs: string[] = [];
+
 export function Dialog({
   open,
   onClose,
@@ -31,17 +44,50 @@ export function Dialog({
   dismissible = true,
 }: DialogProps) {
   const panelRef = useRef<HTMLDivElement>(null);
+  const registryId = useId();
   const titleId = useRef(`dlg-${Math.random().toString(36).slice(2, 9)}`).current;
 
   const handleKey = useCallback(
     (event: KeyboardEvent) => {
-      if (event.key === "Escape" && dismissible) onClose();
+      if (openDialogs[openDialogs.length - 1] !== registryId) return;
+      if (event.key === "Escape") {
+        if (dismissible) onClose();
+        return;
+      }
+      if (event.key !== "Tab") return;
+      /* Focus trap: Tab cycles within the panel. Focus that somehow
+         sits outside the panel (or on the panel itself) is pulled
+         to the first/last focusable element instead of escaping. */
+      const panel = panelRef.current;
+      if (!panel) return;
+      const focusable = [...panel.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR)].filter(
+        (el) => el.offsetParent !== null || el === document.activeElement,
+      );
+      if (focusable.length === 0) {
+        event.preventDefault();
+        panel.focus();
+        return;
+      }
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      const active = document.activeElement as HTMLElement | null;
+      const inside = active !== null && panel.contains(active);
+      if (event.shiftKey) {
+        if (!inside || active === first || active === panel) {
+          event.preventDefault();
+          last.focus();
+        }
+      } else if (!inside || active === last || active === panel) {
+        event.preventDefault();
+        first.focus();
+      }
     },
-    [onClose, dismissible],
+    [onClose, dismissible, registryId],
   );
 
   useEffect(() => {
     if (!open) return;
+    openDialogs.push(registryId);
     document.addEventListener("keydown", handleKey);
     const previous = document.activeElement as HTMLElement | null;
     const timer = window.setTimeout(() => {
@@ -51,11 +97,13 @@ export function Dialog({
       (focusable ?? panelRef.current)?.focus();
     }, 30);
     return () => {
+      const index = openDialogs.indexOf(registryId);
+      if (index >= 0) openDialogs.splice(index, 1);
       document.removeEventListener("keydown", handleKey);
       window.clearTimeout(timer);
       previous?.focus?.();
     };
-  }, [open, handleKey]);
+  }, [open, handleKey, registryId]);
 
   if (!open) return null;
 

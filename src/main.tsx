@@ -2,6 +2,7 @@ import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import App from "./App";
 import QuickSearchApp from "./pages/QuickSearch";
+import { ErrorBoundary } from "./components/ErrorBoundary";
 import { applyTheme } from "./lib/theme";
 import "./styles/globals.css";
 
@@ -20,5 +21,7 @@ const rootElement = document.getElementById("root");
 if (!rootElement) throw new Error("Root element #root was not found.");
 
 createRoot(rootElement).render(
-  <StrictMode>{isQuickSearch ? <QuickSearchApp /> : <App />}</StrictMode>,
+  <StrictMode>
+    <ErrorBoundary>{isQuickSearch ? <QuickSearchApp /> : <App />}</ErrorBoundary>
+  </StrictMode>,
 );
