@@ -61,24 +61,32 @@ function requireDesktop(): void {
   }
 }
 
+/**
+ * Read-command contract (error honesty): a wrapper returns the
+ * command's own result — including a legitimate `null` where the
+ * shell uses one ("no scan yet", "no cloud folder") — and THROWS
+ * when the invoke itself fails. A failed command must never
+ * masquerade as an empty list or a missing feature on a page.
+ * Off-desktop (plain browser) the wrappers keep returning their
+ * empty defaults, since there is no shell to fail against.
+ *
+ * Deliberate exceptions, all fire-and-forget or state probes whose
+ * failure has no page to report to: `cancelScan`,
+ * `cancelEmptyRecycleBin`, and the autostart probes
+ * (`getAutostart`/`setAutostart` resolve the state now in effect;
+ * a failed probe reports "off" and is re-read on the next mount).
+ */
+
 /* ---------- Environment & disk ---------- */
 
 export async function getEnvironment(): Promise<EnvironmentInfo | null> {
   if (!inDesktopApp()) return null;
-  try {
-    return await invoke<EnvironmentInfo>("get_environment");
-  } catch {
-    return null;
-  }
+  return invoke<EnvironmentInfo | null>("get_environment");
 }
 
 export async function getDiskInfo(root?: string): Promise<DiskInfo | null> {
   if (!inDesktopApp()) return null;
-  try {
-    return await invoke<DiskInfo>("get_disk_info", root ? { path: root } : undefined);
-  } catch {
-    return null;
-  }
+  return invoke<DiskInfo | null>("get_disk_info", root ? { path: root } : undefined);
 }
 
 /* ---------- Scanning ---------- */
@@ -97,34 +105,23 @@ export async function cancelScan(): Promise<void> {
   }
 }
 
+/** The latest scan's summary; null when no scan has run yet. */
 export async function getScanSummary(): Promise<ScanSummary | null> {
   if (!inDesktopApp()) return null;
-  try {
-    return await invoke<ScanSummary | null>("get_scan_summary");
-  } catch {
-    return null;
-  }
+  return invoke<ScanSummary | null>("get_scan_summary");
 }
 
 /** Current scan vs. the previous scan of the same root; null when
     there is no previous scan or the root changed. */
 export async function getScanComparison(): Promise<ScanComparison | null> {
   if (!inDesktopApp()) return null;
-  try {
-    return await invoke<ScanComparison | null>("get_scan_comparison");
-  } catch {
-    return null;
-  }
+  return invoke<ScanComparison | null>("get_scan_comparison");
 }
 
 /** Every drive on this PC with its capacity and free space. */
 export async function getDrives(): Promise<DriveInfo[]> {
   if (!inDesktopApp()) return [];
-  try {
-    return await invoke<DriveInfo[]>("get_drives");
-  } catch {
-    return [];
-  }
+  return invoke<DriveInfo[]>("get_drives");
 }
 
 /* ---------- Watch: history, forecast, biggest changes ---------- */
@@ -132,51 +129,32 @@ export async function getDrives(): Promise<DriveInfo[]> {
 /** The persisted scan time series, oldest first. */
 export async function getScanHistory(): Promise<ScanHistoryEntry[]> {
   if (!inDesktopApp()) return [];
-  try {
-    return await invoke<ScanHistoryEntry[]>("get_scan_history");
-  } catch {
-    return [];
-  }
+  return invoke<ScanHistoryEntry[]>("get_scan_history");
 }
 
-/** Space forecast for the configured scan root; null off-desktop. */
+/** Space forecast for the configured scan root; null when the
+    history cannot support a fit yet. */
 export async function getSpaceForecast(): Promise<SpaceForecast | null> {
   if (!inDesktopApp()) return null;
-  try {
-    return await invoke<SpaceForecast>("get_space_forecast");
-  } catch {
-    return null;
-  }
+  return invoke<SpaceForecast | null>("get_space_forecast");
 }
 
 /** Biggest directory changes between the current and previous scan. */
 export async function getBiggestChanges(limit: number): Promise<BiggestChanges | null> {
   if (!inDesktopApp()) return null;
-  try {
-    return await invoke<BiggestChanges>("get_biggest_changes", { limit });
-  } catch {
-    return null;
-  }
+  return invoke<BiggestChanges | null>("get_biggest_changes", { limit });
 }
 
 export async function listDirectory(path: string): Promise<DirectoryEntry[]> {
   if (!inDesktopApp()) return [];
-  try {
-    return await invoke<DirectoryEntry[]>("list_directory", { path });
-  } catch {
-    return [];
-  }
+  return invoke<DirectoryEntry[]>("list_directory", { path });
 }
 
 /* ---------- Recommendations & cleanup ---------- */
 
 export async function getRecommendations(): Promise<Recommendation[]> {
   if (!inDesktopApp()) return [];
-  try {
-    return await invoke<Recommendation[]>("get_recommendations");
-  } catch {
-    return [];
-  }
+  return invoke<Recommendation[]>("get_recommendations");
 }
 
 export async function buildCleanupPlan(ids: string[]): Promise<CleanupPlan> {
@@ -189,11 +167,7 @@ export async function buildCleanupPlan(ids: string[]): Promise<CleanupPlan> {
     a scan has run. */
 export async function getCleanupCards(): Promise<CandidateGroup[]> {
   if (!inDesktopApp()) return [];
-  try {
-    return await invoke<CandidateGroup[]>("get_cleanup_cards");
-  } catch {
-    return [];
-  }
+  return invoke<CandidateGroup[]>("get_cleanup_cards");
 }
 
 /** Build a Trash-only cleanup plan from card candidate ids. The
@@ -216,11 +190,7 @@ export async function executeCleanupPlan(
 
 export async function getHistory(): Promise<HistoryEntry[]> {
   if (!inDesktopApp()) return [];
-  try {
-    return await invoke<HistoryEntry[]>("get_history");
-  } catch {
-    return [];
-  }
+  return invoke<HistoryEntry[]>("get_history");
 }
 
 /**
@@ -236,11 +206,7 @@ export async function restoreCleanupRun(entryId: string): Promise<RestoreCleanup
 
 export async function findDuplicates(): Promise<DuplicateGroup[]> {
   if (!inDesktopApp()) return [];
-  try {
-    return await invoke<DuplicateGroup[]>("find_duplicates");
-  } catch {
-    return [];
-  }
+  return invoke<DuplicateGroup[]>("find_duplicates");
 }
 
 /**
@@ -261,13 +227,11 @@ export async function removeDuplicateCopies(
   });
 }
 
+/** Docker overview; null when Docker is not installed — a real
+    state the page renders as such, distinct from a failed read. */
 export async function getDockerOverview(): Promise<DockerOverview | null> {
   if (!inDesktopApp()) return null;
-  try {
-    return await invoke<DockerOverview>("get_docker_overview");
-  } catch {
-    return null;
-  }
+  return invoke<DockerOverview | null>("get_docker_overview");
 }
 
 export async function dockerPreviewAction(
@@ -286,20 +250,12 @@ export async function dockerExecuteAction(
 
 export async function getDevtoolsReports(): Promise<ToolReport[]> {
   if (!inDesktopApp()) return [];
-  try {
-    return await invoke<ToolReport[]>("get_devtools_reports");
-  } catch {
-    return [];
-  }
+  return invoke<ToolReport[]>("get_devtools_reports");
 }
 
 export async function getApplications(): Promise<AppEntry[]> {
   if (!inDesktopApp()) return [];
-  try {
-    return await invoke<AppEntry[]>("get_applications");
-  } catch {
-    return [];
-  }
+  return invoke<AppEntry[]>("get_applications");
 }
 
 /* ---------- Downloads & provenance ---------- */
@@ -308,33 +264,21 @@ export async function getApplications(): Promise<AppEntry[]> {
     its recorded download source when Windows stored one. */
 export async function getRecentDownloads(): Promise<RecentFile[]> {
   if (!inDesktopApp()) return [];
-  try {
-    return await invoke<RecentFile[]>("get_recent_downloads");
-  } catch {
-    return [];
-  }
+  return invoke<RecentFile[]>("get_recent_downloads");
 }
 
 /** Downloads grouped by their recorded source. Empty on platforms
     without zone data — provenance is never guessed. */
 export async function getDownloadProvenance(): Promise<ProvenanceGroup[]> {
   if (!inDesktopApp()) return [];
-  try {
-    return await invoke<ProvenanceGroup[]>("get_download_provenance");
-  } catch {
-    return [];
-  }
+  return invoke<ProvenanceGroup[]>("get_download_provenance");
 }
 
 /** Media totals for the current scan (photos, videos, screenshots,
     and the biggest files of each kind); null until a scan has run. */
 export async function getMediaSummary(): Promise<MediaSummary | null> {
   if (!inDesktopApp()) return null;
-  try {
-    return await invoke<MediaSummary | null>("get_media_summary");
-  } catch {
-    return null;
-  }
+  return invoke<MediaSummary | null>("get_media_summary");
 }
 
 /** Installed Steam and Epic games with their disk usage, read from
@@ -342,21 +286,13 @@ export async function getMediaSummary(): Promise<MediaSummary | null> {
     machine with neither launcher gets an empty report, not an error. */
 export async function getGames(): Promise<GamesReport> {
   if (!inDesktopApp()) return { libraries: [], totalBytes: 0, totalGames: 0 };
-  try {
-    return await invoke<GamesReport>("get_games");
-  } catch {
-    return { libraries: [], totalBytes: 0, totalGames: 0 };
-  }
+  return invoke<GamesReport>("get_games");
 }
 
 /** EXIF metadata for one image file; null when none is readable. */
 export async function getMediaInfo(path: string): Promise<MediaInfo | null> {
   if (!inDesktopApp()) return null;
-  try {
-    return await invoke<MediaInfo | null>("get_media_info", { path });
-  } catch {
-    return null;
-  }
+  return invoke<MediaInfo | null>("get_media_info", { path });
 }
 
 /* ---------- Natural-language search ---------- */
@@ -382,22 +318,14 @@ export async function runSearchFilters(filters: SearchFilters): Promise<SearchHi
     in the core). Read-only data: similar images are review-only. */
 export async function getSimilarImages(): Promise<SimilarGroup[]> {
   if (!inDesktopApp()) return [];
-  try {
-    return await invoke<SimilarGroup[]>("get_similar_images");
-  } catch {
-    return [];
-  }
+  return invoke<SimilarGroup[]>("get_similar_images");
 }
 
 /* ---------- Recycle Bin ---------- */
 
 export async function getRecycleBinItems(): Promise<RecycleBinItem[]> {
   if (!inDesktopApp()) return [];
-  try {
-    return await invoke<RecycleBinItem[]>("get_recycle_bin_items");
-  } catch {
-    return [];
-  }
+  return invoke<RecycleBinItem[]>("get_recycle_bin_items");
 }
 
 export async function emptyRecycleBin(items: RecycleBinItem[]): Promise<CleanupResult> {
@@ -435,11 +363,7 @@ export async function onRecycleBinProgress(
 
 export async function scanTranscriptSecrets(): Promise<SecretFinding[]> {
   if (!inDesktopApp()) return [];
-  try {
-    return await invoke<SecretFinding[]>("scan_transcript_secrets");
-  } catch {
-    return [];
-  }
+  return invoke<SecretFinding[]>("scan_transcript_secrets");
 }
 
 /* ---------- Assistant ---------- */
@@ -457,13 +381,12 @@ export async function saveApiKey(provider: string, key: string): Promise<void> {
   await invoke<void>("save_api_key", { provider, key });
 }
 
+/** Whether a key is stored for the provider. Throws when the
+    credential store itself cannot be read, so Settings never
+    describes one provider's key state using another's answer. */
 export async function hasApiKey(provider: string): Promise<boolean> {
   if (!inDesktopApp()) return false;
-  try {
-    return await invoke<boolean>("has_api_key", { provider });
-  } catch {
-    return false;
-  }
+  return invoke<boolean>("has_api_key", { provider });
 }
 
 export async function deleteApiKey(provider: string): Promise<void> {
@@ -475,11 +398,7 @@ export async function deleteApiKey(provider: string): Promise<void> {
 
 export async function getSettings(): Promise<AppSettings | null> {
   if (!inDesktopApp()) return null;
-  try {
-    return await invoke<AppSettings | null>("get_settings");
-  } catch {
-    return null;
-  }
+  return invoke<AppSettings | null>("get_settings");
 }
 
 export async function saveSettings(settings: AppSettings): Promise<void> {
@@ -517,17 +436,14 @@ export async function setAutostart(enabled: boolean): Promise<boolean> {
     much of it is stored locally; null when none is present. */
 export async function getCloudStatus(): Promise<CloudStatus | null> {
   if (!inDesktopApp()) return null;
-  try {
-    return await invoke<CloudStatus | null>("get_cloud_status");
-  } catch {
-    return null;
-  }
+  return invoke<CloudStatus | null>("get_cloud_status");
 }
 
 /**
  * Mark files or folders online-only with the cloud provider. The
  * files stay in the cloud and re-download when opened — nothing is
- * deleted.
+ * deleted. The space is released by the provider as it syncs, not
+ * at the moment of marking.
  */
 export async function freeUpSpace(paths: string[]): Promise<FreeUpResult> {
   requireDesktop();
@@ -536,15 +452,13 @@ export async function freeUpSpace(paths: string[]): Promise<FreeUpResult> {
 
 /**
  * Save a standalone HTML report through the shell's save dialog.
- * Resolves with the saved path, or null when the user cancelled.
+ * Resolves with the saved path, or null when the user cancelled —
+ * a failed save THROWS, so a cancellation stays silent while a
+ * real failure can be reported.
  */
 export async function exportReport(html: string): Promise<string | null> {
   if (!inDesktopApp()) return null;
-  try {
-    return await invoke<string | null>("export_report", { html });
-  } catch {
-    return null;
-  }
+  return invoke<string | null>("export_report", { html });
 }
 
 /* ---------- Shell integration ---------- */
@@ -555,13 +469,18 @@ export async function revealInExplorer(path: string): Promise<void> {
   await invoke<void>("reveal_in_explorer", { path });
 }
 
+/**
+ * Open an external URL through the shell's `open_external` command —
+ * the Rust side is the scheme whitelist (http/https/mailto only),
+ * so links rendered from assistant markdown never reach the opener
+ * plugin directly.
+ */
 export async function openExternal(url: string): Promise<void> {
   if (!inDesktopApp()) {
     window.open(url, "_blank", "noopener,noreferrer");
     return;
   }
-  const { openUrl } = await import("@tauri-apps/plugin-opener");
-  await openUrl(url);
+  await invoke<void>("open_external", { url });
 }
 
 /** Let the user pick a scan root folder via the native dialog. */

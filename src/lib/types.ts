@@ -295,6 +295,10 @@ export interface DockerActionPreview {
 export interface DockerActionResult {
   command: string;
   output: string;
+  /** Whether the command itself succeeded, as reported by the
+      shell. Optional because older shell builds did not send it:
+      only an explicit `false` renders as a failure. */
+  success?: boolean;
 }
 
 export type ToolItemState =
