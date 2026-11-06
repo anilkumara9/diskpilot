@@ -17,11 +17,12 @@ function normalize(path: string): string {
   return slashed.replace(/\\+$/, "");
 }
 
-/** The drive root a path lives on ("C:\"), or null when the path
-    has no drive letter (relative paths, UNC shares). */
+/** The drive root a path lives on ("C:\" — letter uppercased to
+    the canonical form), or null when the path has no drive
+    letter (relative paths, UNC shares). */
 export function driveRootOf(path: string): string | null {
   const match = /^([A-Za-z]:)[\\/]/.exec(path) ?? /^([A-Za-z]:)$/.exec(path);
-  return match ? `${match[1]}\\` : null;
+  return match ? `${match[1].toUpperCase()}\\` : null;
 }
 
 /** True when two paths name the same location, ignoring slash
