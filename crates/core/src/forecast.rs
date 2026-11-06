@@ -57,6 +57,11 @@ const WINDOW_MS: i64 = 30 * 86_400_000;
 /// A fit needs points at least 12 hours apart; two scans minutes
 /// apart describe scan noise, not a trend.
 const MIN_SPAN_MS: i64 = 12 * 3_600_000;
+/// Beyond this horizon a "when does it fill" answer is numerology,
+/// not a forecast: a nearly-flat growth rate over 100 years of free
+/// space reports growth with no deadline instead of a date
+/// saturated at the edge of representable time.
+const MAX_HORIZON_DAYS: f64 = 36_500.0;
 
 /// Fit a forecast from `entries` (already filtered to one scan root)
 /// as of `now_ms`.
@@ -106,8 +111,10 @@ pub fn forecast(entries: &[HistoryPoint], now_ms: i64) -> Forecast {
     if daily_growth > 0.0 {
         if let Some(free) = points.iter().rev().find_map(|p| p.drive_free_bytes) {
             let days = free as f64 / daily_growth;
-            result.days_until_full = Some(days);
-            result.projected_full_at_ms = Some(now_ms + (days * DAY_MS) as i64);
+            if days.is_finite() && days <= MAX_HORIZON_DAYS {
+                result.days_until_full = Some(days);
+                result.projected_full_at_ms = Some(now_ms + (days * DAY_MS) as i64);
+            }
         }
     }
     result
@@ -115,6 +122,30 @@ pub fn forecast(entries: &[HistoryPoint], now_ms: i64) -> Forecast {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn absurd_horizon_reports_growth_without_a_deadline() {
+        // ~10 TB free growing 1 byte/day: the naive projection is
+        // tens of billions of days and used to saturate the
+        // projected date at the edge of i64. Beyond 100 years the
+        // answer is "growing, no meaningful deadline".
+        let pts = vec![
+            HistoryPoint {
+                scanned_at_ms: 0,
+                total_bytes: 0,
+                drive_free_bytes: Some(10_000_000_000_000),
+            },
+            HistoryPoint {
+                scanned_at_ms: 2 * 86_400_000,
+                total_bytes: 2,
+                drive_free_bytes: Some(10_000_000_000_000),
+            },
+        ];
+        let f = forecast(&pts, 2 * 86_400_000);
+        assert_eq!(f.daily_growth_bytes, 1.0);
+        assert_eq!(f.days_until_full, None);
+        assert_eq!(f.projected_full_at_ms, None);
+    }
+
     use super::*;
 
     const GB: u64 = 1_000_000_000;

@@ -16,6 +16,13 @@ use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 
+/// Cap on the Zone.Identifier bytes [`download_source`] reads
+/// (1 MB, matching media_meta's header cap): the INI fields all
+/// live at the start of the stream. Only the Windows branch of
+/// `download_source` reads a stream at all.
+#[cfg(windows)]
+const MAX_STREAM_BYTES: u64 = 1 << 20;
+
 /// Where one file came from, normalized for display.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -165,8 +172,18 @@ pub fn parse_zone_identifier(content: &str) -> Option<DownloadSource> {
 pub fn download_source(path: &Path) -> Option<DownloadSource> {
     #[cfg(windows)]
     {
+        use std::io::Read;
         let ads = format!("{}:Zone.Identifier", path.display());
-        let bytes = std::fs::read(&ads).ok()?;
+        // The stream is attacker-controlled in size (anything can
+        // write an ADS), while every provenance field lives in the
+        // first bytes — read a bounded prefix, never the whole
+        // stream (the same discipline as media_meta's header cap).
+        let mut bytes = Vec::new();
+        std::fs::File::open(&ads)
+            .ok()?
+            .take(MAX_STREAM_BYTES)
+            .read_to_end(&mut bytes)
+            .ok()?;
         // Streams are written as ANSI or UTF-16LE depending on the writer.
         let content = decode_stream(&bytes);
         parse_zone_identifier(&content)

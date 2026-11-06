@@ -4,9 +4,22 @@
 //! A snapshot summary carries directory byte sizes only for the
 //! folders it surfaces (the root's children and the 50 heavy folders),
 //! so a [`SnapshotView`] pairs those stored sizes with the snapshot's
-//! file list. When a view has no stored directory sizes at all, the
-//! directory totals are derived from its files by prefix aggregation:
-//! every file contributes its bytes to every ancestor directory.
+//! file list, and the diff compares directories on ONE consistent
+//! basis: the candidate set is the union of both sides' stored keys
+//! and every ancestor directory of both sides' listed files, and
+//! each side's value for a candidate is its stored total when it
+//! has one, otherwise a prefix aggregation over ITS OWN file list
+//! (every file contributes its bytes to every ancestor directory).
+//!
+//! That consistency matters because the stored set is a top-N: a
+//! directory that merely fell out of one scan's stored top-50 must
+//! compare at its file-derived size, not vanish at its full stored
+//! size on one side and reappear on the other. A directory known to
+//! only one side is reported added/removed only when the absence is
+//! trustworthy — the other side carries no file list at all (its
+//! stored set IS its whole knowledge), or the present side's own
+//! files evidence the directory — otherwise it is suppressed:
+//! unknown is not zero.
 //!
 //! File bytes are the scanner's allocated bytes (the product-wide
 //! byte-accounting rule), in both the stored sizes and the file lists,
@@ -54,20 +67,40 @@ impl SnapshotView {
         Self { dir_sizes, files }
     }
 
-    /// The directory totals the diff compares: the stored sizes when
-    /// this view carries any, otherwise prefix aggregation over the
-    /// file list.
-    fn effective_dir_sizes(&self) -> HashMap<String, u64> {
-        if !self.dir_sizes.is_empty() {
-            return self.dir_sizes.clone();
+    /// This view's size for one directory on the diff's consistent
+    /// basis: the stored total when present, otherwise a prefix
+    /// aggregation over this view's own file list. `None` when the
+    /// view knows nothing about the directory — no stored total and
+    /// no listed file under it (or no file list at all).
+    fn dir_value(&self, dir: &str) -> Option<u64> {
+        if let Some(bytes) = self.dir_sizes.get(dir) {
+            return Some(*bytes);
         }
-        let mut totals: HashMap<String, u64> = HashMap::new();
+        self.file_derived_total(dir)
+    }
+
+    /// The total of this view's listed files under `dir`, or `None`
+    /// when no listed file sits under it.
+    fn file_derived_total(&self, dir: &str) -> Option<u64> {
+        let mut total = 0u64;
+        let mut any = false;
         for file in &self.files {
-            for ancestor in ancestor_dirs(&file.path) {
-                *totals.entry(ancestor).or_insert(0) += file.bytes;
+            if ancestor_dirs(&file.path).iter().any(|a| a == dir) {
+                total += file.bytes;
+                any = true;
             }
         }
-        totals
+        if any {
+            Some(total)
+        } else {
+            None
+        }
+    }
+
+    /// Whether this view's own file list evidences `dir` (at least
+    /// one listed file under it).
+    fn has_file_evidence(&self, dir: &str) -> bool {
+        self.file_derived_total(dir).is_some()
     }
 }
 
@@ -133,13 +166,31 @@ pub fn diff_snapshots(
     previous: &SnapshotView,
     limit: usize,
 ) -> BiggestChanges {
-    let current_dirs = current.effective_dir_sizes();
-    let previous_dirs = previous.effective_dir_sizes();
+    // One candidate set for both sides: every stored key plus every
+    // ancestor of every listed file, from either view.
+    let mut candidates: Vec<String> = Vec::new();
+    let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+    for view in [current, previous] {
+        for key in view.dir_sizes.keys() {
+            if seen.insert(key.clone()) {
+                candidates.push(key.clone());
+            }
+        }
+        for file in &view.files {
+            for ancestor in ancestor_dirs(&file.path) {
+                if seen.insert(ancestor.clone()) {
+                    candidates.push(ancestor);
+                }
+            }
+        }
+    }
 
     let mut changes = BiggestChanges::default();
-    for (path, &current_bytes) in &current_dirs {
-        match previous_dirs.get(path) {
-            Some(&previous_bytes) => {
+    for path in &candidates {
+        let current_bytes = current.dir_value(path);
+        let previous_bytes = previous.dir_value(path);
+        match (previous_bytes, current_bytes) {
+            (Some(previous_bytes), Some(current_bytes)) => {
                 let delta = current_bytes as i64 - previous_bytes as i64;
                 if delta > 0 {
                     changes.grown.push(Change {
@@ -159,8 +210,14 @@ pub fn diff_snapshots(
                     });
                 }
             }
-            None => {
-                if current_bytes > 0 {
+            (None, Some(current_bytes)) => {
+                // One-sided: report only when the previous side's
+                // absence is trustworthy — it keeps no file list at
+                // all (complete-stored view), or the current side's
+                // files evidence the directory.
+                if current_bytes > 0
+                    && (previous.files.is_empty() || current.has_file_evidence(path))
+                {
                     changes.added.push(Change {
                         path: path.clone(),
                         name: dir_name(path),
@@ -170,17 +227,18 @@ pub fn diff_snapshots(
                     });
                 }
             }
-        }
-    }
-    for (path, &previous_bytes) in &previous_dirs {
-        if !current_dirs.contains_key(path) {
-            changes.removed.push(Change {
-                path: path.clone(),
-                name: dir_name(path),
-                previous_bytes,
-                current_bytes: 0,
-                delta_bytes: -(previous_bytes as i64),
-            });
+            (Some(previous_bytes), None) => {
+                if current.files.is_empty() || previous.has_file_evidence(path) {
+                    changes.removed.push(Change {
+                        path: path.clone(),
+                        name: dir_name(path),
+                        previous_bytes,
+                        current_bytes: 0,
+                        delta_bytes: -(previous_bytes as i64),
+                    });
+                }
+            }
+            (None, None) => {}
         }
     }
 
@@ -302,6 +360,40 @@ mod tests {
         let current = view(&[("/root/empty", 0)], &[]);
         let diff = diff_snapshots(&current, &previous, 8);
         assert!(diff.added.is_empty());
+    }
+
+    #[test]
+    fn rank_flip_compares_instead_of_fabricating_add_and_remove() {
+        // The audit's phantom: /root/x is in the previous scan's
+        // stored set at 100, but in the current scan it fell out of
+        // the stored top-N while its files are still listed (90).
+        // The old per-side basis reported x removed at 100 and the
+        // newcomer /root/y added at 200; the consistent basis
+        // compares x (100 vs file-derived 90 → shrunk 10) and
+        // suppresses y, which neither side's files evidence and
+        // whose absence on the previous side is not trustworthy
+        // (the previous side does carry a file list).
+        let previous = view(&[("/root/x", 100)], &[("/root/x/f.bin", 90)]);
+        let current = view(&[("/root/y", 200)], &[("/root/x/f.bin", 90)]);
+        let diff = diff_snapshots(&current, &previous, 8);
+        assert!(diff.added.is_empty(), "added: {:?}", diff.added);
+        assert!(diff.removed.is_empty(), "removed: {:?}", diff.removed);
+        assert_eq!(diff.shrunk.len(), 1);
+        assert_eq!(diff.shrunk[0].path, "/root/x");
+        assert_eq!(diff.shrunk[0].previous_bytes, 100);
+        assert_eq!(diff.shrunk[0].current_bytes, 90);
+        assert_eq!(diff.shrunk[0].delta_bytes, -10);
+    }
+
+    #[test]
+    fn one_sided_stored_dir_is_reported_when_other_side_is_complete_stored() {
+        // Both views stored-only (the history shape): a one-sided
+        // directory is a genuine add/remove, as before.
+        let previous = view(&[("/root/a", 10)], &[]);
+        let current = view(&[("/root/a", 10), ("/root/b", 70)], &[]);
+        let diff = diff_snapshots(&current, &previous, 8);
+        assert_eq!(diff.added.len(), 1);
+        assert_eq!(diff.added[0].path, "/root/b");
     }
 
     #[test]

@@ -118,6 +118,9 @@ pub struct SearchHit {
 }
 
 const DAY_MS: i64 = 86_400_000;
+/// The widest "last N days" window a query can ask for (100 years);
+/// larger counts clamp to it.
+const MAX_DATE_DAYS: i64 = 36_500;
 /// Maximum hits returned by [`run_search`].
 pub const MAX_HITS: usize = 500;
 
@@ -249,11 +252,21 @@ fn date_phrase(
         ("last", Some("week")) => Some((now_ms - 7 * DAY_MS, None, 2, "Last week".to_string())),
         ("last", Some("month")) => Some((now_ms - 30 * DAY_MS, None, 2, "Last month".to_string())),
         ("last", Some(n)) => {
-            let days: i64 = n.parse().ok()?;
-            if days < 1 || tokens.get(i + 2).map(String::as_str) != Some("days") {
+            let parsed: i64 = n.parse().ok()?;
+            if parsed < 1 || tokens.get(i + 2).map(String::as_str) != Some("days") {
                 return None;
             }
-            Some((now_ms - days * DAY_MS, None, 3, format!("Last {days} days")))
+            // Clamp absurd counts (a typed "last 90000000000 days"
+            // would overflow the millisecond arithmetic): 100 years
+            // of history is beyond any file's plausible age, and
+            // the chip labels the clamped value it actually applies.
+            let days = parsed.min(MAX_DATE_DAYS);
+            Some((
+                now_ms.saturating_sub(days * DAY_MS),
+                None,
+                3,
+                format!("Last {days} days"),
+            ))
         }
         ("this", Some("week")) => {
             // Monday 00:00 UTC of the current week. 1970-01-01 was a
@@ -615,6 +628,24 @@ pub fn filter_hits_by_source(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn absurd_day_counts_clamp_and_the_chip_says_so() {
+        // Unchecked, "last 10000000000 days" overflows the
+        // millisecond arithmetic; clamped, it is a 100-year window
+        // and the chip names the clamped value.
+        let q = parse_query("last 10000000000 days", 1_700_000_000_000);
+        assert_eq!(q.chips.len(), 1);
+        assert_eq!(q.chips[0].label, "Last 36500 days");
+        assert_eq!(
+            q.filters.modified_after_ms,
+            Some(1_700_000_000_000 - 36_500 * DAY_MS)
+        );
+        // A count beyond i64 is not a date phrase at all (and never
+        // a panic).
+        let q = parse_query("last 999999999999999999999999 days", 1_700_000_000_000);
+        assert!(q.filters.modified_after_ms.is_none());
+    }
+
     use super::*;
     use crate::model::FileEntry;
 

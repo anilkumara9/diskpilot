@@ -41,6 +41,11 @@ pub fn detect_onedrive_root() -> Option<PathBuf> {
 /// judged are Windows paths (OneDrive only exists there), and Windows
 /// path semantics are case-insensitive whatever host runs the check.
 /// The root itself counts as within (a caller may target the folder).
+///
+/// Any `..` component in either string refuses the match outright:
+/// `C:\OneDrive\..\..\Windows` textually starts with the root but
+/// resolves outside it, and this check is the only thing standing
+/// between a caller-supplied path and `attrib` running on it.
 pub fn path_is_within(root: &str, path: &str) -> bool {
     let norm = |s: &str| {
         s.replace('\\', "/")
@@ -50,6 +55,10 @@ pub fn path_is_within(root: &str, path: &str) -> bool {
     let root = norm(root);
     let path = norm(path);
     if root.is_empty() || path.is_empty() {
+        return false;
+    }
+    let has_parent_ref = |s: &str| s.split('/').any(|seg| seg == "..");
+    if has_parent_ref(&root) || has_parent_ref(&path) {
         return false;
     }
     path == root || path.starts_with(&format!("{root}/"))
@@ -186,6 +195,22 @@ mod tests {
         assert!(!path_is_within(root, r"D:\OneDrive\a.docx"));
         assert!(!path_is_within("", r"C:\Users\meda\OneDrive\a.docx"));
         assert!(!path_is_within(root, ""));
+        // Traversal textually under the root resolves outside it:
+        // refused, in either string, with either separator.
+        assert!(!path_is_within(
+            root,
+            r"C:\Users\meda\OneDrive\..\..\Windows\evil.dll"
+        ));
+        assert!(!path_is_within(
+            root,
+            "C:/Users/meda/OneDrive/docs/../../secret.txt"
+        ));
+        assert!(!path_is_within(
+            r"C:\Users\meda\OneDrive\..\OneDrive",
+            r"C:\Users\meda\OneDrive\a.docx"
+        ));
+        // A dotted filename is not a parent reference.
+        assert!(path_is_within(root, r"C:\Users\meda\OneDrive\my..file.txt"));
     }
 
     fn entry(path: &str, bytes: u64) -> FileEntry {
