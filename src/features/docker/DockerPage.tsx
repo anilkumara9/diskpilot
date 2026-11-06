@@ -31,6 +31,7 @@ import { CopyButton } from "@/components/shared/CopyButton";
 import { DetailsPanel, DetailRow } from "@/components/shared/DetailsPanel";
 import { EmptyState } from "@/components/shared/EmptyState";
 import { MarkerTag } from "@/components/shared/MarkerTag";
+import { StatStrip } from "@/components/shared/StatStrip";
 import { useAppStore } from "@/lib/store";
 
 /* ---------------- Action dialog ---------------- */
@@ -363,23 +364,14 @@ export function DockerPage() {
 
         {overview && state === "ready" ? (
           <>
-            <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
-              {[
-                { icon: ImageIcon, label: "Images", value: overview.imagesTotalBytes, sub: `${formatBytes(overview.imagesReclaimableBytes)} reclaimable` },
-                { icon: Container, label: "Containers", value: overview.containersTotalBytes, sub: `${formatBytes(overview.containersReclaimableBytes)} reclaimable` },
-                { icon: Layers, label: "Volumes", value: overview.volumesTotalBytes, sub: "Never removed" },
-                { icon: Wrench, label: "Build cache", value: overview.buildCacheBytes, sub: `${formatBytes(overview.buildCacheReclaimableBytes)} reclaimable` },
-              ].map((card) => (
-                <div key={card.label} className="rounded-[10px] border border-border px-3.5 py-3">
-                  <p className="flex items-center gap-1.5 text-[12px] text-muted">
-                    <card.icon className="size-3.5" aria-hidden="true" />
-                    {card.label}
-                  </p>
-                  <p className="mt-1 text-[20px] font-semibold leading-6 tabular text-foreground">{formatBytes(card.value)}</p>
-                  <p className="text-[11px] text-muted">{card.sub}</p>
-                </div>
-              ))}
-            </div>
+            <StatStrip
+              stats={[
+                { icon: ImageIcon, label: "Images", value: formatBytes(overview.imagesTotalBytes), sub: `${formatBytes(overview.imagesReclaimableBytes)} reclaimable` },
+                { icon: Container, label: "Containers", value: formatBytes(overview.containersTotalBytes), sub: `${formatBytes(overview.containersReclaimableBytes)} reclaimable` },
+                { icon: Layers, label: "Volumes", value: formatBytes(overview.volumesTotalBytes), sub: "Never removed" },
+                { icon: Wrench, label: "Build cache", value: formatBytes(overview.buildCacheBytes), sub: `${formatBytes(overview.buildCacheReclaimableBytes)} reclaimable` },
+              ]}
+            />
 
             {overview.buildCacheReclaimableBytes > 0 ? (
               <div className="mt-4 flex items-center gap-3 rounded-[10px] border border-border bg-panel-raised px-4 py-3">

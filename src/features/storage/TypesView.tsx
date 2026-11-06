@@ -9,6 +9,7 @@ import { Button } from "@/components/ui/button";
 import { SkeletonRows } from "@/components/ui/skeleton";
 import { EmptyState } from "@/components/shared/EmptyState";
 import { SizeBar } from "@/components/shared/SizeBar";
+import { StatStrip } from "@/components/shared/StatStrip";
 import { cn } from "@/lib/utils";
 
 /**
@@ -20,15 +21,6 @@ import { cn } from "@/lib/utils";
  */
 
 const MAX_ROWS = 50;
-
-function Figure({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="min-w-[140px]">
-      <p className="text-[12px] text-muted">{label}</p>
-      <p className="mt-0.5 text-[20px] font-semibold leading-6 tabular text-foreground">{value}</p>
-    </div>
-  );
-}
 
 function TypeFiles({ extension }: { extension: string }) {
   const homeDir = useAppStore((s) => s.env?.homeDir);
@@ -183,14 +175,17 @@ export function TypesView() {
 
   return (
     <div>
-      <div className="flex flex-wrap gap-x-10 gap-y-4 pb-4">
-        <Figure label="File types" value={formatCount(stats.length)} />
-        <Figure
-          label="Largest type"
-          value={largest ? `${extensionLabel(largest.extension)} · ${formatBytes(largest.bytes)}` : "—"}
-        />
-        <Figure label="Coverage of top 10" value={formatPercent(coverage)} />
-      </div>
+      <StatStrip
+        className="pb-4"
+        stats={[
+          { label: "File types", value: formatCount(stats.length) },
+          {
+            label: "Largest type",
+            value: largest ? `${extensionLabel(largest.extension)} · ${formatBytes(largest.bytes)}` : "—",
+          },
+          { label: "Coverage of top 10", value: formatPercent(coverage) },
+        ]}
+      />
 
       <ul className="divide-y divide-border rounded-[10px] border border-border">
         {shown.map((stat) => {

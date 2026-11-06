@@ -11,17 +11,7 @@ import { Switch } from "@/components/ui/switch";
 import { SkeletonRows } from "@/components/ui/skeleton";
 import { EmptyState } from "@/components/shared/EmptyState";
 import { MarkerTag } from "@/components/shared/MarkerTag";
-
-/* ---------------- Figures ---------------- */
-
-function Figure({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="min-w-[140px]">
-      <p className="text-[12px] text-muted">{label}</p>
-      <p className="mt-0.5 text-[20px] font-semibold leading-6 tabular text-foreground">{value}</p>
-    </div>
-  );
-}
+import { StatStrip } from "@/components/shared/StatStrip";
 
 /* ---------------- Groups ---------------- */
 
@@ -178,11 +168,13 @@ export function StartupPage() {
           />
         ) : (
           <>
-            <div className="flex flex-wrap gap-x-10 gap-y-4">
-              <Figure label="Entries" value={formatCount(items.length)} />
-              <Figure label="Enabled" value={formatCount(enabledCount)} />
-              <Figure label="Disabled" value={formatCount(items.length - enabledCount)} />
-            </div>
+            <StatStrip
+              stats={[
+                { label: "Entries", value: formatCount(items.length) },
+                { label: "Enabled", value: formatCount(enabledCount) },
+                { label: "Disabled", value: formatCount(items.length - enabledCount) },
+              ]}
+            />
 
             {SOURCE_GROUPS.map(({ source, label }) => {
               const group = items.filter((i) => i.source === source);

@@ -10,17 +10,7 @@ import { Section } from "@/components/ui/section";
 import { SkeletonRows } from "@/components/ui/skeleton";
 import { EmptyState } from "@/components/shared/EmptyState";
 import { SizeBar } from "@/components/shared/SizeBar";
-
-/* ---------------- Figures ---------------- */
-
-function Figure({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="min-w-[140px]">
-      <p className="text-[12px] text-muted">{label}</p>
-      <p className="mt-0.5 text-[20px] font-semibold leading-6 tabular text-foreground">{value}</p>
-    </div>
-  );
-}
+import { StatStrip } from "@/components/shared/StatStrip";
 
 /* ---------------- Page ---------------- */
 
@@ -99,11 +89,13 @@ export function GamesPage() {
           />
         ) : (
           <>
-            <div className="flex flex-wrap gap-x-10 gap-y-4">
-              <Figure label="Total in games" value={formatBytes(report.totalBytes)} />
-              <Figure label="Games" value={formatCount(report.totalGames)} />
-              <Figure label="Libraries" value={formatCount(report.libraries.length)} />
-            </div>
+            <StatStrip
+              stats={[
+                { label: "Total in games", value: formatBytes(report.totalBytes) },
+                { label: "Games", value: formatCount(report.totalGames) },
+                { label: "Libraries", value: formatCount(report.libraries.length) },
+              ]}
+            />
 
             {report.libraries.map((library) => {
               const max = Math.max(...library.games.map((g) => g.bytes), 1);

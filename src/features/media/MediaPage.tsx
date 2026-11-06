@@ -10,20 +10,7 @@ import { Button } from "@/components/ui/button";
 import { Section } from "@/components/ui/section";
 import { SkeletonRows } from "@/components/ui/skeleton";
 import { EmptyState } from "@/components/shared/EmptyState";
-
-/* ---------------- Figures ---------------- */
-
-function MediaFigure({ label, bytes, sub }: { label: string; bytes: number; sub: string }) {
-  return (
-    <div className="min-w-[140px]">
-      <p className="text-[12px] text-muted">{label}</p>
-      <p className="mt-0.5 text-[20px] font-semibold leading-6 tabular text-foreground">
-        {formatBytes(bytes)}
-      </p>
-      <p className="mt-0.5 text-[12px] text-muted">{sub}</p>
-    </div>
-  );
-}
+import { StatStrip } from "@/components/shared/StatStrip";
 
 /* ---------------- Biggest lists ---------------- */
 
@@ -176,23 +163,25 @@ export function MediaPage() {
           <SkeletonRows rows={7} />
         ) : (
           <>
-            <div className="flex flex-wrap gap-x-10 gap-y-4">
-              <MediaFigure
-                label="Photos"
-                bytes={media.photos.bytes}
-                sub={`${formatCount(media.photos.count)} files`}
-              />
-              <MediaFigure
-                label="Videos"
-                bytes={media.videos.bytes}
-                sub={`${formatCount(media.videos.count)} files`}
-              />
-              <MediaFigure
-                label="Screenshots"
-                bytes={media.screenshots.bytes}
-                sub={`${formatCount(media.screenshots.count)} files · included in Photos`}
-              />
-            </div>
+            <StatStrip
+              stats={[
+                {
+                  label: "Photos",
+                  value: formatBytes(media.photos.bytes),
+                  sub: `${formatCount(media.photos.count)} files`,
+                },
+                {
+                  label: "Videos",
+                  value: formatBytes(media.videos.bytes),
+                  sub: `${formatCount(media.videos.count)} files`,
+                },
+                {
+                  label: "Screenshots",
+                  value: formatBytes(media.screenshots.bytes),
+                  sub: `${formatCount(media.screenshots.count)} files · included in Photos`,
+                },
+              ]}
+            />
 
             <Section title="Biggest videos" description="The largest video files in this scan, biggest first.">
               <BiggestList items={media.biggestVideos} homeDir={homeDir} onReveal={(p) => void reveal(p)} />

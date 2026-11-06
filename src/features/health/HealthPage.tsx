@@ -25,6 +25,7 @@ import { Section } from "@/components/ui/section";
 import { SkeletonRows } from "@/components/ui/skeleton";
 import { EmptyState } from "@/components/shared/EmptyState";
 import { SizeBar } from "@/components/shared/SizeBar";
+import { StatStrip } from "@/components/shared/StatStrip";
 import { cn } from "@/lib/utils";
 
 /* ---------------- Drive status chip ---------------- */
@@ -54,17 +55,6 @@ function DriveStatusChip({ drive }: { drive: DriveInfo }) {
       <Icon className="size-3" strokeWidth={1.75} aria-hidden="true" />
       {meta.label}
     </span>
-  );
-}
-
-/* ---------------- Figures ---------------- */
-
-function Figure({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="min-w-[140px]">
-      <p className="text-[12px] text-muted">{label}</p>
-      <p className="mt-0.5 text-[20px] font-semibold leading-6 tabular text-foreground">{value}</p>
-    </div>
   );
 }
 
@@ -284,17 +274,23 @@ export function HealthPage() {
             <div className="rounded-[10px] border border-border bg-panel-raised px-4 py-3">
               {forecast && forecast.pointsUsed >= 2 ? (
                 filling ? (
-                  <div className="flex flex-wrap gap-x-10 gap-y-4">
-                    <Figure
-                      label="Fills in"
-                      value={`About ${Math.round(forecast.daysUntilFull as number)} days`}
-                    />
-                    <Figure
-                      label="Daily growth"
-                      value={`${formatBytes(Math.max(0, forecast.dailyGrowthBytes))} per day`}
-                    />
-                    <Figure label="Projected full" value={formatDay(forecast.projectedFullAtMs as number)} />
-                  </div>
+                  <StatStrip
+                    variant="bare"
+                    stats={[
+                      {
+                        label: "Fills in",
+                        value: `About ${Math.round(forecast.daysUntilFull as number)} days`,
+                      },
+                      {
+                        label: "Daily growth",
+                        value: `${formatBytes(Math.max(0, forecast.dailyGrowthBytes))} per day`,
+                      },
+                      {
+                        label: "Projected full",
+                        value: formatDay(forecast.projectedFullAtMs as number),
+                      },
+                    ]}
+                  />
                 ) : (
                   <>
                     <p className="text-[15px] font-semibold leading-5 text-foreground">
