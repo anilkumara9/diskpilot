@@ -228,7 +228,8 @@ Safety is not a settings page in DiskPilot; it is the architecture.
 
 ![DiskPilot system design](docs/assets/system-design.png)
 
-[System design as SVG](docs/assets/system-design.svg) ·
+[System design as HTML](docs/assets/system-design.html) ·
+[Dark theme](docs/assets/system-design-dark.png) ·
 [Full architecture notes](docs/ARCHITECTURE.md)
 
 Three layers, one direction. The **React frontend** renders and asks —
