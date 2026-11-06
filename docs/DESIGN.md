@@ -246,6 +246,62 @@ separated from the nav by a hairline and 12 px of air.
   renders as a danger-tinted callout (callout spec, critical tint)
   with a Retry action that resends the last message without
   duplicating it.
+- **Drives strip** — one compact card per drive on the Overview
+  (10 px radius, hairline border, `panel-raised` fill): drive label,
+  a 6 px used-space bar in accent, and "{free} free of {total}" in
+  tabular figures. The scan root's card is labelled, never given an
+  action; every other drive gets a subtle "Scan" button. The strip
+  hides itself when the only drive is the scan root's.
+- **Forecast card** — the Since-last-scan callout spec, looking
+  forward: a 15 px semibold headline ("fills in about N days", or the
+  flat/shrinking wording when there is no fill-up date), a 12 px
+  muted explanation with the daily rate and projected date, and the
+  scan-history sparkline on the right — an accent polyline (1.5 px)
+  over a dashed `border-strong` baseline, no axes, no fill.
+- **Biggest changes** — two compact lists inside the Since-last-scan
+  section, "Grew most" and "Freed": name over a `mono-path` trimmed
+  path, signed delta right-aligned — review-tier colour for growth,
+  safe-tier green for freed space. A list renders only when it has
+  rows.
+- **Cloud card** — a notice-row (callout spec) with a cloud icon: how
+  much the provider keeps on this PC, its file count and folder, and
+  a "Free up space" action. The confirmation dialog states the
+  contract in plain words — files stay in the cloud, re-download when
+  opened, nothing is deleted — before the single primary action.
+- **Treemap (Storage Map)** — the current folder level as
+  proportional blocks inside a 10 px-radius panel. Blocks take their
+  category colour as a 26 % tint with a 55 % border of the same
+  colour (colour-mix over tokens, never raw hex), 2 px gaps, name at
+  12 px medium and size at 11 px tabular when the block is big
+  enough, otherwise the tooltip carries both. Folders open on click;
+  files select into the inspector; the aggregate "more files" block
+  is inert. Selection is an inset accent ring.
+- **Preview inspector** — the explorer's details panel: facts first
+  (size, type, category), then a Media section for images (dimensions,
+  camera, capture date from EXIF, each shown only when the file
+  carries it). The footer stacks Reveal in Explorer with, for files
+  under the cloud root, "Free up space" (same cloud dialog).
+- **Quick Search panel** — the frameless popup is one floating
+  surface (raised fill, `border-strong` outline, deep soft shadow,
+  10 px radius) at 680 × 520: a 12 px drag strip, a 44 px search field
+  at 15 px with an `esc` hint chip, the same "Understood as" chips as
+  Storage, and a keyboard-first results list (selected row takes the
+  `selected` background; the footer states the match count and the
+  key hints). Empty states follow the standard spec, scaled to the
+  panel.
+- **Watch settings** — a Settings section in the standard row form:
+  the schedule select, the two alert thresholds as number fields with
+  their unit ("GB", "GB between checks") sitting beside the input in
+  muted text, and the sign-in toggle reflecting the registration the
+  shell reports, not the last click.
+- **Guided cleanup items** — recommendations another tool owns
+  (Windows.old) render with no checkbox, a muted "Guided" tag beside
+  the tier badge (a plain ring-bordered chip, never a tier colour),
+  and their guidance as an info callout inside the expanded row.
+- **HTML report** — the exported Overview report is a standalone
+  light document: wordmark header (accent "Pilot"), figure row,
+  hairline tables, a raised forecast panel, and a print stylesheet.
+  It never loads external assets.
 
 ## Motion
 
