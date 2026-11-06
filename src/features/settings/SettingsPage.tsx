@@ -4,6 +4,7 @@ import * as api from "@/lib/api";
 import { useAppStore } from "@/lib/store";
 import { displayPath } from "@/lib/format";
 import { removeSavedSearch } from "@/lib/search";
+import { updateStatusLine } from "@/lib/updater";
 import { exclusionsToText, parseExclusions, sameExclusions } from "@/lib/settings";
 import type { AssistantProvider, AutoScanSchedule, ThemePreference } from "@/lib/types";
 import { PageHeader } from "@/components/layout/PageHeader";
@@ -347,6 +348,76 @@ export function WatchSettings() {
   );
 }
 
+export function UpdatesSettings() {
+  const env = useAppStore((s) => s.env);
+  const update = useAppStore((s) => s.update);
+  const checkForUpdate = useAppStore((s) => s.checkForUpdate);
+  const installUpdate = useAppStore((s) => s.installUpdate);
+  const restartToApply = useAppStore((s) => s.restartToApply);
+
+  const pct =
+    update.status === "downloading"
+      ? update.total && update.total > 0
+        ? Math.min(100, Math.floor((update.downloaded / update.total) * 100))
+        : null
+      : null;
+
+  return (
+    <div className="mt-4 border-t border-border pt-3">
+      <div className="flex items-center justify-between gap-4">
+        <span>
+          <span className="block text-[13px] font-medium text-foreground">Updates</span>
+          <span className="block text-[12px] leading-4 text-muted">
+            {updateStatusLine(update, env?.appVersion ?? null)}
+          </span>
+        </span>
+        {update.status === "available" ? (
+          <Button variant="primary" onClick={() => void installUpdate()}>
+            Download &amp; install
+          </Button>
+        ) : update.status === "readyToRestart" ? (
+          <Button variant="primary" onClick={() => void restartToApply()}>
+            Restart to apply
+          </Button>
+        ) : (
+          <Button
+            variant="secondary"
+            onClick={() => void checkForUpdate(true)}
+            disabled={update.status === "checking" || update.status === "downloading"}
+          >
+            {update.status === "checking" ? "Checking…" : "Check for updates"}
+          </Button>
+        )}
+      </div>
+      {update.status === "downloading" ? (
+        <div
+          className="mt-2 h-[3px] overflow-hidden rounded-full bg-hover"
+          role="progressbar"
+          aria-label={`Downloading update${pct === null ? "" : `, ${pct}%`}`}
+          aria-valuemin={0}
+          aria-valuemax={100}
+          aria-valuenow={pct ?? undefined}
+        >
+          <div
+            className="h-full rounded-full bg-accent transition-[width] duration-150"
+            style={{ width: pct === null ? "35%" : `${pct}%` }}
+          />
+        </div>
+      ) : null}
+      {update.status === "available" && update.notes ? (
+        <div className="mt-3 rounded-[10px] border border-border bg-panel-raised px-4 py-3">
+          <p className="text-[12px] font-medium text-foreground">What&rsquo;s new in {update.version}</p>
+          <p className="mt-1 whitespace-pre-wrap text-[12px] leading-4 text-muted">{update.notes}</p>
+        </div>
+      ) : null}
+      <p className="mt-2 text-[12px] leading-4 text-muted">
+        DiskPilot checks once each launch and only speaks up when a new version exists. Update
+        packages are cryptographically signed; an update that fails verification is never installed.
+      </p>
+    </div>
+  );
+}
+
 export function SettingsPage() {
   const settings = useAppStore((s) => s.settings);
   const env = useAppStore((s) => s.env);
@@ -469,13 +540,14 @@ export function SettingsPage() {
           </Button>
         </Section>
 
-        <Section title="About">
+        <Section title="About & updates">
           <dl className="space-y-1.5 text-[12px] leading-4">
             <div className="flex gap-2"><dt className="w-[110px] text-muted">Version</dt><dd className="text-foreground">{env?.appVersion ?? "—"}</dd></div>
             <div className="flex gap-2"><dt className="w-[110px] text-muted">OS</dt><dd className="text-foreground">{env?.os ?? "—"}</dd></div>
             <div className="flex gap-2"><dt className="w-[110px] text-muted">Architecture</dt><dd className="text-foreground">{env?.arch ?? "—"}</dd></div>
             <div className="flex gap-2"><dt className="w-[110px] text-muted">Privacy</dt><dd className="text-foreground">Everything is local. No account, no telemetry. Only the optional assistant talks to the network, directly to your chosen provider.</dd></div>
           </dl>
+          <UpdatesSettings />
         </Section>
       </div>
     </div>

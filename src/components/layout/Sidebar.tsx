@@ -18,6 +18,7 @@ import {
 } from "lucide-react";
 import { useAppStore } from "@/lib/store";
 import { actionableCount } from "@/lib/analysis";
+import { isUpdateNoticeable } from "@/lib/updater";
 import { displayPath, formatBytes, formatCount, formatRelative } from "@/lib/format";
 import { useNowTick } from "@/lib/hooks";
 import type { PageId } from "@/lib/types";
@@ -146,6 +147,7 @@ export function Sidebar() {
   const page = useAppStore((s) => s.page);
   const navigate = useAppStore((s) => s.navigate);
   const assistantEnabled = useAppStore((s) => s.settings.assistantEnabled);
+  const updateNoticeable = useAppStore((s) => isUpdateNoticeable(s.update));
   const recommendations = useAppStore((s) => s.recommendations);
   const cleanupCount = actionableCount(recommendations);
 
@@ -215,6 +217,14 @@ export function Sidebar() {
           entry={{ id: "settings", label: "Settings", icon: Settings }}
           active={page === "settings"}
           onNavigate={navigate}
+          trailing={
+            updateNoticeable ? (
+              <span className="flex shrink-0 items-center gap-1.5 text-[11px] font-medium leading-[14px] text-accent">
+                <span className="size-1.5 rounded-full bg-accent" aria-hidden="true" />
+                Update available
+              </span>
+            ) : undefined
+          }
         />
       </div>
     </nav>

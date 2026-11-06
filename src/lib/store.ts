@@ -14,6 +14,13 @@ import type {
 } from "./types";
 import * as api from "./api";
 import { applyTheme } from "./theme";
+import {
+  checkForAvailableUpdate,
+  downloadAndInstallPending,
+  IDLE_UPDATE_STATE,
+  restartToApplyUpdate,
+  type UpdateState,
+} from "./updater";
 
 const DEFAULT_SETTINGS: AppSettings = {
   scanRoot: "",
@@ -72,8 +79,15 @@ interface AppState {
       other pages can deep-link — Media sends readers to the
       look-alike photos view. */
   duplicatesMode: DuplicatesMode;
+  /** Signed-update flow state (Settings → About & updates, plus the
+      sidebar flag). The launch check is silent unless an update
+      exists — see `checkForUpdate`. */
+  update: UpdateState;
 
   init: () => Promise<void>;
+  checkForUpdate: (manual: boolean) => Promise<void>;
+  installUpdate: () => Promise<void>;
+  restartToApply: () => Promise<void>;
   navigate: (page: PageId) => void;
   startScan: (root?: string) => Promise<void>;
   cancelScan: () => Promise<void>;
@@ -118,6 +132,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   highlightedRecommendationIds: [],
   assistantMessages: [],
   duplicatesMode: "exact",
+  update: IDLE_UPDATE_STATE,
 
   init: async () => {
     const inDesktop = api.inDesktopApp();
@@ -151,12 +166,65 @@ export const useAppStore = create<AppState>((set, get) => ({
         void api.onScanFinished((s) => get().applyScanFinished(s));
         void api.onTrayNavigate((target) => get().handleTrayNavigate(target));
       }
+
+      // One quiet update check per launch. It only ever surfaces
+      // something when a signed update actually exists; every
+      // failure (offline, no release yet) stays silent by design.
+      void get().checkForUpdate(false);
     } catch {
       /* A failed startup leaves the defaults in place and still
          settles: the app renders normally and the welcome (which
          requires settingsLoaded) stays out of the way. */
     } finally {
       set({ ready: true });
+    }
+  },
+
+  checkForUpdate: async (manual) => {
+    const current = get().update.status;
+    if (current === "checking" || current === "downloading" || current === "readyToRestart") return;
+    if (!get().inDesktop) {
+      if (manual) set({ update: { status: "error" } });
+      return;
+    }
+    set({ update: { status: "checking" } });
+    try {
+      const found = await checkForAvailableUpdate();
+      if (found) {
+        set({ update: { status: "available", version: found.version, notes: found.notes } });
+      } else {
+        // The automatic check returns to idle so it leaves no trace;
+        // a manual check gets the explicit "latest version" answer.
+        set({ update: manual ? { status: "upToDate" } : IDLE_UPDATE_STATE });
+      }
+    } catch {
+      set({ update: manual ? { status: "error" } : IDLE_UPDATE_STATE });
+    }
+  },
+
+  installUpdate: async () => {
+    const current = get().update;
+    if (current.status !== "available") return;
+    const { version } = current;
+    set({ update: { status: "downloading", version, downloaded: 0, total: null } });
+    try {
+      await downloadAndInstallPending((downloaded, total) => {
+        if (get().update.status === "downloading") {
+          set({ update: { status: "downloading", version, downloaded, total } });
+        }
+      });
+      set({ update: { status: "readyToRestart", version } });
+    } catch {
+      set({ update: { status: "error" } });
+    }
+  },
+
+  restartToApply: async () => {
+    try {
+      await restartToApplyUpdate();
+    } catch {
+      /* If the restart itself fails the installed update still
+         applies on the next manual launch — nothing to surface. */
     }
   },
 

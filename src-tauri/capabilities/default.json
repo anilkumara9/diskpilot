@@ -1,1 +1,34 @@
-{"$schema":"../gen/schemas/desktop-schema.json","description":"Minimal capability set for the main and Quick Search windows. The webview gets no filesystem or shell access: every operation goes through DiskPilot's typed commands. Only window dragging, the folder picker dialog, opening external links (scoped to https/http/mailto — the Rust-side open_external command whitelists the same schemes), notifications (scheduled-scan alerts are sent from Rust; the grant covers the plugin's registration) and global-shortcut registration are granted.","identifier":"default","permissions":["core:default","core:window:allow-start-dragging","dialog:allow-open",{"allow":[{"url":"https://*"},{"url":"http://*"},{"url":"mailto:*"}],"identifier":"opener:allow-open-url"},"notification:default","global-shortcut:allow-register","global-shortcut:allow-unregister"],"windows":["main","quicksearch"]}
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "description": "Minimal capability set for the main and Quick Search windows. The webview gets no filesystem or shell access: every operation goes through DiskPilot's typed commands. Only window dragging, the folder picker dialog, opening external links (scoped to https/http/mailto \u2014 the Rust-side open_external command whitelists the same schemes), notifications (scheduled-scan alerts are sent from Rust; the grant covers the plugin's registration) global-shortcut registration, and the signed-update flow (check + download-and-install, plus restart to apply) are granted.",
+  "identifier": "default",
+  "permissions": [
+    "core:default",
+    "core:window:allow-start-dragging",
+    "dialog:allow-open",
+    {
+      "allow": [
+        {
+          "url": "https://*"
+        },
+        {
+          "url": "http://*"
+        },
+        {
+          "url": "mailto:*"
+        }
+      ],
+      "identifier": "opener:allow-open-url"
+    },
+    "notification:default",
+    "global-shortcut:allow-register",
+    "global-shortcut:allow-unregister",
+    "updater:allow-check",
+    "updater:allow-download-and-install",
+    "process:allow-restart"
+  ],
+  "windows": [
+    "main",
+    "quicksearch"
+  ]
+}
