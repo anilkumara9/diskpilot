@@ -130,6 +130,9 @@ impl HistoryStore {
     /// with the run's removal `mode` (a single execution uses one
     /// mode throughout), which is what later lets the run be
     /// restored as a group.
+    // The recorder's fields are one flat audit record; bundling them
+    // into a struct would obscure call sites without adding safety.
+    #[allow(clippy::too_many_arguments)]
     pub fn record_cleanup(
         &self,
         operation: &str,
@@ -166,6 +169,7 @@ impl HistoryStore {
     /// Record a free-form action (e.g. restoring a cleanup run) with
     /// its affected paths, each stamped with `mode` like
     /// [`HistoryStore::record_cleanup`] items.
+    #[allow(clippy::too_many_arguments)]
     pub fn record_action(
         &self,
         timestamp_ms: i64,
