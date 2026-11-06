@@ -71,23 +71,24 @@ export function AssistantSettings() {
 
       {settings.assistantEnabled ? (
         <div className="space-y-3 border-t border-border pt-3">
-          <div>
-            <label htmlFor="assistant-provider" className="mb-1 block text-[12px] font-medium text-foreground">
-              Provider
-            </label>
+          <div className="flex items-center justify-between gap-4">
+            <span>
+              <span className="block text-[13px] font-medium text-foreground">Provider</span>
+              <span className="block text-[12px] text-muted">
+                {PROVIDERS.find((p) => p.id === settings.assistantProvider)?.note} HTTPS only, no redirects.
+              </span>
+            </span>
             <Select
               id="assistant-provider"
+              aria-label="Provider"
               value={settings.assistantProvider}
               onChange={(e) => void updateSettings({ assistantProvider: e.target.value as AssistantProvider })}
-              className="max-w-[280px]"
+              className="w-[160px] shrink-0"
             >
               {PROVIDERS.map((provider) => (
                 <option key={provider.id} value={provider.id}>{provider.label}</option>
               ))}
             </Select>
-            <p className="mt-1 text-[12px] text-muted">
-              {PROVIDERS.find((p) => p.id === settings.assistantProvider)?.note} HTTPS only, no redirects.
-            </p>
           </div>
 
           <div>
@@ -95,7 +96,7 @@ export function AssistantSettings() {
               <KeyRound className="size-3.5" aria-hidden="true" />
               API key
             </label>
-            <div className="flex max-w-[480px] items-center gap-2">
+            <div className="flex items-center gap-2">
               <Input
                 id="assistant-key"
                 type="password"
@@ -103,6 +104,7 @@ export function AssistantSettings() {
                 value={keyDraft}
                 onChange={(e) => setKeyDraft(e.target.value)}
                 placeholder={hasKey ? "A key is saved — enter a new one to replace it" : "Paste your API key"}
+                className="min-w-0 flex-1"
               />
               <Button variant="secondary" onClick={() => void saveKey()} disabled={!keyDraft.trim()}>Save key</Button>
               {hasKey ? (
@@ -284,9 +286,9 @@ export function WatchSettings() {
             onKeyDown={(e) => {
               if (e.key === "Enter") (e.target as HTMLInputElement).blur();
             }}
-            className="w-[110px]"
+            className="w-24"
           />
-          <span className="text-[12px] text-muted">GB</span>
+          <span className="w-[132px] text-[12px] text-muted">GB</span>
         </span>
       </div>
 
@@ -306,9 +308,9 @@ export function WatchSettings() {
             onKeyDown={(e) => {
               if (e.key === "Enter") (e.target as HTMLInputElement).blur();
             }}
-            className="w-[110px]"
+            className="w-24"
           />
-          <span className="text-[12px] text-muted">GB between checks</span>
+          <span className="w-[132px] text-[12px] text-muted">GB between checks</span>
         </span>
       </div>
 
