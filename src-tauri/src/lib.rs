@@ -7,6 +7,7 @@
 //! the webview itself has no filesystem or shell access.
 
 mod commands;
+mod live;
 mod ocr;
 mod recycle_bin;
 mod scan_history;
@@ -80,10 +81,22 @@ pub struct Settings {
     /// (Windows' built-in OCR) and the pass is fully cached.
     #[serde(default = "default_ocr_enabled")]
     pub ocr_enabled: bool,
+    /// Keep the in-memory index fresh between scans by following
+    /// the NTFS USN change journal while DiskPilot runs (see
+    /// `crate::live`). On by default; off means no polling and no
+    /// journal checkpoints are kept. The feature quietly stays
+    /// inactive when the volume cannot be opened (it needs the
+    /// same administrator volume access as the MFT scan path).
+    #[serde(default = "default_live_index")]
+    pub live_index: bool,
 }
 
 fn default_auto_scan() -> String {
     "off".to_string()
+}
+
+fn default_live_index() -> bool {
+    true
 }
 
 fn default_ocr_enabled() -> bool {
@@ -113,6 +126,7 @@ impl Default for Settings {
             auto_start: false,
             onboarded: false,
             ocr_enabled: default_ocr_enabled(),
+            live_index: default_live_index(),
         }
     }
 }
@@ -147,6 +161,10 @@ pub struct ShellState {
     /// starts, so a pass still running from the previous scan stops
     /// cooperatively instead of writing into the new scan's index.
     pub ocr_generation: Arc<AtomicU64>,
+    /// Live-index runtime status (stale flag + last-poll outcome);
+    /// the durable journal checkpoints live on disk (see
+    /// `crate::live`).
+    pub live: Mutex<live::LiveStatus>,
 }
 
 impl ShellState {
@@ -176,6 +194,13 @@ impl ShellState {
     /// the scheduled-scan alerts.
     pub fn scan_history_file(&self) -> PathBuf {
         self.app_data_dir.join("scan_history.json")
+    }
+
+    /// Path of the USN journal checkpoints (`usn_checkpoints.json`):
+    /// per-volume journal positions the live index resumes from
+    /// (see `crate::live`).
+    pub fn usn_checkpoints_file(&self) -> PathBuf {
+        self.app_data_dir.join("usn_checkpoints.json")
     }
 
     /// Path of the OCR text cache (`ocr_cache.json`): recognized
@@ -289,6 +314,7 @@ pub fn run() {
                 recycle_bin_cancel: Arc::new(AtomicBool::new(false)),
                 history: Mutex::new(None),
                 ocr_generation: Arc::new(AtomicU64::new(0)),
+                live: Mutex::new(live::LiveStatus::default()),
             });
 
             tray::build_tray(app.handle())?;
@@ -313,6 +339,10 @@ pub fn run() {
 
             // Scheduled scans + alerts (see `crate::watch`).
             watch::spawn_scheduler(app.handle().clone());
+
+            // USN live index poller (see `crate::live`): keeps the
+            // in-memory index fresh between scans while the app runs.
+            live::spawn_poller(app.handle().clone());
 
             Ok(())
         })

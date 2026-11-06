@@ -322,6 +322,11 @@ pub(crate) async fn run_scan(
     // Best-effort inside `scan_history::append`: it never fails here.
     crate::scan_history::append(state, &summary);
 
+    // Refresh the USN live-index checkpoint at the journal's
+    // current position, so the poller keeps this fresh index
+    // current between scans (best-effort; see `crate::live`).
+    crate::live::on_scan_completed(state, &summary).await;
+
     // Recognize text in the fresh index's images in the background
     // (settings-gated inside the pass; never blocks the scan result).
     let ocr_generation = state.ocr_generation.load(Ordering::SeqCst);
@@ -415,7 +420,14 @@ pub fn get_scan_summary(state: State<'_, ShellState>) -> CmdResult<Option<ScanSu
         .engine
         .lock()
         .map_err(|_| "engine lock poisoned".to_string())?;
-    Ok(engine.summary.clone())
+    let mut summary = engine.summary.clone();
+    drop(engine);
+    // The live-index status fields are the shell's live state, not
+    // the scan's: decorate the served clone (see `crate::live`).
+    if let Some(summary) = summary.as_mut() {
+        crate::live::decorate(&state, summary);
+    }
+    Ok(summary)
 }
 
 /// One category's change between the previous scan and the current
