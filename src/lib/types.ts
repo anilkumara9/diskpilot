@@ -389,6 +389,22 @@ export interface AppSettings {
       refreshes on each scan. Older settings files without the
       field load as true. */
   liveIndex: boolean;
+  /** Automatic maintenance (see `AutoMaintenanceSettings`). Older
+      settings files without the field load as disabled. */
+  autoMaintenance: AutoMaintenanceSettings;
+  /** When automatic maintenance last ran (ms since epoch), as
+      recorded by the shell; null when it has never run. */
+  lastMaintenanceMs: number | null;
+}
+
+/** Automatic maintenance: when due, the shell permanently removes
+    Recycle Bin items older than `minAgeDays` and clears old
+    temporary files through the same safety checks as a manual
+    cleanup. Every run is recorded in History. */
+export interface AutoMaintenanceSettings {
+  enabled: boolean;
+  frequency: "daily" | "weekly";
+  minAgeDays: number;
 }
 
 /* ---------- Watch: scan history, forecast, biggest changes ---------- */
@@ -747,6 +763,87 @@ export interface ExtensionStat {
   extension: string;
   bytes: number;
   count: number;
+}
+
+/* ---------- App junk, drive health, software updates, moves ---------- */
+
+/** One application's measured cache locations, from
+    `list_app_junk`. `paths` are the cache folders themselves;
+    cleaning moves their CONTENTS to the Recycle Bin. */
+export interface AppJunkGroup {
+  id: string;
+  app: string;
+  label: string;
+  note: string;
+  paths: string[];
+  bytes: number;
+  fileCount: number;
+}
+
+export interface AppJunkFailure {
+  path: string;
+  error: string;
+}
+
+/** `clean_app_junk` result: which paths were cleaned, which
+    failed (and why), and the bytes moved to the Recycle Bin. */
+export interface CleanAppJunkResult {
+  succeeded: string[];
+  failed: AppJunkFailure[];
+  reclaimedBytes: number;
+}
+
+export type DriveHealthStatus = "healthy" | "caution" | "critical" | "unknown";
+
+/** One physical drive's SMART self-report, from `get_drive_health`.
+    Every measured fact is nullable: drives routinely decline to
+    report individual values, and the UI says "Not reported"
+    rather than guessing. `lifeLeftPercent` is already life LEFT
+    (the shell converts wear figures). */
+export interface DriveHealth {
+  model: string;
+  interface: string;
+  capacityBytes: number;
+  temperatureC: number | null;
+  lifeLeftPercent: number | null;
+  powerOnHours: number | null;
+  powerCycles: number | null;
+  reallocatedSectors: number | null;
+  predictedFailure: boolean;
+  status: DriveHealthStatus;
+}
+
+/** One outdated application, from winget via
+    `list_available_updates`. Versions are display strings. */
+export interface AvailableUpdate {
+  name: string;
+  id: string;
+  currentVersion: string;
+  availableVersion: string;
+}
+
+/** `list_available_updates` result. `available` is false when
+    winget itself is not available on this PC — a real state,
+    distinct from "no updates" and from a failed check (`error`). */
+export interface AvailableUpdates {
+  available: boolean;
+  updates: AvailableUpdate[];
+  error: string | null;
+}
+
+/** One application's update outcome from `update_software`. */
+export interface SoftwareUpdateOutcome {
+  id: string;
+  success: boolean;
+  message: string;
+}
+
+/** `relocate_folder` / `undo_relocation` result: the folder's
+    original location, where it lives now, and its measured size. */
+export interface RelocateResult {
+  source: string;
+  target: string;
+  bytes: number;
 }
 
 export type PageId =

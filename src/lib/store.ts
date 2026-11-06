@@ -36,6 +36,8 @@ const DEFAULT_SETTINGS: AppSettings = {
   onboarded: false,
   ocrEnabled: true,
   liveIndex: true,
+  autoMaintenance: { enabled: false, frequency: "weekly", minAgeDays: 30 },
+  lastMaintenanceMs: null,
 };
 
 export type StatusBannerState = {

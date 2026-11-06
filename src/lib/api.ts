@@ -1,10 +1,13 @@
 import type {
   AppEntry,
+  AppJunkGroup,
   AppSettings,
   AssistantReply,
+  AvailableUpdates,
   BiggestChanges,
   CandidateGroup,
   ChatMessage,
+  CleanAppJunkResult,
   CleanupMode,
   CleanupPlan,
   CleanupResult,
@@ -16,6 +19,7 @@ import type {
   DockerActionPreview,
   DockerActionResult,
   DockerOverview,
+  DriveHealth,
   DriveInfo,
   DuplicateGroup,
   EmptyRecycleBinProgress,
@@ -32,6 +36,7 @@ import type {
   RecentFile,
   Recommendation,
   RecycleBinItem,
+  RelocateResult,
   RestoreCleanupRunResult,
   ScanComparison,
   ScanHistoryEntry,
@@ -42,6 +47,7 @@ import type {
   SearchResponse,
   SecretFinding,
   SetCompressionResult,
+  SoftwareUpdateOutcome,
   StartupItem,
   SimilarGroup,
   SpaceForecast,
@@ -529,6 +535,116 @@ export async function exportReport(html: string): Promise<string | null> {
   return invoke<string | null>("export_report", { html });
 }
 
+/**
+ * Save a CSV export of the current scan (its files, or its
+ * category totals) through the shell's save dialog. Same contract
+ * as `exportReport`: the saved path, null on cancel, throws on a
+ * failed save.
+ */
+export async function exportScanCsv(kind: "files" | "categories"): Promise<string | null> {
+  if (!inDesktopApp()) return null;
+  return invoke<string | null>("export_scan_csv", { kind });
+}
+
+/* ---------- App junk ---------- */
+
+/** Cache locations of known applications, measured where each app
+    keeps them. Throws on failure: a page must never render a
+    failed read as "no app caches". */
+export async function listAppJunk(): Promise<AppJunkGroup[]> {
+  if (!inDesktopApp()) return [];
+  return invoke<AppJunkGroup[]>("list_app_junk");
+}
+
+/**
+ * Move the CONTENTS of the named junk groups' cache locations to
+ * the Recycle Bin. The shell re-derives the locations from the
+ * group ids — paths are never taken from the client. The result
+ * reports each path's outcome; an invoke-level failure throws.
+ */
+export async function cleanAppJunk(groupIds: string[]): Promise<CleanAppJunkResult> {
+  requireDesktop();
+  return invoke<CleanAppJunkResult>("clean_app_junk", { groupIds });
+}
+
+/* ---------- Drive health (SMART) ---------- */
+
+/** Each physical drive's SMART self-report. An empty list is a
+    real answer — the system reports no drive health — distinct
+    from a failed read, which throws. */
+export async function getDriveHealth(): Promise<DriveHealth[]> {
+  if (!inDesktopApp()) return [];
+  return invoke<DriveHealth[]>("get_drive_health");
+}
+
+/* ---------- Software updates (winget) ---------- */
+
+/** Outdated applications according to the Windows Package Manager.
+    `available: false` in the result means winget itself is not
+    available on this PC. Throws when the check itself fails. */
+export async function listAvailableUpdates(): Promise<AvailableUpdates> {
+  if (!inDesktopApp()) return { available: false, updates: [], error: null };
+  return invoke<AvailableUpdates>("list_available_updates");
+}
+
+/**
+ * Update the named applications via winget; an empty id list
+ * updates everything outstanding. Resolves with one outcome per
+ * attempted application — a failed update is an outcome with
+ * `success: false`, not a throw.
+ */
+export async function updateSoftware(ids: string[]): Promise<SoftwareUpdateOutcome[]> {
+  requireDesktop();
+  return invoke<SoftwareUpdateOutcome[]>("update_software", { ids });
+}
+
+/* ---------- Move folder (relocation) ---------- */
+
+/**
+ * Move a folder's contents into `destDir` on another drive and
+ * leave a link at the original location, so apps keep working.
+ * Long-running for large folders. Throws with the shell's reason
+ * when the move cannot be done safely.
+ */
+export async function relocateFolder(source: string, destDir: string): Promise<RelocateResult> {
+  requireDesktop();
+  return invoke<RelocateResult>("relocate_folder", { source, destDir });
+}
+
+/** Undo the relocation recorded by a History entry: move the
+    contents back and remove the link. */
+export async function undoRelocation(entryId: number): Promise<RelocateResult> {
+  requireDesktop();
+  return invoke<RelocateResult>("undo_relocation", { entryId });
+}
+
+/* ---------- Explorer integration & launch intent ---------- */
+
+/** Whether "Analyze with DiskPilot" is registered in the Explorer
+    right-click menu. Throws when the registration cannot be read —
+    Settings must not describe a guessed state. */
+export async function getExplorerIntegration(): Promise<boolean> {
+  if (!inDesktopApp()) return false;
+  return invoke<boolean>("get_explorer_integration");
+}
+
+/** Register or remove the Explorer right-click entry. */
+export async function setExplorerIntegration(enabled: boolean): Promise<void> {
+  requireDesktop();
+  await invoke<void>("set_explorer_integration", { enabled });
+}
+
+/**
+ * The folder this launch (or an Explorer "Analyze with
+ * DiskPilot" click while running) asked to scan; null when the
+ * app was launched normally. Reading consumes the intent in the
+ * shell, so a path is delivered once per request.
+ */
+export async function getLaunchIntent(): Promise<string | null> {
+  if (!inDesktopApp()) return null;
+  return invoke<string | null>("get_launch_intent");
+}
+
 /* ---------- Shell integration ---------- */
 
 /** Reveal a file or folder in Windows Explorer (selects the item). */
@@ -588,4 +704,11 @@ export function onTrayNavigate(
   handler: (target: PageId | "emptyRecycleBin") => void,
 ): Promise<Unlisten> {
   return listenEvent<PageId | "emptyRecycleBin">("tray://navigate", handler);
+}
+
+/** Explorer "Analyze with DiskPilot" was clicked while the app is
+    already running. The payload carries nothing — the handler
+    re-reads `getLaunchIntent` for the requested folder. */
+export function onLaunchScan(handler: () => void): Promise<Unlisten> {
+  return listenEvent<null>("launch-scan", () => handler());
 }
