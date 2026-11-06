@@ -4,6 +4,7 @@
 //! flagged because removing them frees little space.
 
 use crate::model::*;
+use rayon::prelude::*;
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::io::Read;
@@ -99,84 +100,106 @@ pub fn hash_full(path: &Path) -> Option<String> {
     Some(format!("{:x}", hasher.finalize()))
 }
 
-fn collect_files(root: &Path, out: &mut Vec<PathBuf>) {
+/// Collect every regular, non-empty file under `root`, skipping symlinks,
+/// hidden folders and the dependency/cache folders in `skipped_dir`.
+/// Subdirectories are walked in parallel (the same shape as the scanner's
+/// walk); the resulting order is unspecified, exactly as directory read
+/// order was in the serial version.
+fn collect_files(root: &Path) -> Vec<PathBuf> {
     let Ok(read) = std::fs::read_dir(root) else {
-        return;
+        return Vec::new();
     };
-    for entry in read.flatten() {
-        let path = entry.path();
-        let Ok(md) = std::fs::symlink_metadata(&path) else {
-            continue;
-        };
-        if md.file_type().is_symlink() {
-            continue;
-        }
-        if md.is_dir() {
-            let name = entry.file_name().to_string_lossy().to_string();
-            if skipped_dir(&name) {
-                continue;
+    let entries: Vec<PathBuf> = read.flatten().map(|e| e.path()).collect();
+    entries
+        .into_par_iter()
+        .flat_map(|path| {
+            let Ok(md) = std::fs::symlink_metadata(&path) else {
+                return Vec::new();
+            };
+            if md.file_type().is_symlink() {
+                return Vec::new();
             }
-            collect_files(&path, out);
-        } else if md.is_file() && md.len() > 0 {
-            out.push(path);
-        }
-    }
+            if md.is_dir() {
+                let name = path
+                    .file_name()
+                    .map(|n| n.to_string_lossy().to_string())
+                    .unwrap_or_default();
+                if skipped_dir(&name) {
+                    Vec::new()
+                } else {
+                    collect_files(&path)
+                }
+            } else if md.is_file() && md.len() > 0 {
+                vec![path]
+            } else {
+                Vec::new()
+            }
+        })
+        .collect()
 }
 
 pub fn find_duplicates(root: &Path) -> Vec<DuplicateGroup> {
-    let mut files = Vec::new();
-    collect_files(root, &mut files);
-    // Stage 1: group by exact size.
+    let files = collect_files(root);
+    // Stage 1: group by exact size. Metadata reads run in parallel; the
+    // grouping itself is a cheap serial fold over the results.
+    let sized: Vec<(u64, PathBuf)> = files
+        .into_par_iter()
+        .filter_map(|f| std::fs::metadata(&f).ok().map(|md| (md.len(), f)))
+        .collect();
     let mut by_size: HashMap<u64, Vec<PathBuf>> = HashMap::new();
-    for f in files {
-        if let Ok(md) = std::fs::metadata(&f) {
-            by_size.entry(md.len()).or_default().push(f);
-        }
+    for (len, f) in sized {
+        by_size.entry(len).or_default().push(f);
+    }
+    // Stage 2: partial hash of every file whose size is not unique. The
+    // grouping key carries the size so partial classes never mix sizes,
+    // exactly as the serial per-size-class nesting did.
+    let partial_candidates: Vec<(u64, PathBuf)> = by_size
+        .into_iter()
+        .filter(|(_, paths)| paths.len() >= 2)
+        .flat_map(|(size, paths)| paths.into_iter().map(move |p| (size, p)))
+        .collect();
+    let partials: Vec<(u64, String, PathBuf)> = partial_candidates
+        .into_par_iter()
+        .filter_map(|(size, p)| hash_partial(&p).map(|h| (size, h, p)))
+        .collect();
+    let mut by_partial: HashMap<(u64, String), Vec<PathBuf>> = HashMap::new();
+    for (size, hash, p) in partials {
+        by_partial.entry((size, hash)).or_default().push(p);
+    }
+    // Stage 3: full SHA-256 of every file that survived the partial hash.
+    let full_candidates: Vec<(u64, PathBuf)> = by_partial
+        .into_iter()
+        .filter(|(_, paths)| paths.len() >= 2)
+        .flat_map(|((size, _), paths)| paths.into_iter().map(move |p| (size, p)))
+        .collect();
+    let fulls: Vec<(u64, String, PathBuf)> = full_candidates
+        .into_par_iter()
+        .filter_map(|(size, p)| hash_full(&p).map(|h| (size, h, p)))
+        .collect();
+    let mut by_full: HashMap<(u64, String), Vec<PathBuf>> = HashMap::new();
+    for (size, hash, p) in fulls {
+        by_full.entry((size, hash)).or_default().push(p);
     }
     let mut groups: Vec<DuplicateGroup> = Vec::new();
-    for (size, paths) in by_size {
-        if paths.len() < 2 {
+    for ((size, hash), fpaths) in by_full {
+        if fpaths.len() < 2 {
             continue;
         }
-        // Stage 2: partial hash.
-        let mut by_partial: HashMap<String, Vec<PathBuf>> = HashMap::new();
-        for p in paths {
-            if let Some(h) = hash_partial(&p) {
-                by_partial.entry(h).or_default().push(p);
-            }
-        }
-        for (_, ppaths) in by_partial {
-            if ppaths.len() < 2 {
-                continue;
-            }
-            // Stage 3: full SHA-256.
-            let mut by_full: HashMap<String, Vec<PathBuf>> = HashMap::new();
-            for p in ppaths {
-                if let Some(h) = hash_full(&p) {
-                    by_full.entry(h).or_default().push(p);
-                }
-            }
-            for (hash, fpaths) in by_full {
-                if fpaths.len() < 2 {
-                    continue;
-                }
-                let first = fpaths[0].clone();
-                let dups: Vec<DuplicateFile> = fpaths
-                    .iter()
-                    .map(|p| DuplicateFile {
-                        path: p.to_string_lossy().to_string(),
-                        bytes: size,
-                        is_hardlink: is_same_file(&first, p) && p != &first,
-                        is_clone: p != &first && is_clone_candidate(&first, p),
-                    })
-                    .collect();
-                groups.push(DuplicateGroup {
-                    size,
-                    hash,
-                    files: dups,
-                });
-            }
-        }
+        let first = fpaths[0].clone();
+        let dups: Vec<DuplicateFile> = fpaths
+            .iter()
+            .map(|p| DuplicateFile {
+                path: p.to_string_lossy().to_string(),
+                bytes: size,
+                is_hardlink: is_same_file(&first, p) && p != &first,
+                is_clone: p != &first && is_clone_candidate(&first, p),
+            })
+            .collect();
+        groups.push(DuplicateGroup {
+            size,
+            hash,
+            files: dups,
+        });
     }
     groups.sort_by_key(|g| std::cmp::Reverse(g.wasted_bytes()));
     groups

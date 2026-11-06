@@ -20,6 +20,7 @@ use tauri::Manager;
 
 use diskpilot_core::assistant::KeyStore;
 use diskpilot_core::history::HistoryStore;
+use diskpilot_core::model::ScanSummary;
 use diskpilot_core::snapshot;
 use diskpilot_core::AppState;
 
@@ -35,6 +36,12 @@ pub struct Settings {
     pub assistant_enabled: bool,
     /// `"anthropic"`, `"openai"` or `"openrouter"`.
     pub assistant_provider: String,
+    /// Folders and patterns excluded from scans, matched by the core
+    /// scanner (a folder or file name, or a wildcard like `*.iso`).
+    /// `#[serde(default)]` keeps settings files written before this
+    /// field existed loading unchanged.
+    #[serde(default)]
+    pub exclusions: Vec<String>,
 }
 
 impl Default for Settings {
@@ -44,6 +51,7 @@ impl Default for Settings {
             theme: "system".to_string(),
             assistant_enabled: false,
             assistant_provider: "anthropic".to_string(),
+            exclusions: Vec::new(),
         }
     }
 }
@@ -61,6 +69,11 @@ pub struct ShellState {
     /// persisted, so the explorer and recommendations need a fresh scan
     /// after a restart.
     pub engine: Mutex<AppState>,
+    /// The scan before the current one, restored from
+    /// `previous_snapshot.json` at launch and rotated forward on every
+    /// completed scan. Powers the scan-over-scan comparison; `None`
+    /// until two scans of the same root exist.
+    pub previous_summary: Mutex<Option<ScanSummary>>,
     /// Assistant API-key store (Windows Credential Manager via the
     /// core's keyring-backed store). Keys can be saved, checked and
     /// deleted through commands — never read back into the webview.
@@ -85,6 +98,12 @@ impl ShellState {
     /// Path of the persisted last-scan snapshot.
     pub fn snapshot_file(&self) -> PathBuf {
         self.app_data_dir.join("snapshot.json")
+    }
+
+    /// Path of the snapshot the last-scan snapshot replaced on the most
+    /// recent scan (the "previous scan" of the comparison).
+    pub fn previous_snapshot_file(&self) -> PathBuf {
+        self.app_data_dir.join("previous_snapshot.json")
     }
 
     /// Root the safety contexts are built against: the scanned root when
@@ -148,11 +167,16 @@ pub fn run() {
             engine.summary = snapshot::load_snapshot(&data_dir.join("snapshot.json"))
                 .ok()
                 .flatten();
+            let previous_summary =
+                snapshot::load_snapshot(&data_dir.join("previous_snapshot.json"))
+                    .ok()
+                    .flatten();
 
             app.manage(ShellState {
                 app_data_dir: data_dir,
                 settings: Mutex::new(settings),
                 engine: Mutex::new(engine),
+                previous_summary: Mutex::new(previous_summary),
                 key_store: diskpilot_core::assistant::provider::default_key_store(),
                 recycle_bin_cancel: Arc::new(AtomicBool::new(false)),
                 history: Mutex::new(None),
@@ -183,6 +207,7 @@ pub fn run() {
             commands::start_scan,
             commands::cancel_scan,
             commands::get_scan_summary,
+            commands::get_scan_comparison,
             commands::list_directory,
             commands::get_recommendations,
             commands::build_cleanup_plan,

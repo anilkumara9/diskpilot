@@ -7,6 +7,7 @@ import type { HistoryEntry } from "@/lib/types";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { Input } from "@/components/ui/input";
 import { SkeletonRows } from "@/components/ui/skeleton";
+import { CopyButton } from "@/components/shared/CopyButton";
 import { EmptyState } from "@/components/shared/EmptyState";
 import { MarkerTag } from "@/components/shared/MarkerTag";
 
@@ -108,8 +109,14 @@ export function HistoryPage() {
           />
         ) : (
           <>
-            <div className="max-w-[420px] pb-1">
-              <Input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Filter history" aria-label="Filter history" />
+            <div className="flex max-w-[560px] items-center gap-2 pb-1">
+              <div className="min-w-0 flex-1">
+                <Input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Filter history" aria-label="Filter history" />
+              </div>
+              <CopyButton
+                text={JSON.stringify(visible, null, 2)}
+                label="Copy as JSON"
+              />
             </div>
             {visible.length === 0 ? (
               <p className="py-8 text-center text-[12px] text-muted">No history entries match the filter.</p>

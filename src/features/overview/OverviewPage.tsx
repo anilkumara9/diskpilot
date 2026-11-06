@@ -13,8 +13,8 @@ import { useAppStore } from "@/lib/store";
 import * as api from "@/lib/api";
 import { categoryRows, sortLocations, totalRecoverable } from "@/lib/analysis";
 import { categoryMeta } from "@/lib/categories";
-import { displayPath, formatBytes, formatCount, formatDate, formatDuration, formatPercent } from "@/lib/format";
-import type { DiskInfo, RecycleBinItem, ScanSummary } from "@/lib/types";
+import { displayPath, formatBytes, formatCount, formatDate, formatDuration, formatPercent, formatSignedBytes, formatSignedCount } from "@/lib/format";
+import type { Category, DiskInfo, RecycleBinItem, ScanComparison, ScanSummary } from "@/lib/types";
 import { Button } from "@/components/ui/button";
 import { Section } from "@/components/ui/section";
 import { Tooltip } from "@/components/ui/tooltip";
@@ -147,25 +147,84 @@ function Figure({ label, tip, value, accent }: { label: string; tip: string; val
 /* ---------------- Lists ---------------- */
 
 export function CategoryList({ summary }: { summary: ScanSummary }) {
+  const comparison = useAppStore((s) => s.comparison);
   const rows = categoryRows(summary);
   const max = rows[0]?.bytes ?? 1;
+  const deltas = new Map<Category, number>(
+    (comparison?.categories ?? []).map((c) => [c.category, c.deltaBytes]),
+  );
   return (
     <ul className="divide-y divide-border">
-      {rows.map((row) => (
-        <li key={row.category} className="flex items-center gap-3 py-2">
-          <CategoryBadge category={row.category} className="w-[168px] shrink-0" />
-          <div className="min-w-0 flex-1">
-            <SizeBar fraction={row.bytes / max} colorVar={categoryMeta(row.category).colorVar} height={4} />
-          </div>
-          <span className="w-[92px] shrink-0 text-right text-[13px] tabular text-foreground">
-            {formatBytes(row.bytes)}
-          </span>
-          <span className="w-[64px] shrink-0 text-right text-[12px] tabular text-muted">
-            {formatPercent(summary.totalBytes ? row.bytes / summary.totalBytes : 0)}
-          </span>
-        </li>
-      ))}
+      {rows.map((row) => {
+        const delta = deltas.get(row.category) ?? 0;
+        return (
+          <li key={row.category} className="flex items-center gap-3 py-2">
+            <CategoryBadge category={row.category} className="w-[168px] shrink-0" />
+            <div className="min-w-0 flex-1">
+              <SizeBar fraction={row.bytes / max} colorVar={categoryMeta(row.category).colorVar} height={4} />
+            </div>
+            <span className="w-[92px] shrink-0 text-right text-[13px] tabular text-foreground">
+              {formatBytes(row.bytes)}
+            </span>
+            <span className="w-[64px] shrink-0 text-right text-[12px] tabular text-muted">
+              {formatPercent(summary.totalBytes ? row.bytes / summary.totalBytes : 0)}
+            </span>
+            {comparison ? (
+              <span
+                className={`w-[76px] shrink-0 text-right text-[12px] tabular ${
+                  delta < 0 ? "text-tier-safe" : "text-muted"
+                }`}
+                title={delta !== 0 ? "Change since the previous scan" : undefined}
+              >
+                {delta !== 0 ? formatSignedBytes(delta) : null}
+              </span>
+            ) : null}
+          </li>
+        );
+      })}
     </ul>
+  );
+}
+
+/* ---------------- Since last scan ---------------- */
+
+/**
+ * Scan-over-scan delta strip. Renders only when the shell has a
+ * previous scan of the same root to compare against — every number
+ * comes from `get_scan_comparison`, never from local guesswork.
+ * Negative (shrinking) totals are the good outcome and take the
+ * safe-tier green, matching the "Likely recoverable" figure.
+ */
+export function SinceLastScan({ comparison }: { comparison: ScanComparison }) {
+  const total = comparison.totalBytesDelta;
+  const headline =
+    total < 0
+      ? `${formatBytes(-total)} freed since the last scan`
+      : total > 0
+        ? `${formatBytes(total)} more than the last scan`
+        : "No change in total size since the last scan";
+  return (
+    <div className="flex flex-wrap items-center gap-x-10 gap-y-3">
+      <div className="min-w-[120px]">
+        <p className="text-[12px] text-muted">Total measured</p>
+        <p
+          className={`mt-0.5 text-[20px] font-semibold leading-6 tabular ${
+            total < 0 ? "text-tier-safe" : "text-foreground"
+          }`}
+        >
+          {formatSignedBytes(total)}
+        </p>
+      </div>
+      <div className="min-w-[120px]">
+        <p className="text-[12px] text-muted">Files</p>
+        <p className="mt-0.5 text-[20px] font-semibold leading-6 tabular text-foreground">
+          {formatSignedCount(comparison.fileCountDelta)}
+        </p>
+      </div>
+      <p className="min-w-0 flex-1 text-[12px] leading-4 text-muted">
+        {headline}. Per-category changes are shown in “Where space goes” below.
+      </p>
+    </div>
   );
 }
 
@@ -331,6 +390,7 @@ export function AssistantPrompt() {
 
 export function OverviewPage() {
   const summary = useAppStore((s) => s.summary);
+  const comparison = useAppStore((s) => s.comparison);
   const disk = useAppStore((s) => s.disk);
   const scanning = useAppStore((s) => s.scanning);
   const homeDir = useAppStore((s) => s.env?.homeDir);
@@ -380,6 +440,15 @@ export function OverviewPage() {
 
       {summary ? (
         <>
+          {comparison ? (
+            <Section
+              title="Since last scan"
+              description={`Compared with the previous scan, finished ${formatDate(comparison.previousScannedAtMs)}.`}
+            >
+              <SinceLastScan comparison={comparison} />
+            </Section>
+          ) : null}
+
           <Section
             title="Start here"
             description="The items most worth reviewing first."

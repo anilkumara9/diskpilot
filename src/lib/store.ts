@@ -5,6 +5,7 @@ import type {
   EnvironmentInfo,
   PageId,
   Recommendation,
+  ScanComparison,
   ScanProgress,
   ScanSummary,
 } from "./types";
@@ -16,6 +17,7 @@ const DEFAULT_SETTINGS: AppSettings = {
   theme: "system",
   assistantEnabled: false,
   assistantProvider: "anthropic",
+  exclusions: [],
 };
 
 export type StatusBannerState = { kind: "error" | "info" | "success"; message: string } | null;
@@ -30,6 +32,7 @@ interface AppState {
   scanError: string | null;
   progress: ScanProgress | null;
   summary: ScanSummary | null;
+  comparison: ScanComparison | null;
   recommendations: Recommendation[];
   banner: StatusBannerState;
   recycleBinOpen: boolean;
@@ -40,6 +43,7 @@ interface AppState {
   startScan: (root?: string) => Promise<void>;
   cancelScan: () => Promise<void>;
   refreshRecommendations: () => Promise<void>;
+  refreshComparison: () => Promise<void>;
   refreshDisk: () => Promise<void>;
   updateSettings: (patch: Partial<AppSettings>) => Promise<void>;
   setBanner: (banner: StatusBannerState) => void;
@@ -62,6 +66,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   scanError: null,
   progress: null,
   summary: null,
+  comparison: null,
   recommendations: [],
   banner: null,
   recycleBinOpen: false,
@@ -83,12 +88,13 @@ export const useAppStore = create<AppState>((set, get) => ({
     set({ env, settings });
     applyTheme(settings.theme);
 
-    const [disk, summary, recommendations] = await Promise.all([
+    const [disk, summary, recommendations, comparison] = await Promise.all([
       api.getDiskInfo(settings.scanRoot || undefined),
       api.getScanSummary(),
       api.getRecommendations(),
+      api.getScanComparison(),
     ]);
-    set({ disk, summary, recommendations });
+    set({ disk, summary, recommendations, comparison });
 
     if (!listenersBound) {
       listenersBound = true;
@@ -127,6 +133,11 @@ export const useAppStore = create<AppState>((set, get) => ({
     set({ recommendations });
   },
 
+  refreshComparison: async () => {
+    const comparison = await api.getScanComparison();
+    set({ comparison });
+  },
+
   refreshDisk: async () => {
     const disk = await api.getDiskInfo(get().settings.scanRoot || undefined);
     if (disk) set({ disk });
@@ -160,6 +171,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     set({ summary: s, progress: null, scanning: false, scanError: null });
     void get().refreshRecommendations();
     void get().refreshDisk();
+    void get().refreshComparison();
   },
 }));
 

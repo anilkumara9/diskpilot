@@ -21,6 +21,20 @@ export function formatCount(n: number): string {
   return new Intl.NumberFormat("en-US").format(Math.trunc(n));
 }
 
+/** A byte delta with an explicit sign: "+212 MB" when space grew,
+    "−1.2 GB" (minus sign) when it shrank, "0 B" when unchanged. Used
+    by the scan-over-scan comparison, where the sign carries meaning. */
+export function formatSignedBytes(delta: number): string {
+  if (!Number.isFinite(delta) || delta === 0) return "0 B";
+  return `${delta > 0 ? "+" : "−"}${formatBytes(Math.abs(delta))}`;
+}
+
+/** A count delta with an explicit sign: "+1,234" / "−56" / "0". */
+export function formatSignedCount(delta: number): string {
+  if (!Number.isFinite(delta) || delta === 0) return "0";
+  return `${delta > 0 ? "+" : "−"}${formatCount(Math.abs(delta))}`;
+}
+
 export function formatPercent(fraction: number): string {
   if (!Number.isFinite(fraction)) return "0%";
   const pct = fraction * 100;

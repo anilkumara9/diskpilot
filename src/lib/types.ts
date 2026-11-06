@@ -303,6 +303,30 @@ export interface AppSettings {
   theme: ThemePreference;
   assistantEnabled: boolean;
   assistantProvider: AssistantProvider;
+  /** Folders and patterns excluded from scans (a folder or file name,
+      or a wildcard like `*.iso`). Older settings files without the
+      field load with an empty list. */
+  exclusions: string[];
+}
+
+/** One category's change between the previous scan and the current
+    one. `deltaBytes` is signed: negative means the category shrank. */
+export interface CategoryDelta {
+  category: Category;
+  currentBytes: number;
+  previousBytes: number;
+  deltaBytes: number;
+}
+
+/** Current scan vs. the previous scan of the same root, as returned by
+    the shell's `get_scan_comparison`. Deltas are signed: a negative
+    `totalBytesDelta` means space was freed overall. Null when there is
+    no previous scan or the root changed. */
+export interface ScanComparison {
+  previousScannedAtMs: number;
+  totalBytesDelta: number;
+  fileCountDelta: number;
+  categories: CategoryDelta[];
 }
 
 export interface RecycleBinItem {

@@ -284,6 +284,20 @@ export function RecommendationsPage() {
     });
   };
 
+  /** Select or clear exactly one tier's recommendations. Items that
+      render without a checkbox (Keep tier) are never selectable and
+      are skipped, matching their disabled state in the list. */
+  const setTierSelection = (items: Recommendation[], select: boolean) => {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      for (const rec of items) {
+        if (rec.tier === "keep") continue;
+        if (select) next.add(rec.id); else next.delete(rec.id);
+      }
+      return next;
+    });
+  };
+
   const review = async () => {
     setBuilding(true);
     setPlanError(null);
@@ -336,6 +350,26 @@ export function RecommendationsPage() {
                 key={group.tier}
                 title={tierMeta(group.tier).label}
                 description={tierMeta(group.tier).description}
+                action={
+                  group.tier === "likelySafe" ? (
+                    <span className="flex items-center gap-1">
+                      <Button
+                        variant="subtle"
+                        size="sm"
+                        onClick={() => setTierSelection(group.items, true)}
+                      >
+                        Select all
+                      </Button>
+                      <Button
+                        variant="subtle"
+                        size="sm"
+                        onClick={() => setTierSelection(group.items, false)}
+                      >
+                        Clear
+                      </Button>
+                    </span>
+                  ) : undefined
+                }
               >
                 <div className="border-t border-border">
                   {group.items.map((rec) => (

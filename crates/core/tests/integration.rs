@@ -76,6 +76,129 @@ fn scanner_does_not_follow_symlink() {
 }
 
 #[test]
+fn exclusion_pattern_matching_rules() {
+    use diskpilot_core::scanner::is_excluded;
+    let pats = |ps: &[&str]| ps.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+    // Exact segment match, any component, case-insensitive.
+    assert!(is_excluded(
+        Path::new("/x/proj/Node_Modules/pkg/a.js"),
+        &pats(&["node_modules"])
+    ));
+    assert!(!is_excluded(
+        Path::new("/x/proj/node_modulesx/a.js"),
+        &pats(&["node_modules"])
+    ));
+    // Glob against a single segment.
+    assert!(is_excluded(Path::new("/x/logs/app.log"), &pats(&["*.log"])));
+    assert!(!is_excluded(
+        Path::new("/x/logs/app.txt"),
+        &pats(&["*.log"])
+    ));
+    assert!(is_excluded(Path::new("/x/gen-a/f"), &pats(&["gen-?"])));
+    assert!(!is_excluded(Path::new("/x/gen-ab/f"), &pats(&["gen-?"])));
+    // Multi-segment patterns match a trailing sequence of segments, with
+    // either separator: they match the directory they name (the scanner
+    // prunes the subtree there), not the same leaf under another parent.
+    assert!(is_excluded(
+        Path::new("/x/proj/node_modules"),
+        &pats(&["proj/node_modules"])
+    ));
+    assert!(is_excluded(
+        Path::new("/x/proj/node_modules"),
+        &pats(&["proj\\node_modules"])
+    ));
+    assert!(!is_excluded(
+        Path::new("/x/other/node_modules"),
+        &pats(&["proj/node_modules"])
+    ));
+    // Empty patterns / empty list never match.
+    assert!(!is_excluded(Path::new("/x/y"), &pats(&[""])));
+    assert!(!is_excluded(Path::new("/x/y"), &[]));
+}
+
+#[test]
+fn scanner_exclusions_hide_directory() {
+    let dir = tempfile::tempdir().unwrap();
+    write_file(&dir.path().join("proj/node_modules/pkg/a.js"), 5000);
+    write_file(&dir.path().join("proj/src/main.rs"), 3000);
+    write_file(&dir.path().join("docs/readme.txt"), 2000);
+    let (baseline, _) = Scanner::new(dir.path()).scan();
+    assert_eq!(baseline.file_count, 3);
+
+    let (summary, index) = Scanner::new(dir.path())
+        .with_exclusions(vec!["node_modules".to_string()])
+        .scan();
+    assert_eq!(
+        summary.file_count, 2,
+        "excluded dir's files are not counted"
+    );
+    let dep_bytes = diskpilot_core::scanner::allocated_size_for_path(
+        &dir.path().join("proj/node_modules/pkg/a.js"),
+    );
+    assert_eq!(summary.total_bytes, baseline.total_bytes - dep_bytes);
+    // Not in the index, not in totals, not in the skipped list.
+    assert!(!index.dir_sizes.keys().any(|p| p.contains("node_modules")));
+    assert!(!index.files.iter().any(|f| f.path.contains("node_modules")));
+    assert!(!summary.skipped.iter().any(|s| s.contains("node_modules")));
+}
+
+#[test]
+fn scanner_exclusions_multi_segment_prunes_subtree() {
+    let dir = tempfile::tempdir().unwrap();
+    write_file(&dir.path().join("proj/node_modules/pkg/a.js"), 5000);
+    write_file(&dir.path().join("other/node_modules/pkg/b.js"), 4000);
+    let (summary, index) = Scanner::new(dir.path())
+        .with_exclusions(vec!["proj/node_modules".to_string()])
+        .scan();
+    assert_eq!(summary.file_count, 1, "only other/node_modules survives");
+    assert!(index.files[0].path.contains("other"));
+}
+
+#[test]
+fn scanner_exclusions_wildcards() {
+    let dir = tempfile::tempdir().unwrap();
+    write_file(&dir.path().join("app.log"), 4000);
+    write_file(&dir.path().join("keep.txt"), 1000);
+    write_file(&dir.path().join("gen-a/out.bin"), 2000);
+    write_file(&dir.path().join("src/out.bin"), 3000);
+    let (summary, _index) = Scanner::new(dir.path())
+        .with_exclusions(vec!["*.log".to_string(), "gen-*".to_string()])
+        .scan();
+    assert_eq!(
+        summary.file_count, 2,
+        "only keep.txt and src/out.bin remain"
+    );
+}
+
+#[test]
+fn scanner_exclusions_root_never_excluded_and_empty_noop() {
+    let dir = tempfile::tempdir().unwrap();
+    write_file(&dir.path().join("sub/file.txt"), 1500);
+    let (baseline, _) = Scanner::new(dir.path()).scan();
+
+    // Pattern equal to the root's own final component: the root itself is
+    // never excluded, and no child carries that name, so nothing changes.
+    let root_name = dir
+        .path()
+        .file_name()
+        .unwrap()
+        .to_string_lossy()
+        .to_string();
+    let (with_root_pattern, _) = Scanner::new(dir.path())
+        .with_exclusions(vec![root_name])
+        .scan();
+    assert_eq!(with_root_pattern.file_count, baseline.file_count);
+    assert_eq!(with_root_pattern.total_bytes, baseline.total_bytes);
+
+    // Empty pattern list is a no-op: identical summary.
+    let (empty, _) = Scanner::new(dir.path()).with_exclusions(Vec::new()).scan();
+    assert_eq!(empty.file_count, baseline.file_count);
+    assert_eq!(empty.dir_count, baseline.dir_count);
+    assert_eq!(empty.total_bytes, baseline.total_bytes);
+    assert_eq!(empty.category_totals, baseline.category_totals);
+}
+
+#[test]
 fn hardlink_counted_once() {
     let dir = tempfile::tempdir().unwrap();
     let a = dir.path().join("a.bin");
@@ -235,6 +358,133 @@ fn duplicates_found_by_hash() {
     assert_eq!(groups.len(), 1);
     assert_eq!(groups[0].files.len(), 2);
     assert_eq!(groups[0].size, 4000);
+}
+
+#[test]
+fn duplicates_parallel_matches_full_hash_reference() {
+    // The parallel staged finder (size -> partial hash -> full hash) must
+    // produce exactly the groups an independent serial grouping by full
+    // SHA-256 alone produces.
+    let dir = tempfile::tempdir().unwrap();
+    let pattern = |seed: u8, n: usize| -> Vec<u8> {
+        (0..n).map(|i| seed.wrapping_add((i % 251) as u8)).collect()
+    };
+    // Pair A: identical large files (span the partial-hash head+tail window).
+    let big = pattern(7, 200_000);
+    std::fs::create_dir_all(dir.path().join("a")).unwrap();
+    std::fs::create_dir_all(dir.path().join("b")).unwrap();
+    std::fs::write(dir.path().join("a/big.bin"), &big).unwrap();
+    std::fs::write(dir.path().join("b/big.bin"), &big).unwrap();
+    // Pair B: same head and tail, different middle. Same size and same
+    // partial hash, different content — staging must still separate them.
+    let mut b1 = pattern(3, 200_000);
+    let mut b2 = b1.clone();
+    b1[100_000] = 0xAA;
+    b2[100_000] = 0xBB;
+    assert_ne!(b1, b2);
+    std::fs::write(dir.path().join("a/tricky.bin"), &b1).unwrap();
+    std::fs::write(dir.path().join("b/tricky.bin"), &b2).unwrap();
+    // Pair C: identical small files.
+    let small = pattern(9, 4_000);
+    std::fs::write(dir.path().join("a/small.bin"), &small).unwrap();
+    std::fs::write(dir.path().join("b/small.bin"), &small).unwrap();
+    // A unique file and an empty file (ignored: zero-length).
+    write_file(&dir.path().join("unique.bin"), 1234);
+    std::fs::write(dir.path().join("empty.bin"), b"").unwrap();
+
+    // Independent reference: serial walk, group by (size, full hash) only.
+    fn collect(root: &Path, out: &mut Vec<PathBuf>) {
+        for entry in std::fs::read_dir(root).unwrap().flatten() {
+            let p = entry.path();
+            let md = std::fs::symlink_metadata(&p).unwrap();
+            if md.file_type().is_symlink() {
+                continue;
+            }
+            if md.is_dir() {
+                collect(&p, out);
+            } else if md.is_file() && md.len() > 0 {
+                out.push(p);
+            }
+        }
+    }
+    let mut files = Vec::new();
+    collect(dir.path(), &mut files);
+    let mut reference: Vec<(u64, String, Vec<String>)> = Vec::new();
+    for f in &files {
+        let size = std::fs::metadata(f).unwrap().len();
+        let hash = diskpilot_core::duplicates::hash_full(f).unwrap();
+        let path = f.to_string_lossy().to_string();
+        if let Some(g) = reference.iter_mut().find(|g| g.0 == size && g.1 == hash) {
+            g.2.push(path);
+        } else {
+            reference.push((size, hash, vec![path]));
+        }
+    }
+    reference.retain(|g| g.2.len() >= 2);
+    for g in &mut reference {
+        g.2.sort();
+    }
+    reference.sort();
+
+    // Canonical form of the real (parallel, staged) result.
+    let mut actual: Vec<(u64, String, Vec<String>)> =
+        diskpilot_core::duplicates::find_duplicates(dir.path())
+            .into_iter()
+            .map(|g| {
+                let mut paths: Vec<String> = g.files.iter().map(|f| f.path.clone()).collect();
+                paths.sort();
+                (g.size, g.hash, paths)
+            })
+            .collect();
+    actual.sort();
+
+    assert_eq!(actual.len(), 2, "expected the big and small groups only");
+    assert_eq!(actual, reference);
+}
+
+#[test]
+fn devtools_all_reports_parallel_preserves_order() {
+    use diskpilot_core::devtools::{self, DevPaths};
+    let dir = tempfile::tempdir().unwrap();
+    // Fixtures that trigger two different analyzers (Rust toolchains and
+    // Node), so cross-analyzer ordering is observable.
+    write_file(
+        &dir.path()
+            .join(".rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin/rustc"),
+        3000,
+    );
+    write_file(&dir.path().join("proj/node_modules/pkg/index.js"), 2000);
+    let paths = DevPaths::under(dir.path());
+
+    // The serial expectation: each analyzer called directly, in the
+    // documented order, empty reports dropped.
+    let mut expected: Vec<ToolReport> = Vec::new();
+    expected.extend(devtools::editors::analyze_all(&paths));
+    expected.extend(devtools::agents::analyze_all(&paths));
+    if let Some(r) = devtools::node::analyze(&paths) {
+        expected.push(r);
+    }
+    if let Some(r) = devtools::toolchains::analyze_rust(&paths) {
+        expected.push(r);
+    }
+    if let Some(r) = devtools::toolchains::analyze_python(&paths) {
+        expected.push(r);
+    }
+    if let Some(r) = devtools::dotnet::analyze(&paths) {
+        expected.push(r);
+    }
+    if let Some(r) = devtools::models::analyze(&paths) {
+        expected.push(r);
+    }
+    expected.retain(|r| !r.is_empty());
+    assert!(
+        expected.len() >= 2,
+        "fixture should trigger at least the Node and Rust reports, got {}",
+        expected.len()
+    );
+
+    let actual = devtools::all_reports(&paths);
+    assert_eq!(actual, expected, "parallel reports must match serial order");
 }
 
 #[test]

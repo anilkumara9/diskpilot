@@ -8,6 +8,7 @@ pub mod toolchains;
 
 use crate::model::*;
 use crate::scanner::measure_path;
+use rayon::prelude::*;
 use std::path::{Path, PathBuf};
 
 /// Resolved base locations for the analyzers. On Windows these are the user
@@ -134,25 +135,26 @@ pub fn file_name_str(p: &Path) -> String {
         .unwrap_or_else(|| p.to_string_lossy().to_string())
 }
 
+/// One analyzer job for [`all_reports`]: maps the resolved paths to the
+/// reports that analyzer produces (zero, one, or several).
+type AnalyzerJob = Box<dyn Fn(&DevPaths) -> Vec<ToolReport> + Sync>;
+
 pub fn all_reports(paths: &DevPaths) -> Vec<ToolReport> {
-    let mut reports: Vec<ToolReport> = Vec::new();
-    reports.extend(editors::analyze_all(paths));
-    reports.extend(agents::analyze_all(paths));
-    if let Some(r) = node::analyze(paths) {
-        reports.push(r);
-    }
-    if let Some(r) = toolchains::analyze_rust(paths) {
-        reports.push(r);
-    }
-    if let Some(r) = toolchains::analyze_python(paths) {
-        reports.push(r);
-    }
-    if let Some(r) = dotnet::analyze(paths) {
-        reports.push(r);
-    }
-    if let Some(r) = models::analyze(paths) {
-        reports.push(r);
-    }
+    // The analyzers are independent and read-only over `paths`, so they run
+    // in parallel. Each job maps to its reports through an indexed parallel
+    // map, which preserves the job order — the report order (and therefore
+    // the UI order) is identical to the serial version.
+    let jobs: Vec<AnalyzerJob> = vec![
+        Box::new(editors::analyze_all),
+        Box::new(agents::analyze_all),
+        Box::new(|p| node::analyze(p).into_iter().collect()),
+        Box::new(|p| toolchains::analyze_rust(p).into_iter().collect()),
+        Box::new(|p| toolchains::analyze_python(p).into_iter().collect()),
+        Box::new(|p| dotnet::analyze(p).into_iter().collect()),
+        Box::new(|p| models::analyze(p).into_iter().collect()),
+    ];
+    let parts: Vec<Vec<ToolReport>> = jobs.par_iter().map(|job| job(paths)).collect();
+    let mut reports: Vec<ToolReport> = parts.into_iter().flatten().collect();
     reports.retain(|r| !r.is_empty());
     reports
 }

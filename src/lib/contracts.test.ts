@@ -8,6 +8,7 @@ import type {
   EmptyRecycleBinProgress,
   EnvironmentInfo,
   RecycleBinItem,
+  ScanComparison,
   ScanProgress,
 } from "./types";
 
@@ -52,6 +53,31 @@ describe("shell contract shapes", () => {
     };
     expect(item.originalPath).toContain("file.txt");
     expect(progress.currentName).toBe("file.txt");
+  });
+
+  it("scan comparison carries signed deltas and per-category rows", () => {
+    const comparison: ScanComparison = {
+      previousScannedAtMs: 1700000000000,
+      totalBytesDelta: -1_200_000_000,
+      fileCountDelta: -56,
+      categories: [
+        { category: "cache", currentBytes: 800, previousBytes: 2_000, deltaBytes: -1_200 },
+        { category: "userData", currentBytes: 5_000, previousBytes: 5_000, deltaBytes: 0 },
+      ],
+    };
+    expect(Object.keys(comparison).sort()).toEqual([
+      "categories",
+      "fileCountDelta",
+      "previousScannedAtMs",
+      "totalBytesDelta",
+    ]);
+    expect(Object.keys(comparison.categories[0]).sort()).toEqual([
+      "category",
+      "currentBytes",
+      "deltaBytes",
+      "previousBytes",
+    ]);
+    expect(comparison.totalBytesDelta).toBeLessThan(0);
   });
 
   it("environment, scan progress and assistant shapes match the shell", () => {

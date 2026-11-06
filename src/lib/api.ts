@@ -19,6 +19,7 @@ import type {
   PageId,
   Recommendation,
   RecycleBinItem,
+  ScanComparison,
   ScanProgress,
   ScanSummary,
   SecretFinding,
@@ -83,6 +84,17 @@ export async function getScanSummary(): Promise<ScanSummary | null> {
   if (!inDesktopApp()) return null;
   try {
     return await invoke<ScanSummary | null>("get_scan_summary");
+  } catch {
+    return null;
+  }
+}
+
+/** Current scan vs. the previous scan of the same root; null when
+    there is no previous scan or the root changed. */
+export async function getScanComparison(): Promise<ScanComparison | null> {
+  if (!inDesktopApp()) return null;
+  try {
+    return await invoke<ScanComparison | null>("get_scan_comparison");
   } catch {
     return null;
   }

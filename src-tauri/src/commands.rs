@@ -20,6 +20,9 @@
 //!   emitted.
 //! - `get_environment` is composed from `std::env` and the core's
 //!   `model::home_dir_string()`; the core has no environment module.
+//! - `get_scan_comparison` diffs the current summary against the
+//!   previous scan's summary, which the shell keeps by rotating
+//!   `snapshot.json` to `previous_snapshot.json` on every scan.
 //! - Recycle Bin listing/emptying lives in `crate::recycle_bin`: the
 //!   core has no Recycle Bin *inventory* API (its safety gate protects
 //!   `$Recycle.Bin` from plan-based cleanup). The shell parses the
@@ -177,7 +180,12 @@ pub fn get_disk_info(
 /// Emits `scan://progress` (throttled by the core to ~120 ms) and
 /// `scan://finished` with the final summary; resolves with the summary.
 /// Only one scan runs at a time. The finished scan is recorded to
-/// History and persisted as the launch snapshot.
+/// History and persisted as the launch snapshot; the snapshot it
+/// replaces is rotated to `previous_snapshot.json` first, so the
+/// scan-over-scan comparison always has the prior scan available.
+/// A root that no longer exists is an error, not an empty scan; a
+/// root that is a file scans as a single-file tree (supported by the
+/// core scanner).
 #[tauri::command]
 pub async fn start_scan(
     app: AppHandle,
@@ -188,6 +196,16 @@ pub async fn start_scan(
         Some(r) if !r.is_empty() => r,
         _ => state.scan_root(),
     };
+
+    if !Path::new(&root_path).exists() {
+        return Err(format!("That folder no longer exists: {root_path}"));
+    }
+
+    let exclusions = state
+        .settings
+        .lock()
+        .map(|settings| settings.exclusions.clone())
+        .unwrap_or_default();
 
     let cancel = {
         let mut engine = state
@@ -216,7 +234,8 @@ pub async fn start_scan(
 
     let scanner = Scanner::new(&root_path)
         .with_cancel(cancel)
-        .with_progress(callback);
+        .with_progress(callback)
+        .with_exclusions(exclusions);
     let scan_result = tauri::async_runtime::spawn_blocking(move || scanner.scan()).await;
 
     let (summary, index) = match scan_result {
@@ -234,7 +253,22 @@ pub async fn start_scan(
         engine.store_scan(summary.clone(), index);
     }
 
-    let _ = snapshot::save_snapshot(&summary, &state.snapshot_file());
+    // Rotate the outgoing snapshot to the previous-scan slot before the
+    // new one replaces it, and mirror the rotation in shell state.
+    let snapshot_file = state.snapshot_file();
+    if snapshot_file.exists() {
+        let previous_file = state.previous_snapshot_file();
+        if std::fs::copy(&snapshot_file, &previous_file).is_ok() {
+            if let Ok(mut previous) = state.previous_summary.lock() {
+                let restored = snapshot::load_snapshot(&previous_file).ok().flatten();
+                if restored.is_some() {
+                    *previous = restored;
+                }
+            }
+        }
+    }
+
+    let _ = snapshot::save_snapshot(&summary, &snapshot_file);
     let _ = with_history(&state, |history| history.record_scan(&summary).map(|_| ()));
 
     // Keep the tray ring honest about the scanned volume.
@@ -266,6 +300,108 @@ pub fn get_scan_summary(state: State<'_, ShellState>) -> CmdResult<Option<ScanSu
         .lock()
         .map_err(|_| "engine lock poisoned".to_string())?;
     Ok(engine.summary.clone())
+}
+
+/// One category's change between the previous scan and the current
+/// one. `delta_bytes` is signed: negative means the category shrank.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CategoryDelta {
+    pub category: Category,
+    pub current_bytes: u64,
+    pub previous_bytes: u64,
+    pub delta_bytes: i64,
+}
+
+/// The current scan compared with the previous scan of the same root
+/// (shell DTO). Deltas are signed: a negative `total_bytes_delta`
+/// means space was freed overall.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ScanComparison {
+    /// When the previous scan finished.
+    pub previous_scanned_at_ms: i64,
+    pub total_bytes_delta: i64,
+    pub file_count_delta: i64,
+    /// Every category present in either scan, biggest absolute change
+    /// first. A category missing from one scan counts as 0 there.
+    pub categories: Vec<CategoryDelta>,
+}
+
+/// Compare the current scan with the previous one. `None` when there
+/// is no previous scan yet, or when the two scans cover different
+/// roots (a root change makes a delta meaningless).
+#[tauri::command]
+pub fn get_scan_comparison(state: State<'_, ShellState>) -> CmdResult<Option<ScanComparison>> {
+    let current = {
+        let engine = state
+            .engine
+            .lock()
+            .map_err(|_| "engine lock poisoned".to_string())?;
+        engine.summary.clone()
+    };
+    let previous = state
+        .previous_summary
+        .lock()
+        .map_err(|_| "previous summary lock poisoned".to_string())?
+        .clone();
+    let (Some(current), Some(previous)) = (current, previous) else {
+        return Ok(None);
+    };
+    if !same_scan_root(&current.root, &previous.root) {
+        return Ok(None);
+    }
+
+    let mut seen: Vec<Category> = Vec::new();
+    for category in current
+        .category_totals
+        .keys()
+        .chain(previous.category_totals.keys())
+    {
+        if !seen.contains(category) {
+            seen.push(*category);
+        }
+    }
+    let mut categories: Vec<CategoryDelta> = seen
+        .into_iter()
+        .map(|category| {
+            let current_bytes = current.category_totals.get(&category).copied().unwrap_or(0);
+            let previous_bytes = previous
+                .category_totals
+                .get(&category)
+                .copied()
+                .unwrap_or(0);
+            CategoryDelta {
+                category,
+                current_bytes,
+                previous_bytes,
+                delta_bytes: current_bytes as i64 - previous_bytes as i64,
+            }
+        })
+        .collect();
+    categories.sort_by_key(|c| std::cmp::Reverse(c.delta_bytes.unsigned_abs()));
+
+    Ok(Some(ScanComparison {
+        previous_scanned_at_ms: previous.finished_at_ms,
+        total_bytes_delta: current.total_bytes as i64 - previous.total_bytes as i64,
+        file_count_delta: current.file_count as i64 - previous.file_count as i64,
+        categories,
+    }))
+}
+
+/// Root comparison for the scan-over-scan delta: trailing separators
+/// are ignored, and the comparison is case-insensitive on Windows
+/// (mirroring how Windows treats paths).
+fn same_scan_root(a: &str, b: &str) -> bool {
+    let normalise = |s: &str| {
+        let trimmed = s.trim_end_matches(['\\', '/']);
+        if cfg!(windows) {
+            trimmed.to_lowercase()
+        } else {
+            trimmed.to_string()
+        }
+    };
+    normalise(a) == normalise(b)
 }
 
 /// One entry of a directory listing (shell-side DTO mirroring the core's

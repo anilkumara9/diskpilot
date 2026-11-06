@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ChevronRight, File, Folder, FolderOpen, Search } from "lucide-react";
+import { ChevronRight, File, Folder, FolderOpen, Search, X } from "lucide-react";
 import * as api from "@/lib/api";
 import { useAppStore } from "@/lib/store";
-import { sortExplorerRows, type FileSortKey, type SortDirection } from "@/lib/analysis";
+import { filterByQuery, sortExplorerRows, type FileSortKey, type SortDirection } from "@/lib/analysis";
 import { basename, displayPath, formatBytes, parentPath } from "@/lib/format";
 import { tierMeta } from "@/lib/tiers";
 import type { DirectoryEntry, Recommendation } from "@/lib/types";
@@ -129,12 +129,7 @@ export function ExplorerView({
 
   const rows = useMemo(() => {
     let list = entriesToRows(entries ?? []);
-    const q = query.trim().toLowerCase();
-    if (q) {
-      list = list.filter(
-        (r) => r.name.toLowerCase().includes(q) || r.path.toLowerCase().includes(q),
-      );
-    }
+    list = filterByQuery(list, query);
     if (categoryFilter !== "all") list = list.filter((r) => r.category === categoryFilter);
     const sorted = sortExplorerRows(list, sortKey, direction);
     // Folders stay grouped before files, matching file-manager convention.
@@ -202,8 +197,18 @@ export function ExplorerView({
               onChange={(e) => setQuery(e.target.value)}
               placeholder="Filter by name"
               aria-label="Filter by name"
-              className="pl-8"
+              className={cn("pl-8", query ? "pr-8" : "")}
             />
+            {query ? (
+              <button
+                type="button"
+                onClick={() => setQuery("")}
+                aria-label="Clear filter"
+                className="absolute right-2 top-1/2 -translate-y-1/2 text-subtle transition-colors duration-120 hover:text-foreground"
+              >
+                <X className="size-4" aria-hidden="true" />
+              </button>
+            ) : null}
           </div>
           <CategorySelect value={categoryFilter} onChange={setCategoryFilter} />
         </div>
@@ -286,7 +291,7 @@ export function ExplorerView({
                   <td colSpan={4} className="px-3 py-8 text-center text-[12px] text-muted">
                     {entries.length === 0
                       ? "This folder is empty in the scan index."
-                      : "Nothing in this folder matches the current filter."}
+                      : "No items match"}
                   </td>
                 </tr>
               ) : null}

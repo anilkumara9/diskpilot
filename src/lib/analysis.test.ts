@@ -4,6 +4,7 @@ import {
   actionableCount,
   categoryRows,
   dedupeNested,
+  filterByQuery,
   groupRecommendationsByTier,
   sortExplorerRows,
   totalRecoverable,
@@ -100,5 +101,22 @@ describe("explorer sorting", () => {
       "C:\\Users\\alex\\Projects\\app",
     ]);
     expect(breadcrumbsBetween("C:\\Users\\alex", "C:\\Users\\alex")).toHaveLength(1);
+  });
+});
+
+describe("filterByQuery (explorer name filter)", () => {
+  const items = [
+    { name: "node_modules", path: "C:\\root\\node_modules" },
+    { name: "Notes.txt", path: "C:\\root\\Notes.txt" },
+    { name: "photo.png", path: "C:\\root\\photo.png" },
+  ];
+  it("matches name substrings case-insensitively", () => {
+    expect(filterByQuery(items, "NOTE").map((i) => i.name)).toEqual(["Notes.txt"]);
+    expect(filterByQuery(items, "module").map((i) => i.name)).toEqual(["node_modules"]);
+    expect(filterByQuery(items, "zzz")).toEqual([]);
+  });
+  it("returns everything for an empty or blank query", () => {
+    expect(filterByQuery(items, "")).toHaveLength(3);
+    expect(filterByQuery(items, "   ")).toHaveLength(3);
   });
 });

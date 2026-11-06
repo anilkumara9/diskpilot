@@ -7,6 +7,8 @@ import {
   formatDuration,
   formatPercent,
   formatRelative,
+  formatSignedBytes,
+  formatSignedCount,
   parentPath,
 } from "./format";
 
@@ -70,5 +72,20 @@ describe("Windows path helpers", () => {
   it("parentPath handles drive roots", () => {
     expect(parentPath("C:\\Users\\alex")).toBe("C:\\Users");
     expect(parentPath("C:\\Users")).toBe("C:\\");
+  });
+});
+
+describe("signed deltas (scan-over-scan comparison)", () => {
+  it("formats byte deltas with an explicit sign", () => {
+    expect(formatSignedBytes(212_000_000)).toBe("+212 MB");
+    expect(formatSignedBytes(-1_200_000_000)).toBe("−1.2 GB");
+    expect(formatSignedBytes(-500)).toBe("−500 B");
+    expect(formatSignedBytes(0)).toBe("0 B");
+    expect(formatSignedBytes(Number.NaN)).toBe("0 B");
+  });
+  it("formats count deltas with an explicit sign", () => {
+    expect(formatSignedCount(1234)).toBe("+1,234");
+    expect(formatSignedCount(-56)).toBe("−56");
+    expect(formatSignedCount(0)).toBe("0");
   });
 });

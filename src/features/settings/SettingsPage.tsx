@@ -3,10 +3,11 @@ import { Check, FolderOpen, KeyRound, ShieldAlert, Trash2 } from "lucide-react";
 import * as api from "@/lib/api";
 import { useAppStore } from "@/lib/store";
 import { displayPath } from "@/lib/format";
+import { exclusionsToText, parseExclusions, sameExclusions } from "@/lib/settings";
 import type { AssistantProvider, ThemePreference } from "@/lib/types";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { Button } from "@/components/ui/button";
-import { Input, Select } from "@/components/ui/input";
+import { Input, Select, Textarea } from "@/components/ui/input";
 import { Section } from "@/components/ui/section";
 
 const PROVIDERS: { id: AssistantProvider; label: string; note: string }[] = [
@@ -120,6 +121,63 @@ export function AssistantSettings() {
   );
 }
 
+export function ExclusionsSettings() {
+  const settings = useAppStore((s) => s.settings);
+  const updateSettings = useAppStore((s) => s.updateSettings);
+  const [draft, setDraft] = useState(() => exclusionsToText(settings.exclusions));
+  const [saved, setSaved] = useState(false);
+
+  const parsed = parseExclusions(draft);
+  const dirty = !sameExclusions(parsed, settings.exclusions);
+
+  // Keep the draft in step with the stored list until the user edits.
+  useEffect(() => {
+    if (!dirty) setDraft(exclusionsToText(settings.exclusions));
+  }, [settings.exclusions, dirty]);
+
+  const save = async () => {
+    await updateSettings({ exclusions: parsed });
+    setDraft(exclusionsToText(parsed));
+    setSaved(true);
+    window.setTimeout(() => setSaved(false), 1600);
+  };
+
+  return (
+    <div className="mt-4 border-t border-border pt-3">
+      <label htmlFor="scan-exclusions" className="mb-1 block text-[12px] font-medium text-foreground">
+        Excluded folders and patterns
+      </label>
+      <Textarea
+        id="scan-exclusions"
+        value={draft}
+        onChange={(e) => setDraft(e.target.value)}
+        placeholder={"One per line, for example:\n*.iso\nbuild-*\nMyBackups"}
+        className="mono-path min-h-[96px]"
+        spellCheck={false}
+      />
+      <p className="mt-1 text-[12px] leading-4 text-muted">
+        One pattern per line. A pattern is a folder or file name (like{" "}
+        <code className="mono-path">MyBackups</code>), or a wildcard (like{" "}
+        <code className="mono-path">*.iso</code> or <code className="mono-path">build-*</code>). Anything
+        matching is left out of scans entirely — it is not measured, counted, or recommended.
+      </p>
+      <div className="mt-2 flex items-center gap-2">
+        <Button variant="secondary" onClick={() => void save()} disabled={!dirty}>
+          Save exclusions
+        </Button>
+        {saved && !dirty ? (
+          <span className="flex items-center gap-1.5 text-[12px] text-muted">
+            <Check className="size-3.5 text-tier-safe" aria-hidden="true" />
+            Saved — changes apply to the next scan.
+          </span>
+        ) : (
+          <span className="text-[12px] text-muted">Changes apply to the next scan.</span>
+        )}
+      </div>
+    </div>
+  );
+}
+
 export function SettingsPage() {
   const settings = useAppStore((s) => s.settings);
   const env = useAppStore((s) => s.env);
@@ -156,6 +214,7 @@ export function SettingsPage() {
               use Disk Cleanup or Storage Sense for it.
             </p>
           </div>
+          <ExclusionsSettings />
         </Section>
 
         <Section title="Appearance">

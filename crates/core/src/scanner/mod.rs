@@ -49,6 +49,7 @@ pub struct Scanner {
     pub root: PathBuf,
     pub cancel: Arc<AtomicBool>,
     pub progress: Option<ProgressCallback>,
+    pub exclusions: Vec<String>,
 }
 
 #[derive(Default)]
@@ -75,6 +76,7 @@ impl Scanner {
             root: root.as_ref().to_path_buf(),
             cancel: Arc::new(AtomicBool::new(false)),
             progress: None,
+            exclusions: Vec::new(),
         }
     }
     pub fn with_cancel(mut self, cancel: Arc<AtomicBool>) -> Self {
@@ -83,6 +85,17 @@ impl Scanner {
     }
     pub fn with_progress(mut self, cb: ProgressCallback) -> Self {
         self.progress = Some(cb);
+        self
+    }
+    /// Exclude paths matching `patterns` from the scan (see [`is_excluded`]
+    /// for the matching rules). Patterns are matched against each entry's
+    /// path relative to the scan root, so they only apply inside the tree.
+    /// Excluded directories are not descended into and excluded files are
+    /// not counted; excluded paths are silently out of scope — they appear
+    /// in neither the index, the totals, nor the skipped list. The scan
+    /// root itself is never excluded.
+    pub fn with_exclusions(mut self, patterns: Vec<String>) -> Self {
+        self.exclusions = patterns;
         self
     }
 
@@ -253,6 +266,17 @@ impl Scanner {
             if self.cancel.load(Ordering::Relaxed) {
                 break;
             }
+            // Excluded paths are silently out of scope: not indexed, not
+            // counted, and not recorded in the skipped or error lists.
+            // Patterns are matched against the path relative to the scan
+            // root, so they can only match components inside the tree —
+            // the root itself and everything above it is never excluded.
+            if !self.exclusions.is_empty() {
+                let rel = path.strip_prefix(&self.root).unwrap_or(path.as_path());
+                if is_excluded(rel, &self.exclusions) {
+                    continue;
+                }
+            }
             let md = match std::fs::symlink_metadata(path) {
                 Ok(m) => m,
                 Err(e) => {
@@ -369,6 +393,93 @@ impl Scanner {
         index.children.insert(path_to_string(dir), children);
         agg
     }
+}
+
+/// Match one path segment against a glob pattern: `*` matches any run of
+/// characters (including none), `?` matches exactly one character. Both
+/// sides are compared case-insensitively.
+fn glob_segment_match(pattern: &str, segment: &str) -> bool {
+    let p: Vec<char> = pattern.chars().flat_map(|c| c.to_lowercase()).collect();
+    let t: Vec<char> = segment.chars().flat_map(|c| c.to_lowercase()).collect();
+    // Two-pointer scan with backtracking to the last `*`.
+    let (mut pi, mut ti) = (0usize, 0usize);
+    let (mut star, mut star_ti) = (None::<usize>, 0usize);
+    while ti < t.len() {
+        if pi < p.len() && (p[pi] == '?' || p[pi] == t[ti]) {
+            pi += 1;
+            ti += 1;
+        } else if pi < p.len() && p[pi] == '*' {
+            star = Some(pi);
+            star_ti = ti;
+            pi += 1;
+        } else if let Some(s) = star {
+            // Let the last `*` absorb one more character and retry.
+            pi = s + 1;
+            star_ti += 1;
+            ti = star_ti;
+        } else {
+            return false;
+        }
+    }
+    while pi < p.len() && p[pi] == '*' {
+        pi += 1;
+    }
+    pi == p.len()
+}
+
+/// One pattern segment against one path segment: a glob match when the
+/// pattern contains a wildcard, an exact match otherwise. Case-insensitive
+/// either way.
+fn segment_matches(pattern: &str, segment: &str) -> bool {
+    if pattern.contains('*') || pattern.contains('?') {
+        glob_segment_match(pattern, segment)
+    } else {
+        pattern.to_lowercase() == segment.to_lowercase()
+    }
+}
+
+/// Does `path` match any of the exclusion `patterns`?
+///
+/// Matching is case-insensitive. A pattern is split into segments on `/`
+/// or `\`. A single-segment pattern matches when it matches **any**
+/// component of the path — exactly (`node_modules`), or as a glob
+/// (`*.log`, `build-*`) when it contains `*` or `?`. A multi-segment
+/// pattern (`proj/node_modules`, `src\gen-*`) matches when its segments
+/// match a trailing sequence of the path's components, segment by segment
+/// (so it matches the directory it names; the scanner prunes the whole
+/// subtree there and never checks the paths below it). Empty patterns
+/// never match; an empty pattern list excludes nothing.
+pub fn is_excluded(path: &Path, patterns: &[String]) -> bool {
+    if patterns.is_empty() {
+        return false;
+    }
+    let segments: Vec<String> = path
+        .components()
+        .filter_map(|c| match c {
+            std::path::Component::Normal(s) => Some(s.to_string_lossy().to_string()),
+            _ => None,
+        })
+        .collect();
+    if segments.is_empty() {
+        return false;
+    }
+    patterns.iter().any(|pattern| {
+        let pat: Vec<&str> = pattern
+            .split(['/', '\\'])
+            .filter(|s| !s.is_empty())
+            .collect();
+        match pat.len() {
+            0 => false,
+            1 => segments.iter().any(|seg| segment_matches(pat[0], seg)),
+            n => {
+                n <= segments.len()
+                    && pat
+                        .iter()
+                        .zip(segments[segments.len() - n..].iter())
+                        .all(|(p, seg)| segment_matches(p, seg))
+            }
+        }
+    })
 }
 
 #[derive(Default)]
