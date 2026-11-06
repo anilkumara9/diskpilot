@@ -855,7 +855,7 @@ fn counted_bytes(md: &std::fs::Metadata, shared: &Arc<Mutex<Shared>>) -> u64 {
     {
         if file_nlink_windows(md) > 1 {
             if let Some(key) = file_index_key(md) {
-                let mut s = lock_shared(&shared);
+                let mut s = lock_shared(shared);
                 if !s.hardlinks.insert(key) {
                     return 0;
                 }
@@ -900,10 +900,8 @@ pub fn allocated_size_for_path(path: &Path) -> u64 {
     #[cfg(windows)]
     {
         match compressed_file_size_w(path) {
-            Some(v) => return v,
-            None => {
-                return std::fs::metadata(path).map(|m| m.len()).unwrap_or(0);
-            }
+            Some(v) => v,
+            None => std::fs::metadata(path).map(|m| m.len()).unwrap_or(0),
         }
     }
     #[cfg(not(windows))]

@@ -258,10 +258,10 @@ fn hardlink_counted_once() {
     let dir = tempfile::tempdir().unwrap();
     let a = dir.path().join("a.bin");
     write_file(&a, 6000);
-    let b = dir.path().join("b.bin");
+    let _b = dir.path().join("b.bin");
     #[cfg(unix)]
     {
-        std::fs::hard_link(&a, &b).unwrap();
+        std::fs::hard_link(&a, &_b).unwrap();
         let (summary, _index) = Scanner::new(dir.path()).scan();
         assert_eq!(summary.file_count, 2);
         // Two directory entries, one inode: bytes counted once. Logical
@@ -270,7 +270,7 @@ fn hardlink_counted_once() {
         assert_eq!(summary.total_bytes, one);
         // Duplicates finder also treats them as the same content but the
         // scanner-level dedup is what matters here.
-        let _ = b;
+        let _ = _b;
     }
 }
 

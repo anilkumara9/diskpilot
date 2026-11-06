@@ -256,7 +256,7 @@ mod imp {
                         prev_lcn += run.lcn_delta;
                         segments.push((
                             vcn,
-                            Some(prev_lcn as u64 * cluster_bytes as u64),
+                            Some(prev_lcn as u64 * cluster_bytes),
                             run.length_clusters,
                         ));
                     }

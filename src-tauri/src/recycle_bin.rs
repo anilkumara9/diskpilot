@@ -94,7 +94,7 @@ pub fn list_items() -> Vec<RecycleBinItem> {
             }
         }
     }
-    items.sort_by(|a, b| b.deleted_at_ms.cmp(&a.deleted_at_ms));
+    items.sort_by_key(|a| std::cmp::Reverse(a.deleted_at_ms));
     items
 }
 

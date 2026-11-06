@@ -38,7 +38,7 @@ fn name_matches(folder: &str, app_name: &str) -> bool {
 pub fn read_installed_apps() -> Vec<RawInstalledApp> {
     #[cfg(windows)]
     {
-        return read_installed_apps_windows();
+        read_installed_apps_windows()
     }
     #[cfg(not(windows))]
     {
