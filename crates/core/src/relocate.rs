@@ -67,10 +67,12 @@ fn is_protected(path: &Path) -> bool {
 /// Rejects when: the source has no file name (a root) or is not
 /// absolute; the source is protected/system territory; the
 /// destination parent is the source itself or inside it; the
-/// destination would be the source itself (same parent); the
-/// destination lands in protected territory; or the destination
-/// free space cannot hold the source plus the required headroom
-/// (the larger of 64 MB and 5% of the source size).
+/// destination would be the source itself (same parent — compared
+/// on normalized spellings, so a case or slash variant of the
+/// source's own path is still the source); the destination lands
+/// in protected territory; or the destination free space cannot
+/// hold the source plus the required headroom (the larger of
+/// 64 MB and 5% of the source size).
 pub fn validate_relocation(
     source: &Path,
     dest_parent: &Path,
@@ -99,7 +101,10 @@ pub fn validate_relocation(
         ));
     }
     let dest = dest_parent.join(file_name);
-    if dest == source {
+    // Identity on normalized spellings, not raw Path equality: on
+    // a case-insensitive filesystem "D:\GAMES" IS the source, and a
+    // raw comparison would wave the move through onto itself.
+    if norm(&dest) == norm(source) {
         return Err(format!(
             "destination is the source itself: {}",
             dest.display()
@@ -209,6 +214,28 @@ mod tests {
         assert!(validate_relocation(
             Path::new("/home/user/Games"),
             Path::new("/home/user"),
+            GB,
+            100 * GB
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn destination_equal_to_source_under_case_variant_rejected() {
+        // Panel repro: dest_parent is the source's parent spelled
+        // in a different case. Raw Path equality misses it; the
+        // normalized comparison must not.
+        assert!(validate_relocation(
+            Path::new("/home/user/Games"),
+            Path::new("/HOME/USER"),
+            GB,
+            100 * GB
+        )
+        .is_err());
+        // Slash spelling differs too (a backslash-spelled parent).
+        assert!(validate_relocation(
+            Path::new("/home/user/Games"),
+            Path::new("\\home\\user"),
             GB,
             100 * GB
         )

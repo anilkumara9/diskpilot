@@ -44,6 +44,101 @@ fn collect_drive_health() -> Vec<DriveHealth> {
     (0..16).filter_map(win::probe_drive).collect()
 }
 
+// ---------------------------------------------------------------------------
+// NVMe protocol-command request layout
+// ---------------------------------------------------------------------------
+
+/// `STORAGE_PROTOCOL_COMMAND_FLAG_ADAPTER_REQUEST` (winioctl.h):
+/// the command is addressed to the adapter/controller, not a LUN.
+const STORAGE_PROTOCOL_COMMAND_FLAG_ADAPTER_REQUEST: u32 = 0x8000_0000;
+
+/// `STORAGE_PROTOCOL_STATUS_SUCCESS` (winioctl.h): the value the
+/// driver writes to the request's ReturnStatus field when the
+/// protocol command completes successfully.
+const STORAGE_PROTOCOL_STATUS_SUCCESS: u32 = 0x1;
+
+/// Offset of the NVMe admin command inside the request buffer,
+/// and of the data region behind it. The command is 64 bytes, so
+/// the data starts at 80 + 64 = 144 and the buffer totals
+/// 144 + 512 = 656 bytes.
+const NVME_COMMAND_OFFSET: usize = 80;
+const NVME_DATA_OFFSET: usize = 144;
+const NVME_LOG_PAGE_LEN: usize = 512;
+
+/// Build the `IOCTL_STORAGE_PROTOCOL_COMMAND` request for an NVMe
+/// Get Log Page of the SMART/Health log (LID 02h, 512 bytes). Pure
+/// byte layout with no OS dependency, so the offsets are
+/// unit-tested on any host.
+///
+/// Field map (winioctl.h `STORAGE_PROTOCOL_COMMAND`): Version = 1
+/// @0, Length = 84 @4 (the structure size including `Command[1]`),
+/// ProtocolType = 3 (Nvme) @8, Flags = ADAPTER_REQUEST @12,
+/// CommandLength = 64 @24, DataFromDeviceTransferLength = 512
+/// @36, TimeOutValue = 10 @40 (seconds),
+/// DataFromDeviceBufferOffset = 144 @52. The driver answers in
+/// ReturnStatus @16 and ErrorCode @20. The 64-byte NVMe admin
+/// command sits at @80: CDW0 (opcode 02h, Get Log Page) @80,
+/// NSID 0xFFFFFFFF @84 (the log is controller-wide),
+/// CDW10 = LID 02h with NUMD (127 dwords − 1) in bits 16..=31
+/// @120, CDW11 = 0 @124.
+fn build_nvme_health_request() -> Vec<u8> {
+    let mut buffer = vec![0u8; NVME_DATA_OFFSET + NVME_LOG_PAGE_LEN];
+    let put_u32 = |buffer: &mut [u8], off: usize, value: u32| {
+        buffer[off..off + 4].copy_from_slice(&value.to_le_bytes());
+    };
+    put_u32(&mut buffer, 0, 1); // Version
+    put_u32(&mut buffer, 4, 84); // Length
+    put_u32(&mut buffer, 8, 3); // ProtocolType = ProtocolTypeNvme
+    put_u32(&mut buffer, 12, STORAGE_PROTOCOL_COMMAND_FLAG_ADAPTER_REQUEST);
+    put_u32(&mut buffer, 24, 64); // CommandLength
+    put_u32(&mut buffer, 36, NVME_LOG_PAGE_LEN as u32); // DataFromDeviceTransferLength
+    put_u32(&mut buffer, 40, 10); // TimeOutValue (seconds)
+    put_u32(&mut buffer, 52, NVME_DATA_OFFSET as u32); // DataFromDeviceBufferOffset
+    put_u32(&mut buffer, NVME_COMMAND_OFFSET, 0x02); // CDW0: Get Log Page
+    put_u32(&mut buffer, NVME_COMMAND_OFFSET + 4, 0xFFFF_FFFF); // NSID
+    // CDW10: LID 02h in the low byte, NUMD (dwords − 1 = 127) in
+    // bits 16..=31 — 512 bytes total. CDW11 stays zero.
+    put_u32(
+        &mut buffer,
+        NVME_COMMAND_OFFSET + 40,
+        0x02 | (127 << 16),
+    );
+    buffer
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn nvme_health_request_matches_winioctl_layout() {
+        let buffer = build_nvme_health_request();
+        let get = |off: usize| u32::from_le_bytes(buffer[off..off + 4].try_into().unwrap());
+        assert_eq!(buffer.len(), 656);
+        assert_eq!(get(0), 1, "Version");
+        assert_eq!(get(4), 84, "Length");
+        assert_eq!(get(8), 3, "ProtocolType = Nvme");
+        assert_eq!(
+            get(12),
+            STORAGE_PROTOCOL_COMMAND_FLAG_ADAPTER_REQUEST,
+            "Flags = ADAPTER_REQUEST"
+        );
+        assert_eq!(get(24), 64, "CommandLength");
+        assert_eq!(get(36), 512, "DataFromDeviceTransferLength");
+        assert_eq!(get(40), 10, "TimeOutValue");
+        assert_eq!(get(52), 144, "DataFromDeviceBufferOffset");
+        assert_eq!(get(80), 0x02, "CDW0 opcode = Get Log Page");
+        assert_eq!(get(84), 0xFFFF_FFFF, "NSID");
+        assert_eq!(get(120), 0x02 | (127 << 16), "CDW10 = LID | NUMD");
+        assert_eq!(get(124), 0, "CDW11");
+        // The response fields start zeroed and the log-page region
+        // is untouched buffer space.
+        assert_eq!(get(16), 0, "ReturnStatus starts zeroed");
+        assert_eq!(get(20), 0, "ErrorCode starts zeroed");
+        assert!(buffer[NVME_DATA_OFFSET..].iter().all(|b| *b == 0));
+    }
+}
+
 /// A drive that opened and described itself but would not answer
 /// SMART: honest `Unknown` vitals (with the drive's own failure
 /// prediction, when even that much could be read).
@@ -78,7 +173,10 @@ mod win {
         health_from_ata, health_from_nvme, parse_ata_attributes, parse_nvme_health, DriveHealth,
     };
 
-    use super::unknown_health;
+    use super::{
+        build_nvme_health_request, unknown_health, NVME_DATA_OFFSET, NVME_LOG_PAGE_LEN,
+        STORAGE_PROTOCOL_STATUS_SUCCESS,
+    };
 
     type Handle = *mut c_void;
 
@@ -165,8 +263,10 @@ mod win {
     }
 
     /// One DeviceIoControl round trip over same-sized in/out
-    /// buffers. Returns whether the call succeeded.
-    fn ioctl(handle: Handle, code: u32, buffer: &mut [u8]) -> bool {
+    /// buffers. On success, returns how many bytes the driver
+    /// actually wrote — callers that parse the buffer bound their
+    /// reads by it, never by the buffer's capacity.
+    fn ioctl(handle: Handle, code: u32, buffer: &mut [u8]) -> Option<u32> {
         let mut returned: u32 = 0;
         let ok = unsafe {
             DeviceIoControl(
@@ -180,7 +280,11 @@ mod win {
                 std::ptr::null_mut(),
             )
         };
-        ok != 0
+        if ok != 0 {
+            Some(returned)
+        } else {
+            None
+        }
     }
 
     /// `(model, bus type)` from the storage device descriptor. The

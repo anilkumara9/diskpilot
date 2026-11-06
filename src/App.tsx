@@ -2,6 +2,7 @@ import { lazy, Suspense, useEffect, useRef } from "react";
 import { AlertTriangle, CheckCircle2, Info, MonitorX, X } from "lucide-react";
 import * as api from "@/lib/api";
 import { useAppStore } from "@/lib/store";
+import { shouldConsumeIntent, type IntentDelivery } from "@/lib/launchIntent";
 import { shouldShowWelcome } from "@/lib/welcome";
 import { watchSystemTheme } from "@/lib/theme";
 import type { PageId } from "@/lib/types";
@@ -153,6 +154,7 @@ export default function App() {
   const init = useAppStore((s) => s.init);
   const recycleBinOpen = useAppStore((s) => s.recycleBinOpen);
   const setRecycleBinOpen = useAppStore((s) => s.setRecycleBinOpen);
+  const scanning = useAppStore((s) => s.scanning);
   const startScan = useAppStore((s) => s.startScan);
   const updateSettings = useAppStore((s) => s.updateSettings);
 
@@ -164,18 +166,34 @@ export default function App() {
      renders its own root and never mounts this component): a
      folder handed over by Explorer's "Analyze with DiskPilot"
      becomes the scan root and scans immediately, through the same
-     two store actions the Overview's drive chips use. Consumed
-     once per path per session, so a re-delivered event (or a
-     StrictMode double effect) cannot start a second scan. */
-  const consumedIntents = useRef<ReadonlySet<string>>(new Set());
+     two store actions the Overview's drive chips use. Dedupe is
+     per delivery, not per session (see lib/launchIntent): only
+     the mount-read/event double delivery of one request is
+     swallowed — the same folder analyzed again later scans
+     again. The remembered delivery is forgotten as soon as no
+     scan is running. */
+  const lastIntent = useRef<IntentDelivery | null>(null);
+  useEffect(() => {
+    if (!scanning) lastIntent.current = null;
+  }, [scanning]);
   useEffect(() => {
     if (!ready || !inDesktop) return;
     let live = true;
     const consume = async () => {
       try {
         const path = await api.getLaunchIntent();
-        if (!live || !path || consumedIntents.current.has(path)) return;
-        consumedIntents.current = new Set(consumedIntents.current).add(path);
+        if (!live || !path) return;
+        if (
+          !shouldConsumeIntent(
+            lastIntent.current,
+            path,
+            Date.now(),
+            useAppStore.getState().scanning,
+          )
+        ) {
+          return;
+        }
+        lastIntent.current = { path, startedAt: Date.now() };
         await updateSettings({ scanRoot: path });
         await startScan(path);
       } catch {
@@ -185,11 +203,17 @@ export default function App() {
     };
     void consume();
     let unlisten: (() => void) | undefined;
+    let cancelled = false;
     void api.onLaunchScan(() => void consume()).then((u) => {
-      unlisten = u;
+      /* If the effect was cleaned up before the listener
+         registered, unregister immediately — assigning it would
+         leak a listener nothing ever removes. */
+      if (cancelled) u();
+      else unlisten = u;
     });
     return () => {
       live = false;
+      cancelled = true;
       unlisten?.();
     };
   }, [ready, inDesktop, startScan, updateSettings]);
