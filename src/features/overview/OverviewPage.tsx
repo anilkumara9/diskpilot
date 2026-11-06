@@ -252,14 +252,25 @@ export function SinceLastScan({ comparison }: { comparison: ScanComparison }) {
   );
 }
 
-/* ---------------- Drives strip ---------------- */
+/* ---------------- Drives ---------------- */
 
 /**
- * One card per drive on this PC. Hidden when there is only the scan
- * root's drive — the strip above already tells that drive's story.
- * A drive that is not the scan root offers to scan it instead.
+ * Whether the drives list earns a section of its own: hidden when
+ * there is only the scan root's drive — the strip and figures above
+ * already tell that drive's story.
  */
-export function DrivesStrip({
+export function drivesVisible(drives: DriveInfo[], scanRoot: string): boolean {
+  if (drives.length === 0) return false;
+  return !(drives.length === 1 && sameRootPath(drives[0].rootPath, scanRoot));
+}
+
+/**
+ * Every drive on this PC as one quiet hairline row each: label, a
+ * thin used-space bar, the free caption, and — for a drive that is
+ * not the scan root — a Scan action. A footnote to the Overview,
+ * not a second headline.
+ */
+export function DrivesList({
   drives,
   scanRoot,
   onScanDrive,
@@ -268,46 +279,39 @@ export function DrivesStrip({
   scanRoot: string;
   onScanDrive: (rootPath: string) => void;
 }) {
-  if (drives.length === 0) return null;
-  if (drives.length === 1 && sameRootPath(drives[0].rootPath, scanRoot)) return null;
+  if (!drivesVisible(drives, scanRoot)) return null;
   return (
-    <div className="flex flex-wrap gap-3">
+    <ul className="divide-y divide-border">
       {drives.map((drive) => {
         const isScanRoot = sameRootPath(drive.rootPath, scanRoot);
         const usedFraction =
           drive.totalBytes > 0 ? Math.min(1, Math.max(0, 1 - drive.freeBytes / drive.totalBytes)) : 0;
         const label = drive.rootPath.replace(/[\\/]+$/, "");
         return (
-          <div
-            key={drive.rootPath}
-            className="min-w-[220px] flex-1 rounded-[10px] border border-border bg-panel-raised px-4 py-3"
-          >
-            <div className="flex items-center gap-2">
-              <HardDrive className="size-4 shrink-0 text-muted" aria-hidden="true" />
-              <span className="text-[13px] font-medium text-foreground">{label}</span>
+          <li key={drive.rootPath} className="flex items-center gap-3 py-2">
+            <HardDrive className="size-4 shrink-0 text-muted" aria-hidden="true" />
+            <span className="w-[132px] shrink-0 truncate text-[13px] font-medium text-foreground" title={drive.rootPath}>
+              {label}
+            </span>
+            <span className="min-w-0 flex-1">
+              <SizeBar fraction={usedFraction} colorVar="var(--accent)" height={4} />
+            </span>
+            <span className="w-[168px] shrink-0 text-right text-[12px] tabular text-muted">
+              {formatBytes(drive.freeBytes)} free of {formatBytes(drive.totalBytes)}
+            </span>
+            <span className="flex w-[76px] shrink-0 items-center justify-end">
               {isScanRoot ? (
                 <span className="text-[11px] text-subtle">Scan root</span>
               ) : (
-                <Button
-                  variant="subtle"
-                  size="sm"
-                  className="ml-auto"
-                  onClick={() => onScanDrive(drive.rootPath)}
-                >
+                <Button variant="subtle" size="sm" onClick={() => onScanDrive(drive.rootPath)}>
                   Scan
                 </Button>
               )}
-            </div>
-            <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-hover" aria-hidden="true">
-              <div className="h-full rounded-full bg-accent" style={{ width: `${usedFraction * 100}%` }} />
-            </div>
-            <p className="mt-1.5 text-[12px] tabular text-muted">
-              {formatBytes(drive.freeBytes)} free of {formatBytes(drive.totalBytes)}
-            </p>
-          </div>
+            </span>
+          </li>
         );
       })}
-    </div>
+    </ul>
   );
 }
 
@@ -315,10 +319,10 @@ export function DrivesStrip({
 
 function HistorySparkline({ points }: { points: number[] }) {
   const width = 240;
-  const height = 52;
+  const height = 48;
   const pad = 4;
-  const { line, baselineY } = useMemo(() => {
-    if (points.length === 0) return { line: "", baselineY: height - pad };
+  const { line, area, baselineY } = useMemo(() => {
+    if (points.length === 0) return { line: "", area: "", baselineY: height - pad };
     const min = Math.min(...points);
     const max = Math.max(...points);
     const span = max - min;
@@ -330,18 +334,27 @@ function HistorySparkline({ points }: { points: number[] }) {
       const x = points.length === 1 ? width / 2 : pad + (i / (points.length - 1)) * (width - pad * 2);
       return `${x.toFixed(1)},${y(v).toFixed(1)}`;
     });
-    return { line: coords.join(" "), baselineY: y(min) };
+    const linePoints = coords.join(" ");
+    const firstX = points.length === 1 ? width / 2 : pad;
+    const lastX = points.length === 1 ? width / 2 : width - pad;
+    return {
+      line: linePoints,
+      area: `${firstX.toFixed(1)},${(height - pad).toFixed(1)} ${linePoints} ${lastX.toFixed(1)},${(height - pad).toFixed(1)}`,
+      baselineY: y(min),
+    };
   }, [points]);
   if (points.length === 0) return null;
   return (
     <svg
-      width={width}
+      width="100%"
       height={height}
       viewBox={`0 0 ${width} ${height}`}
+      preserveAspectRatio="none"
       role="img"
       aria-label="Total scanned size across recent scans"
-      className="shrink-0"
+      className="block w-full"
     >
+      <polygon points={area} fill="var(--accent)" opacity={0.1} />
       <line
         x1={pad}
         x2={width - pad}
@@ -350,8 +363,17 @@ function HistorySparkline({ points }: { points: number[] }) {
         stroke="var(--border-strong)"
         strokeWidth={1}
         strokeDasharray="3 3"
+        vectorEffect="non-scaling-stroke"
       />
-      <polyline points={line} fill="none" stroke="var(--accent)" strokeWidth={1.5} strokeLinejoin="round" strokeLinecap="round" />
+      <polyline
+        points={line}
+        fill="none"
+        stroke="var(--accent)"
+        strokeWidth={1.5}
+        strokeLinejoin="round"
+        strokeLinecap="round"
+        vectorEffect="non-scaling-stroke"
+      />
     </svg>
   );
 }
@@ -380,26 +402,26 @@ export function ForecastCard({
   );
   const filling = forecast.daysUntilFull !== null && forecast.projectedFullAtMs !== null;
   return (
-    <div className="flex flex-wrap items-center gap-x-8 gap-y-3 rounded-[10px] border border-border bg-panel-raised px-4 py-3">
-      <div className="min-w-[240px] flex-1">
-        <p className="flex items-center gap-1.5 text-[12px] text-muted">
-          <TrendingUp className="size-3.5" aria-hidden="true" />
-          {filling ? "Fill-up forecast" : "Growth forecast"}
-        </p>
-        <p className="mt-0.5 text-[15px] font-semibold leading-5 text-foreground">
-          {filling
-            ? `At your current rate, this drive fills in about ${Math.round(forecast.daysUntilFull as number)} days`
-            : "Your disk isn't growing — no fill-up date in sight."}
-        </p>
-        <p className="mt-0.5 text-[12px] leading-4 text-muted">
-          {filling
-            ? `${formatBytes(Math.max(0, forecast.dailyGrowthBytes))} more per day on average · full around ${formatDate(forecast.projectedFullAtMs as number)}.`
-            : forecast.dailyGrowthBytes < 0
-              ? `Usage is shrinking by ${formatBytes(-forecast.dailyGrowthBytes)} per day on average across the last ${forecast.pointsUsed} scans.`
-              : `Usage has been flat across the last ${forecast.pointsUsed} scans.`}
-        </p>
+    <div className="rounded-[10px] border border-border bg-panel-raised px-4 py-3">
+      <p className="flex items-center gap-1.5 text-[12px] text-muted">
+        <TrendingUp className="size-3.5" aria-hidden="true" />
+        {filling ? "Fill-up forecast" : "Growth forecast"}
+      </p>
+      <p className="mt-0.5 text-[15px] font-semibold leading-5 text-foreground">
+        {filling
+          ? `At your current rate, this drive fills in about ${Math.round(forecast.daysUntilFull as number)} days`
+          : "Your disk isn't growing — no fill-up date in sight."}
+      </p>
+      <p className="mt-0.5 text-[12px] leading-4 text-muted">
+        {filling
+          ? `${formatBytes(Math.max(0, forecast.dailyGrowthBytes))} more per day on average · full around ${formatDate(forecast.projectedFullAtMs as number)}.`
+          : forecast.dailyGrowthBytes < 0
+            ? `Usage is shrinking by ${formatBytes(-forecast.dailyGrowthBytes)} per day on average across the last ${forecast.pointsUsed} scans.`
+            : `Usage has been flat across the last ${forecast.pointsUsed} scans.`}
+      </p>
+      <div className="mt-3">
+        <HistorySparkline points={points} />
       </div>
-      <HistorySparkline points={points} />
     </div>
   );
 }
@@ -412,7 +434,7 @@ function ChangeList({ title, changes, tone }: { title: string; changes: DirChang
   return (
     <div className="min-w-[240px] flex-1">
       <p className="text-[12px] font-medium text-muted">{title}</p>
-      <ul className="mt-1 divide-y divide-border/60">
+      <ul className="mt-1 divide-y divide-border">
         {changes.map((change) => (
           <li key={change.path} className="flex items-baseline gap-3 py-1.5">
             <span className="min-w-0 flex-1">
@@ -438,7 +460,10 @@ function ChangeList({ title, changes, tone }: { title: string; changes: DirChang
 /**
  * The folders behind the scan-over-scan delta: what grew most
  * (including folders that only exist now) and what freed space
- * (shrunk plus removed). Renders nothing when the diff is empty.
+ * (shrunk plus removed). One callout panel belonging to the
+ * Since-last-scan section — a titled sub-section of the delta,
+ * not a separate floating block. Renders nothing when the diff
+ * is empty.
  */
 export function BiggestChanges({ changes }: { changes: BiggestChanges }) {
   const grew = useMemo(
@@ -451,9 +476,12 @@ export function BiggestChanges({ changes }: { changes: BiggestChanges }) {
   );
   if (grew.length === 0 && freed.length === 0) return null;
   return (
-    <div className="mt-3 flex flex-wrap gap-x-10 gap-y-3">
-      <ChangeList title="Grew most" changes={grew} tone="grew" />
-      <ChangeList title="Freed" changes={freed} tone="freed" />
+    <div className="mt-3 rounded-[10px] border border-border bg-panel-raised px-4 py-3">
+      <p className="text-[13px] font-semibold leading-[18px] text-foreground">Biggest changes</p>
+      <div className="mt-2 flex flex-wrap gap-x-10 gap-y-3">
+        <ChangeList title="Grew most" changes={grew} tone="grew" />
+        <ChangeList title="Freed" changes={freed} tone="freed" />
+      </div>
     </div>
   );
 }
@@ -750,30 +778,41 @@ export function OverviewPage() {
   return (
     <div className="h-full overflow-y-auto px-6 py-6">
       <div className="max-w-[880px]">
-      <div className="flex items-start justify-between gap-4">
-        <div>
+      <div>
+        <div className="flex items-start justify-between gap-4">
           <h1 className="text-[28px] font-semibold leading-8 tracking-[-0.01em] text-foreground">
             {disk ? `${formatBytes(disk.availableBytes)} available` : "Storage overview"}
           </h1>
-          <p className="mt-1 flex items-center gap-2 text-[12px] text-muted">
-            <HardDrive className="size-3.5" aria-hidden="true" />
-            {disk ? `${disk.volumeName || "System drive"} · ${formatBytes(disk.totalBytes)} total` : "Run a scan to understand your storage."}
-            {summary ? <ResultsAge finishedAtMs={summary.finishedAtMs} /> : null}
-          </p>
+          <div className="flex shrink-0 items-center gap-2">
+            {summary ? (
+              <Button variant="secondary" onClick={() => void exportReport()} disabled={exporting}>
+                <FileDown className="size-4" aria-hidden="true" />
+                {exporting ? "Exporting…" : "Export report"}
+              </Button>
+            ) : null}
+            <ScanControl />
+          </div>
         </div>
-        <div className="flex shrink-0 items-center gap-2">
-          {summary ? (
-            <Button variant="secondary" onClick={() => void exportReport()} disabled={exporting}>
-              <FileDown className="size-4" aria-hidden="true" />
-              {exporting ? "Exporting…" : "Export report"}
-            </Button>
-          ) : null}
-          <ScanControl />
-        </div>
+        <p className="mt-1.5 flex items-center gap-2 text-[12px] text-muted">
+          <HardDrive className="size-3.5 shrink-0" aria-hidden="true" />
+          {disk ? (
+            <>
+              <span className="min-w-0 truncate">
+                {`${disk.volumeName || "System drive"} · ${formatBytes(disk.totalBytes)} total`}
+              </span>
+              {summary ? (
+                <span className="shrink-0">
+                  <ResultsAge finishedAtMs={summary.finishedAtMs} />
+                </span>
+              ) : null}
+            </>
+          ) : (
+            "Run a scan to understand your storage."
+          )}
+        </p>
       </div>
 
-      <div className="mt-5 space-y-3">
-        <DrivesStrip drives={drives} scanRoot={settings.scanRoot} onScanDrive={(root) => void scanDrive(root)} />
+      <div className="mt-5">
         <StorageStrip disk={disk} summary={shown} />
       </div>
 
@@ -812,6 +851,12 @@ export function OverviewPage() {
           {forecast && forecast.pointsUsed >= 2 ? (
             <Section title="Forecast" description="Projected from your scan history — the trend, not a promise.">
               <ForecastCard forecast={forecast} history={history} root={summary.root} />
+            </Section>
+          ) : null}
+
+          {drivesVisible(drives, settings.scanRoot) ? (
+            <Section title="Drives" description="Every drive on this PC, and how full each one is.">
+              <DrivesList drives={drives} scanRoot={settings.scanRoot} onScanDrive={(root) => void scanDrive(root)} />
             </Section>
           ) : null}
 
