@@ -1,4 +1,4 @@
-import type { SoftwareUpdateOutcome } from "./types";
+import type { AvailableUpdate, SoftwareUpdateOutcome } from "./types";
 
 /**
  * Per-row state for the Applications updates list, derived from
@@ -68,4 +68,86 @@ export function actionableIds(
     const phase = states[id]?.phase ?? "pending";
     return phase === "pending" || phase === "failed";
   });
+}
+
+/**
+ * How many of the listed updates are still outstanding given the
+ * row states: rows never attempted (pending) and rows whose last
+ * attempt failed. Rows that updated successfully no longer count.
+ */
+export function outstandingUpdateCount(
+  updates: AvailableUpdate[],
+  states: Record<string, UpdateRowState>,
+): number {
+  return actionableIds(
+    states,
+    updates.map((u) => u.id),
+  ).length;
+}
+
+/**
+ * The Applications nav badge's memory: the result of the last
+ * COMPLETED update check (count + when), persisted in
+ * localStorage so it survives restarts. It is a memory of a check
+ * the user ran — nothing here ever triggers a check by itself;
+ * winget only runs when the user asks on the Applications page.
+ */
+export interface SoftwareUpdatesBadge {
+  count: number;
+  checkedAtMs: number;
+}
+
+export const SOFTWARE_UPDATES_BADGE_KEY = "diskpilot.softwareUpdatesBadge.v1";
+
+interface BadgeStorage {
+  getItem(key: string): string | null;
+  setItem(key: string, value: string): void;
+  removeItem(key: string): void;
+}
+
+function defaultStorage(): BadgeStorage | null {
+  try {
+    return window.localStorage;
+  } catch {
+    return null;
+  }
+}
+
+/** Read the persisted badge; anything malformed reads as absent. */
+export function readSoftwareUpdatesBadge(
+  storage: BadgeStorage | null = defaultStorage(),
+): SoftwareUpdatesBadge | null {
+  if (!storage) return null;
+  try {
+    const raw = storage.getItem(SOFTWARE_UPDATES_BADGE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as Partial<SoftwareUpdatesBadge>;
+    if (
+      typeof parsed.count !== "number" ||
+      !Number.isFinite(parsed.count) ||
+      parsed.count < 0 ||
+      typeof parsed.checkedAtMs !== "number" ||
+      !Number.isFinite(parsed.checkedAtMs)
+    ) {
+      return null;
+    }
+    return { count: Math.floor(parsed.count), checkedAtMs: parsed.checkedAtMs };
+  } catch {
+    return null;
+  }
+}
+
+/** Persist the badge (or clear it with null). Storage failures
+    are swallowed — the badge is ambient, never worth an error. */
+export function writeSoftwareUpdatesBadge(
+  badge: SoftwareUpdatesBadge | null,
+  storage: BadgeStorage | null = defaultStorage(),
+): void {
+  if (!storage) return;
+  try {
+    if (badge === null) storage.removeItem(SOFTWARE_UPDATES_BADGE_KEY);
+    else storage.setItem(SOFTWARE_UPDATES_BADGE_KEY, JSON.stringify(badge));
+  } catch {
+    /* ambient state only */
+  }
 }

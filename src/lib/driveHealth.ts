@@ -48,3 +48,38 @@ export function lifeBarColorVar(lifeLeftPercent: number): string {
   if (lifeLeftPercent <= 20) return "var(--tier-review)";
   return "var(--accent)";
 }
+
+const STATUS_RANK: Record<DriveHealthStatus, number> = {
+  unknown: 0,
+  healthy: 1,
+  caution: 2,
+  critical: 3,
+};
+
+/**
+ * The drive the sidebar health dot speaks for: the worst status
+ * across all drives (critical beats caution beats healthy; ties
+ * keep the first drive). Returns null when there is nothing to
+ * say — no drives, or every drive Unknown — so the dot simply
+ * does not render rather than guessing at a state.
+ */
+export function worstDriveHealth(drives: DriveHealth[]): DriveHealth | null {
+  let worst: DriveHealth | null = null;
+  for (const drive of drives) {
+    if (worst === null || STATUS_RANK[drive.status] > STATUS_RANK[worst.status]) {
+      worst = drive;
+    }
+  }
+  return worst !== null && worst.status !== "unknown" ? worst : null;
+}
+
+/**
+ * The dot's one-line summary: "<model> · SSD life 87% · Healthy".
+ * Parts a drive did not report are omitted, never invented.
+ */
+export function healthDotSummary(drive: DriveHealth): string {
+  const parts = [drive.model];
+  if (drive.lifeLeftPercent !== null) parts.push(`SSD life ${drive.lifeLeftPercent}%`);
+  parts.push(driveHealthStatusLabel(drive.status));
+  return parts.join(" · ");
+}

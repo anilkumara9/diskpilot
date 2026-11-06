@@ -395,6 +395,9 @@ export interface AppSettings {
   /** When automatic maintenance last ran (ms since epoch), as
       recorded by the shell; null when it has never run. */
   lastMaintenanceMs: number | null;
+  /** Sidebar in its icon-only collapsed mode. Older settings
+      files without the field load as false. */
+  sidebarCollapsed: boolean;
 }
 
 /** Automatic maintenance: when due, the shell permanently removes

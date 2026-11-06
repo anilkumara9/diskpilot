@@ -4,6 +4,7 @@ import type {
   AssistantMessage,
   CandidateGroup,
   DiskInfo,
+  DriveHealth,
   DuplicatesMode,
   EnvironmentInfo,
   PageId,
@@ -14,6 +15,11 @@ import type {
 } from "./types";
 import * as api from "./api";
 import { applyTheme } from "./theme";
+import {
+  readSoftwareUpdatesBadge,
+  writeSoftwareUpdatesBadge,
+  type SoftwareUpdatesBadge,
+} from "./updates";
 import {
   checkForAvailableUpdate,
   downloadAndInstallPending,
@@ -38,7 +44,35 @@ const DEFAULT_SETTINGS: AppSettings = {
   liveIndex: true,
   autoMaintenance: { enabled: false, frequency: "weekly", minAgeDays: 30 },
   lastMaintenanceMs: null,
+  sidebarCollapsed: false,
 };
+
+/**
+ * The shell's settings struct does not (yet) carry
+ * `sidebarCollapsed`, so a save through the shell would drop the
+ * field. Until it does, the preference is mirrored to
+ * localStorage and the mirror wins at startup — the setting
+ * rides the normal settings flow in the app and genuinely
+ * persists across restarts.
+ */
+const SIDEBAR_COLLAPSED_KEY = "diskpilot.sidebarCollapsed.v1";
+
+function readSidebarCollapsedMirror(): boolean | null {
+  try {
+    const value = window.localStorage.getItem(SIDEBAR_COLLAPSED_KEY);
+    return value === null ? null : value === "1";
+  } catch {
+    return null;
+  }
+}
+
+function writeSidebarCollapsedMirror(collapsed: boolean): void {
+  try {
+    window.localStorage.setItem(SIDEBAR_COLLAPSED_KEY, collapsed ? "1" : "0");
+  } catch {
+    /* the in-session setting still applies */
+  }
+}
 
 export type StatusBannerState = {
   kind: "error" | "warning" | "info" | "success";
@@ -85,6 +119,16 @@ interface AppState {
       sidebar flag). The launch check is silent unless an update
       exists — see `checkForUpdate`. */
   update: UpdateState;
+  /** Physical drives' SMART reports, fetched once at startup for
+      the sidebar health dot. Ambient chrome only: a failed read
+      leaves this null and no UI complains. The Health page keeps
+      its own full read with proper error states. */
+  driveHealth: DriveHealth[] | null;
+  /** The last completed software-update check (count + when),
+      remembered across restarts for the Applications nav badge.
+      Written only by the Applications page's own check/update
+      flow — nothing refreshes it in the background. */
+  softwareUpdatesBadge: SoftwareUpdatesBadge | null;
 
   init: () => Promise<void>;
   checkForUpdate: (manual: boolean) => Promise<void>;
@@ -96,6 +140,8 @@ interface AppState {
   refreshRecommendations: () => Promise<void>;
   refreshComparison: () => Promise<void>;
   refreshDisk: () => Promise<void>;
+  refreshDriveHealth: () => Promise<void>;
+  setSoftwareUpdatesBadge: (badge: SoftwareUpdatesBadge | null) => void;
   /** Applies a settings patch optimistically and persists it.
       Resolves `true` when the shell saved it; on failure resolves
       `false` and records `settingsSaveError` so the caller can
@@ -135,6 +181,8 @@ export const useAppStore = create<AppState>((set, get) => ({
   assistantMessages: [],
   duplicatesMode: "exact",
   update: IDLE_UPDATE_STATE,
+  driveHealth: null,
+  softwareUpdatesBadge: readSoftwareUpdatesBadge(),
 
   init: async () => {
     const inDesktop = api.inDesktopApp();
@@ -150,6 +198,11 @@ export const useAppStore = create<AppState>((set, get) => ({
         scanRoot:
           savedSettings?.scanRoot || env?.homeDir || "",
       };
+      /* The shell does not return `sidebarCollapsed` (its struct
+         predates the field); the local mirror is the durable
+         copy and wins when present. */
+      const collapsedMirror = readSidebarCollapsedMirror();
+      if (collapsedMirror !== null) settings.sidebarCollapsed = collapsedMirror;
       set({ env, settings, settingsLoaded: savedSettings !== null });
       applyTheme(settings.theme);
 
@@ -161,6 +214,10 @@ export const useAppStore = create<AppState>((set, get) => ({
         api.getScanComparison(),
       ]);
       set({ disk, summary, recommendations, cleanupCards, comparison });
+
+      // Ambient sidebar health dot: one SMART read per launch,
+      // silent on failure (see refreshDriveHealth).
+      void get().refreshDriveHealth();
 
       if (!listenersBound) {
         listenersBound = true;
@@ -287,7 +344,25 @@ export const useAppStore = create<AppState>((set, get) => ({
     }
   },
 
+  refreshDriveHealth: async () => {
+    try {
+      const driveHealth = await api.getDriveHealth();
+      set({ driveHealth });
+    } catch {
+      /* Ambient chrome: keep whatever the last read produced
+         (usually null → no dot) and never surface an error. */
+    }
+  },
+
+  setSoftwareUpdatesBadge: (badge) => {
+    writeSoftwareUpdatesBadge(badge);
+    set({ softwareUpdatesBadge: badge });
+  },
+
   updateSettings: async (patch) => {
+    if (patch.sidebarCollapsed !== undefined) {
+      writeSidebarCollapsedMirror(patch.sidebarCollapsed);
+    }
     const next = { ...get().settings, ...patch };
     set({ settings: next });
     if (patch.theme) applyTheme(next.theme);

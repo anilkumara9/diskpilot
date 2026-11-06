@@ -1,15 +1,17 @@
 import { useState } from "react";
 import { CheckCircle2, RefreshCw } from "lucide-react";
 import * as api from "@/lib/api";
+import { useAppStore } from "@/lib/store";
 import {
   actionableIds,
   anyRunning,
   markRunning,
   mergeOutcomes,
+  outstandingUpdateCount,
   PENDING,
   type UpdateRowState,
 } from "@/lib/updates";
-import type { AvailableUpdates } from "@/lib/types";
+import type { AvailableUpdates, SoftwareUpdateOutcome } from "@/lib/types";
 import { Button } from "@/components/ui/button";
 import { Section } from "@/components/ui/section";
 import { SkeletonRows } from "@/components/ui/skeleton";
@@ -28,6 +30,7 @@ export function UpdatesSection() {
   const [checkError, setCheckError] = useState<string | null>(null);
   const [rowStates, setRowStates] = useState<Record<string, UpdateRowState>>({});
   const [hasRun, setHasRun] = useState(false);
+  const setSoftwareUpdatesBadge = useAppStore((s) => s.setSoftwareUpdatesBadge);
 
   const check = async () => {
     setPhase("checking");
@@ -37,6 +40,14 @@ export function UpdatesSection() {
     try {
       const result = await api.listAvailableUpdates();
       setReport(result);
+      /* The Applications nav badge remembers this completed
+         check (count + when) across restarts. A failed check
+         leaves the previous memory untouched — it still
+         describes the last check that actually completed. */
+      setSoftwareUpdatesBadge({
+        count: result.available ? result.updates.length : 0,
+        checkedAtMs: Date.now(),
+      });
     } catch (err) {
       setReport(null);
       setCheckError(err instanceof Error ? err.message : "The update check failed.");
@@ -47,24 +58,29 @@ export function UpdatesSection() {
 
   const runUpdate = async (ids: string[]) => {
     if (ids.length === 0) return;
-    setRowStates((prev) => markRunning(prev, ids));
+    const marked = markRunning(rowStates, ids);
+    setRowStates(marked);
+    let outcomes: SoftwareUpdateOutcome[];
     try {
       /* An empty id list means "everything outstanding" — the
          shell expands it, so Update all is one winget queue. */
-      const outcomes = await api.updateSoftware(ids.length === 1 ? ids : []);
-      setRowStates((prev) => mergeOutcomes(prev, outcomes, ids));
+      outcomes = await api.updateSoftware(ids.length === 1 ? ids : []);
     } catch (err) {
       const message = err instanceof Error ? err.message : "The update could not be run.";
-      setRowStates((prev) =>
-        mergeOutcomes(
-          prev,
-          ids.map((id) => ({ id, success: false, message })),
-          ids,
-        ),
-      );
-    } finally {
-      setHasRun(true);
+      outcomes = ids.map((id) => ({ id, success: false, message }));
     }
+    const merged = mergeOutcomes(marked, outcomes, ids);
+    setRowStates(merged);
+    /* The badge count follows the run: rows that updated stop
+       counting, rows that failed (or were never attempted) keep
+       counting. The check timestamp stays the last check's —
+       the run freshened the count, not the check. */
+    const badge = useAppStore.getState().softwareUpdatesBadge;
+    setSoftwareUpdatesBadge({
+      count: outstandingUpdateCount(report?.updates ?? [], merged),
+      checkedAtMs: badge?.checkedAtMs ?? Date.now(),
+    });
+    setHasRun(true);
   };
 
   const updates = report?.updates ?? [];
