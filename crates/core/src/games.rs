@@ -113,10 +113,7 @@ fn tokenize_vdf(text: &str) -> Vec<VdfToken> {
         } else {
             // Bare word: up to whitespace or a brace.
             let mut s = String::new();
-            while i < chars.len()
-                && !chars[i].is_whitespace()
-                && chars[i] != '{'
-                && chars[i] != '}'
+            while i < chars.len() && !chars[i].is_whitespace() && chars[i] != '{' && chars[i] != '}'
             {
                 s.push(chars[i]);
                 i += 1;
@@ -594,7 +591,10 @@ mod tests {
         assert_eq!(recorded.bytes, 12_345);
         assert_eq!(recorded.app_id, "100");
         let measured = games.iter().find(|g| g.name == "Measured").unwrap();
-        assert!(measured.bytes >= 5_000, "allocated size of the 5000-byte file");
+        assert!(
+            measured.bytes >= 5_000,
+            "allocated size of the 5000-byte file"
+        );
         assert_eq!(measured.app_id, "200");
     }
 }

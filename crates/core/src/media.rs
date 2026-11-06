@@ -144,10 +144,28 @@ mod tests {
         let s = media_summary(&files);
         // Photos: jpg + 2 png (screenshot included); videos: mp4 + mkv;
         // text and music count nowhere.
-        assert_eq!(s.photos, MediaBucket { bytes: 3_500, count: 3 });
-        assert_eq!(s.videos, MediaBucket { bytes: 16_000, count: 2 });
+        assert_eq!(
+            s.photos,
+            MediaBucket {
+                bytes: 3_500,
+                count: 3
+            }
+        );
+        assert_eq!(
+            s.videos,
+            MediaBucket {
+                bytes: 16_000,
+                count: 2
+            }
+        );
         // The screenshot is counted in photos AND in its subset bucket.
-        assert_eq!(s.screenshots, MediaBucket { bytes: 500, count: 1 });
+        assert_eq!(
+            s.screenshots,
+            MediaBucket {
+                bytes: 500,
+                count: 1
+            }
+        );
     }
 
     #[test]

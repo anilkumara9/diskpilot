@@ -223,8 +223,7 @@ impl Planner {
                 .ok_or_else(|| CoreError::PlanNotFound(plan_id.to_string()))?;
             if !plan.allow_permanent {
                 return Err(CoreError::SafetyRejected(
-                    "permanent delete is only allowed when every item is regenerable"
-                        .to_string(),
+                    "permanent delete is only allowed when every item is regenerable".to_string(),
                 ));
             }
         }
@@ -260,11 +259,7 @@ fn measured_bytes(index: &crate::scanner::DirIndex, path: &str) -> Option<u64> {
     if let Some(bytes) = index.dir_sizes.get(path) {
         return Some(*bytes);
     }
-    index
-        .files
-        .iter()
-        .find(|f| f.path == path)
-        .map(|f| f.bytes)
+    index.files.iter().find(|f| f.path == path).map(|f| f.bytes)
 }
 
 #[cfg(test)]

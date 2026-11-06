@@ -76,11 +76,7 @@ pub fn extension_stats(index: &DirIndex, limit: usize) -> Vec<ExtensionStat> {
 /// allocated bytes (path order breaks byte ties), truncated to
 /// `limit`. The entries are returned as stored — the caller shows
 /// exactly what the scan recorded.
-pub fn largest_files_with_extension(
-    index: &DirIndex,
-    ext: &str,
-    limit: usize,
-) -> Vec<FileEntry> {
+pub fn largest_files_with_extension(index: &DirIndex, ext: &str, limit: usize) -> Vec<FileEntry> {
     let want = normalize_query(ext);
     let mut files: Vec<FileEntry> = index
         .files
@@ -131,21 +127,37 @@ mod tests {
         // gz first (200), then the merged jpg group (150).
         assert_eq!(
             stats[0],
-            ExtensionStat { extension: "gz".into(), bytes: 200, count: 1 }
+            ExtensionStat {
+                extension: "gz".into(),
+                bytes: 200,
+                count: 1
+            }
         );
         assert_eq!(
             stats[1],
-            ExtensionStat { extension: "jpg".into(), bytes: 150, count: 2 },
+            ExtensionStat {
+                extension: "jpg".into(),
+                bytes: 150,
+                count: 2
+            },
             "JPG and jpg are one group"
         );
         assert_eq!(
             stats[2],
-            ExtensionStat { extension: "jpeg".into(), bytes: 30, count: 1 },
+            ExtensionStat {
+                extension: "jpeg".into(),
+                bytes: 30,
+                count: 1
+            },
             "jpeg is its own extension, not folded into jpg"
         );
         assert_eq!(
             stats[3],
-            ExtensionStat { extension: String::new(), bytes: 15, count: 2 },
+            ExtensionStat {
+                extension: String::new(),
+                bytes: 15,
+                count: 2
+            },
             "no extension and dotfiles group under \"\""
         );
     }

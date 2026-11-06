@@ -71,7 +71,10 @@ fn deep_tree_scans_and_the_depth_cap_reports_skips() {
     write_file(&deep2.join("too-deep.txt"), 10);
     let (summary2, index2) = Scanner::new(dir2.path()).scan();
     assert!(
-        !index2.files.iter().any(|f| f.path.ends_with("too-deep.txt")),
+        !index2
+            .files
+            .iter()
+            .any(|f| f.path.ends_with("too-deep.txt")),
         "files below the depth cap are not indexed"
     );
     assert!(

@@ -674,19 +674,13 @@ fn deep_chain_assembles_completely() {
         let parent = if i == 0 { 5 } else { 99 + i };
         let dir = RecordBuilder::new(number, true, true, 0)
             .resident(ATTR_STANDARD_INFORMATION, &si(FT_2020, 0x06))
-            .resident(
-                ATTR_FILE_NAME,
-                &file_name(parent, 3, &format!("d{i}"), 0),
-            )
+            .resident(ATTR_FILE_NAME, &file_name(parent, 3, &format!("d{i}"), 0))
             .finish(7);
         records.push(parse(&dir));
     }
     let leaf = RecordBuilder::new(100 + DEPTH, true, false, 0)
         .resident(ATTR_STANDARD_INFORMATION, &si(FT_2020, 0x20))
-        .resident(
-            ATTR_FILE_NAME,
-            &file_name(99 + DEPTH, 3, "leaf.bin", 3),
-        )
+        .resident(ATTR_FILE_NAME, &file_name(99 + DEPTH, 3, "leaf.bin", 3))
         .resident(ATTR_DATA, &[1, 2, 3])
         .finish(7);
     records.push(parse(&leaf));

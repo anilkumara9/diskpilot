@@ -439,7 +439,11 @@ fn apply_batch(state: &ShellState, root: &str, changes: &[usn_volume::ResolvedCh
         let Some(index) = engine.index.clone() else {
             return;
         };
-        (index, previous, state.index_generation.load(Ordering::SeqCst))
+        (
+            index,
+            previous,
+            state.index_generation.load(Ordering::SeqCst),
+        )
     };
 
     // Phase 2 — apply + rebuild, holding no lock.

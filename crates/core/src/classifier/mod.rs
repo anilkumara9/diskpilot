@@ -356,7 +356,10 @@ impl ClassifyMemo {
     /// The phase outcomes for a child named `name_lower` (already
     /// lower-cased) of this memo's directory: (phase 1, phase 2,
     /// the child's normalised path).
-    fn child_phases(&self, name_lower: &str) -> (Option<Classification>, Option<Classification>, String) {
+    fn child_phases(
+        &self,
+        name_lower: &str,
+    ) -> (Option<Classification>, Option<Classification>, String) {
         let all_rules = rules_ref();
         if self.depth < self.skip {
             // The child (at depth + 1 <= skip) is still at or
@@ -369,8 +372,8 @@ impl ClassifyMemo {
         }
         // Phase 1: the child's own name is the deepest component;
         // if no rule names it, the parent's result stands.
-        let component_match = component_match_one(all_rules, name_lower)
-            .or_else(|| self.component_match.clone());
+        let component_match =
+            component_match_one(all_rules, name_lower).or_else(|| self.component_match.clone());
         // Phase 2: the parent's winner still matches (its fragment
         // lies inside the parent's normalised path, a prefix of the
         // child's); an earlier rule can only newly match through
@@ -382,11 +385,7 @@ impl ClassifyMemo {
             // child is the first kept component, so its normalised
             // path is its name alone — scan it directly.
             let norm = name_lower.to_string();
-            return (
-                component_match,
-                fragment_scan(all_rules, &norm),
-                norm,
-            );
+            return (component_match, fragment_scan(all_rules, &norm), norm);
         }
         let window = {
             let max = max_fragment_bytes();
@@ -583,12 +582,8 @@ mod tests {
             let mut parent = (root_class.clone(), root_scope);
             for seg in segs {
                 path.push(seg);
-                let (old_class, old_scope) = classify_child_from(
-                    &path,
-                    true,
-                    Some(&(parent.0.clone(), parent.1)),
-                    skip,
-                );
+                let (old_class, old_scope) =
+                    classify_child_from(&path, true, Some(&(parent.0.clone(), parent.1)), skip);
                 let (memo_class, memo_scope, child_memo) = classify_dir_memo(
                     &memo,
                     std::ffi::OsStr::new(seg),
@@ -632,12 +627,8 @@ mod tests {
             // One more directory level of children, both entry points.
             for name in child_dirs {
                 let dir_path = path.join(name);
-                let (old_class, old_scope) = classify_child_from(
-                    &dir_path,
-                    true,
-                    Some(&(parent.0.clone(), parent.1)),
-                    skip,
-                );
+                let (old_class, old_scope) =
+                    classify_child_from(&dir_path, true, Some(&(parent.0.clone(), parent.1)), skip);
                 let (memo_class, memo_scope, _) = classify_dir_memo(
                     &memo,
                     std::ffi::OsStr::new(name),

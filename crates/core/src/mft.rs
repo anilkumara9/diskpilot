@@ -657,8 +657,7 @@ struct AssemblyIndex<'a> {
     /// Resolved directory paths (record number → full path or the
     /// reason it cannot resolve), with path compression: resolving
     /// one directory caches every ancestor walked through.
-    path_cache:
-        std::cell::RefCell<std::collections::HashMap<u64, Result<String, ChainFail>>>,
+    path_cache: std::cell::RefCell<std::collections::HashMap<u64, Result<String, ChainFail>>>,
 }
 
 impl<'a> AssemblyIndex<'a> {

@@ -165,7 +165,11 @@ mod tests {
         let entries = [point(4, 100, Some(20)), point(0, 100, Some(20))];
         let f = forecast(&entries, NOW);
         assert_eq!(f.points_used, 2);
-        assert!(f.daily_growth_bytes.abs() < 1.0, "growth {}", f.daily_growth_bytes);
+        assert!(
+            f.daily_growth_bytes.abs() < 1.0,
+            "growth {}",
+            f.daily_growth_bytes
+        );
         assert_eq!(f.days_until_full, None);
         assert_eq!(f.projected_full_at_ms, None);
     }

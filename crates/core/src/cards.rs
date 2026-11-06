@@ -288,4 +288,3 @@ mod tests {
         assert!(groups.is_empty(), "no card fires, got: {groups:?}");
     }
 }
-

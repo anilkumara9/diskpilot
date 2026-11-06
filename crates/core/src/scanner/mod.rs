@@ -520,7 +520,9 @@ impl Scanner {
 
         children.sort_by(|a, b| a.name.cmp(&b.name));
         index.dir_sizes.insert(dir_key.to_string(), agg.bytes);
-        index.dir_category.insert(dir_key.to_string(), dir_class.category);
+        index
+            .dir_category
+            .insert(dir_key.to_string(), dir_class.category);
         index
             .dir_classification
             .insert(dir_key.to_string(), dir_class);
@@ -698,12 +700,8 @@ impl Scanner {
         // Classification goes through the per-directory memo: each
         // child costs one name scan instead of a rebuild of its
         // whole ancestor chain (see classifier::ClassifyMemo).
-        let mut subdirs: Vec<(
-            PathBuf,
-            Classification,
-            RuleScope,
-            classifier::ClassifyMemo,
-        )> = Vec::new();
+        let mut subdirs: Vec<(PathBuf, Classification, RuleScope, classifier::ClassifyMemo)> =
+            Vec::new();
         let mut children: Vec<IndexChild> = Vec::new();
         for path in &entries {
             if self.cancel.load(Ordering::Relaxed) {
@@ -1138,9 +1136,7 @@ pub(crate) fn file_identity_windows(path: &Path) -> Option<((u64, u64), u64)> {
         file_index_high: 0,
         file_index_low: 0,
     };
-    let ok = unsafe {
-        GetFileInformationByHandle(file.as_raw_handle(), &mut info)
-    };
+    let ok = unsafe { GetFileInformationByHandle(file.as_raw_handle(), &mut info) };
     if ok == 0 {
         return None;
     }

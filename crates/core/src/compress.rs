@@ -72,7 +72,11 @@ fn parent_dir(path: &str) -> Option<&str> {
     let idx = path.rfind(['\\', '/'])?;
     if idx == 0 {
         // "/etc" -> parent is the root "/"; the root itself has none.
-        return if path.len() > 1 { Some(&path[..1]) } else { None };
+        return if path.len() > 1 {
+            Some(&path[..1])
+        } else {
+            None
+        };
     }
     Some(&path[..idx])
 }
@@ -253,11 +257,7 @@ mod tests {
             entry(r"C:\Root\Windows.old\a.bin", 400_000_000, OLD),
             entry(r"C:\Root\Plain\a.bin", 400_000_000, OLD),
         ];
-        let index = build_index(
-            root,
-            files,
-            &[(r"C:\Root\WinSxS", Category::SystemFiles)],
-        );
+        let index = build_index(root, files, &[(r"C:\Root\WinSxS", Category::SystemFiles)]);
         let found = compression_candidates_at(&index, NOW);
         assert_eq!(found.len(), 1);
         assert_eq!(found[0].path, r"C:\Root\Plain");

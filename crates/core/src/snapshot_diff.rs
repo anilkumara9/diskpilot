@@ -248,12 +248,16 @@ pub fn diff_snapshots(
     changes
         .shrunk
         .sort_by(|a, b| a.delta_bytes.cmp(&b.delta_bytes).then(a.path.cmp(&b.path)));
-    changes
-        .added
-        .sort_by(|a, b| b.current_bytes.cmp(&a.current_bytes).then(a.path.cmp(&b.path)));
-    changes
-        .removed
-        .sort_by(|a, b| b.previous_bytes.cmp(&a.previous_bytes).then(a.path.cmp(&b.path)));
+    changes.added.sort_by(|a, b| {
+        b.current_bytes
+            .cmp(&a.current_bytes)
+            .then(a.path.cmp(&b.path))
+    });
+    changes.removed.sort_by(|a, b| {
+        b.previous_bytes
+            .cmp(&a.previous_bytes)
+            .then(a.path.cmp(&b.path))
+    });
     changes.grown.truncate(limit);
     changes.shrunk.truncate(limit);
     changes.added.truncate(limit);
@@ -267,10 +271,7 @@ mod tests {
 
     fn view(dirs: &[(&str, u64)], files: &[(&str, u64)]) -> SnapshotView {
         SnapshotView {
-            dir_sizes: dirs
-                .iter()
-                .map(|(p, b)| (p.to_string(), *b))
-                .collect(),
+            dir_sizes: dirs.iter().map(|(p, b)| (p.to_string(), *b)).collect(),
             files: files
                 .iter()
                 .map(|(p, b)| SnapshotFile {
@@ -319,7 +320,11 @@ mod tests {
         let previous = view(&[], &[("/root/a/f1.bin", 100), ("/root/a/f2.bin", 50)]);
         let current = view(
             &[],
-            &[("/root/a/f1.bin", 100), ("/root/a/f2.bin", 50), ("/root/b/f3.bin", 70)],
+            &[
+                ("/root/a/f1.bin", 100),
+                ("/root/a/f2.bin", 50),
+                ("/root/b/f3.bin", 70),
+            ],
         );
         let diff = diff_snapshots(&current, &previous, 8);
         // /root/b appears (70 bytes under it); /root aggregates both
@@ -340,7 +345,10 @@ mod tests {
         let added: Vec<&str> = diff.added.iter().map(|c| c.path.as_str()).collect();
         assert!(added.contains(&"C:\\Users\\a\\new"), "added {added:?}");
         let removed: Vec<&str> = diff.removed.iter().map(|c| c.path.as_str()).collect();
-        assert!(removed.contains(&"C:\\Users\\a\\old"), "removed {removed:?}");
+        assert!(
+            removed.contains(&"C:\\Users\\a\\old"),
+            "removed {removed:?}"
+        );
     }
 
     #[test]

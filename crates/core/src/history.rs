@@ -97,11 +97,10 @@ impl HistoryStore {
         // (unknown removal mode — never restorable, see the module
         // docs). Guarded by a pragma check so re-runs are no-ops.
         let has_mode: bool = {
-            let mut stmt = self
-                .conn
-                .prepare("SELECT COUNT(*) FROM pragma_table_info('cleanup_items') WHERE name = 'mode'")?;
-            stmt.query_row([], |row| row.get::<_, i64>(0))?
-                > 0
+            let mut stmt = self.conn.prepare(
+                "SELECT COUNT(*) FROM pragma_table_info('cleanup_items') WHERE name = 'mode'",
+            )?;
+            stmt.query_row([], |row| row.get::<_, i64>(0))? > 0
         };
         if !has_mode {
             self.conn
@@ -218,10 +217,7 @@ impl HistoryStore {
             .conn
             .prepare("SELECT path, mode FROM cleanup_items WHERE action_id = ?1 ORDER BY id")?;
         let rows = stmt.query_map(params![entry_id], |row| {
-            Ok((
-                row.get::<_, String>(0)?,
-                row.get::<_, Option<String>>(1)?,
-            ))
+            Ok((row.get::<_, String>(0)?, row.get::<_, Option<String>>(1)?))
         })?;
         let mut items = Vec::new();
         for row in rows {

@@ -456,9 +456,7 @@ mod tests {
         index.dir_sizes.insert(sub_str.clone(), 100);
         for (key, class) in [(&root_str, &root_class), (&sub_str, &sub_class)] {
             index.dir_category.insert(key.clone(), class.category);
-            index
-                .dir_classification
-                .insert(key.clone(), class.clone());
+            index.dir_classification.insert(key.clone(), class.clone());
         }
         index.children.insert(
             root_str.clone(),
@@ -497,7 +495,9 @@ mod tests {
         f.write_all(&vec![7u8; bytes]).unwrap();
     }
 
-    use crate::usn::{REASON_FILE_CREATE, REASON_FILE_DELETE, REASON_RENAME_NEW_NAME, REASON_RENAME_OLD_NAME};
+    use crate::usn::{
+        REASON_FILE_CREATE, REASON_FILE_DELETE, REASON_RENAME_NEW_NAME, REASON_RENAME_OLD_NAME,
+    };
 
     #[test]
     fn delete_removes_entry_and_ancestor_totals() {

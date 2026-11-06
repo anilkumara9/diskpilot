@@ -78,7 +78,6 @@ use diskpilot_core::cleanup::{execute_plan, ExecuteMode, FileOps, RealFileOps};
 use diskpilot_core::error::CoreError;
 use diskpilot_core::forecast::{self, Forecast, HistoryPoint};
 use diskpilot_core::history::HistoryStore;
-use diskpilot_core::snapshot_diff::{diff_snapshots, BiggestChanges, SnapshotView};
 use diskpilot_core::model::{
     now_ms, AppEntry, Category, Classification, CleanupFailure, CleanupPlan, CleanupResult,
     DiskInfo, DuplicateGroup, FileEntry, HistoryEntry, Recommendation, ScanSummary, SecretFinding,
@@ -86,6 +85,7 @@ use diskpilot_core::model::{
 };
 use diskpilot_core::safety::SafetyContext;
 use diskpilot_core::scanner::{ProgressCallback, ScanProgress, Scanner};
+use diskpilot_core::snapshot_diff::{diff_snapshots, BiggestChanges, SnapshotView};
 use diskpilot_core::{
     apps, assistant, devtools, disk, docker, duplicates, explorer, media_meta, provenance, safety,
     scanner, search, secrets, snapshot,
@@ -584,10 +584,7 @@ pub fn get_space_forecast(state: State<'_, ShellState>) -> CmdResult<Forecast> {
 /// current snapshot, or the two cover different roots (a root change
 /// makes a directory diff meaningless, same rule as the comparison).
 #[tauri::command]
-pub fn get_biggest_changes(
-    state: State<'_, ShellState>,
-    limit: u32,
-) -> CmdResult<BiggestChanges> {
+pub fn get_biggest_changes(state: State<'_, ShellState>, limit: u32) -> CmdResult<BiggestChanges> {
     let limit = if limit == 0 { 8 } else { limit as usize };
     let current = snapshot::load_snapshot(&state.snapshot_file())
         .ok()
@@ -841,9 +838,7 @@ pub fn get_history(
             let items = history.entry_items(entry.id)?.unwrap_or_default();
             let trash_paths: Vec<String> = items
                 .iter()
-                .filter(|item| {
-                    item.mode == Some(diskpilot_core::history::RemovedItemMode::Trash)
-                })
+                .filter(|item| item.mode == Some(diskpilot_core::history::RemovedItemMode::Trash))
                 .map(|item| item.path.clone())
                 .collect();
             entry.restorable_count = crate::recycle_bin::count_restorable(
@@ -915,15 +910,13 @@ pub async fn restore_cleanup_run(
                             path: item.path.clone(),
                             error: "no longer in the Recycle Bin".to_string(),
                         }),
-                        Some(bin_item) => {
-                            match crate::recycle_bin::restore_item(&bin_item.id) {
-                                Ok(()) => restored.push(item.path.clone()),
-                                Err(error) => failed.push(RestoreRunFailure {
-                                    path: item.path.clone(),
-                                    error,
-                                }),
-                            }
-                        }
+                        Some(bin_item) => match crate::recycle_bin::restore_item(&bin_item.id) {
+                            Ok(()) => restored.push(item.path.clone()),
+                            Err(error) => failed.push(RestoreRunFailure {
+                                path: item.path.clone(),
+                                error,
+                            }),
+                        },
                     }
                 }
                 None => unreachable!("unknown-mode entries returned above"),
@@ -936,10 +929,7 @@ pub async fn restore_cleanup_run(
         }
     })
     .await?;
-    let detail = format!(
-        "Restored {} items from a cleanup",
-        result.restored.len()
-    );
+    let detail = format!("Restored {} items from a cleanup", result.restored.len());
     let errors: Vec<String> = result
         .failed
         .iter()
@@ -978,8 +968,7 @@ pub async fn find_duplicates(
         Some(r) if !r.is_empty() => r,
         _ => state.scan_root(),
     };
-    let groups =
-        blocking_value(move || duplicates::find_duplicates(Path::new(&root_path))).await?;
+    let groups = blocking_value(move || duplicates::find_duplicates(Path::new(&root_path))).await?;
     if let Ok(mut slot) = state.duplicates_report.lock() {
         *slot = Some(groups.clone());
     }
@@ -1010,9 +999,7 @@ pub async fn remove_duplicate_copies(
             .lock()
             .map_err(|_| "duplicates state lock poisoned".to_string())?;
         let Some(report) = report.as_ref() else {
-            return Err(
-                "No duplicate results to act on — run Find duplicates first.".to_string(),
-            );
+            return Err("No duplicate results to act on — run Find duplicates first.".to_string());
         };
         let Some(group) = report.iter().find(|g| g.hash == group_hash) else {
             return Err(
@@ -1031,9 +1018,7 @@ pub async fn remove_duplicate_copies(
             return Err("The keeper copy is not part of that duplicate group.".to_string());
         }
         if let Some(intruder) = remove_paths.iter().find(|p| !is_member(p)) {
-            return Err(format!(
-                "{intruder} is not part of that duplicate group."
-            ));
+            return Err(format!("{intruder} is not part of that duplicate group."));
         }
     }
     let ctx = SafetyContext::new(state.scan_root());
@@ -1526,29 +1511,25 @@ pub async fn empty_recycle_bin(
             // rather than being recorded on the webview's say-so.
             let mut current_name = item.name.clone();
             match crate::recycle_bin::validate_item_id(&item.id) {
-                Some((payload, info)) => {
-                    match crate::recycle_bin::read_item(&payload, &info) {
-                        Some(parsed) => {
-                            current_name = parsed.name.clone();
-                            let outcome = RealFileOps.permanent_delete(&payload).and_then(|_| {
-                                std::fs::remove_file(&info).map_err(|e| e.to_string())
-                            });
-                            match outcome {
-                                Ok(()) => {
-                                    succeeded.push(parsed.original_path.clone());
-                                    freed += parsed.bytes;
-                                }
-                                Err(message) => failed.push(CleanupFailure {
-                                    path: parsed.original_path.clone(),
-                                    message,
-                                }),
+                Some((payload, info)) => match crate::recycle_bin::read_item(&payload, &info) {
+                    Some(parsed) => {
+                        current_name = parsed.name.clone();
+                        let outcome = RealFileOps
+                            .permanent_delete(&payload)
+                            .and_then(|_| std::fs::remove_file(&info).map_err(|e| e.to_string()));
+                        match outcome {
+                            Ok(()) => {
+                                succeeded.push(parsed.original_path.clone());
+                                freed += parsed.bytes;
                             }
+                            Err(message) => failed.push(CleanupFailure {
+                                path: parsed.original_path.clone(),
+                                message,
+                            }),
                         }
-                        None => failed.push(fail(
-                            "item metadata is unreadable — skipped".to_string(),
-                        )),
                     }
-                }
+                    None => failed.push(fail("item metadata is unreadable — skipped".to_string())),
+                },
                 None => failed.push(fail(
                     "item is no longer in the Recycle Bin — skipped".to_string(),
                 )),
@@ -1624,7 +1605,10 @@ pub fn get_cloud_status(
         return Ok(None);
     };
     let root = root.to_string_lossy().into_owned();
-    Ok(Some(diskpilot_core::cloud::cloud_status(&root, &index.files)))
+    Ok(Some(diskpilot_core::cloud::cloud_status(
+        &root,
+        &index.files,
+    )))
 }
 
 /// Media totals (photos / videos / screenshots + biggest files)
@@ -1782,19 +1766,17 @@ pub fn get_compression_candidates(
     let Some(index) = engine.index.as_ref() else {
         return Ok(Vec::new());
     };
-    Ok(
-        diskpilot_core::compress::compression_candidates(index)
-            .into_iter()
-            .map(|c| CompressionCandidateDto {
-                compressed: dir_is_compressed(&c.path),
-                path: c.path,
-                bytes: c.bytes,
-                file_count: c.file_count,
-                newest_modified_ms: c.newest_modified_ms,
-            })
-            .filter(|dto| !dto.compressed)
-            .collect(),
-    )
+    Ok(diskpilot_core::compress::compression_candidates(index)
+        .into_iter()
+        .map(|c| CompressionCandidateDto {
+            compressed: dir_is_compressed(&c.path),
+            path: c.path,
+            bytes: c.bytes,
+            file_count: c.file_count,
+            newest_modified_ms: c.newest_modified_ms,
+        })
+        .filter(|dto| !dto.compressed)
+        .collect())
 }
 
 /// Whether a directory carries `FILE_ATTRIBUTE_COMPRESSED`
@@ -1870,16 +1852,10 @@ pub async fn set_folder_compression(
             .engine
             .lock()
             .ok()
-            .and_then(|engine| {
-                engine
-                    .index
-                    .as_ref()
-                    .map(|index| index.size_of(&path))
-            })
+            .and_then(|engine| engine.index.as_ref().map(|index| index.size_of(&path)))
             .filter(|bytes| *bytes > 0);
         let to_run = path.clone();
-        let outcome =
-            blocking_value(move || run_compact(&to_run, compress)).await?;
+        let outcome = blocking_value(move || run_compact(&to_run, compress)).await?;
         let detail = match known_bytes {
             Some(bytes) => format!(
                 "{} {path} ({bytes} bytes in the last scan)",

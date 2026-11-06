@@ -263,9 +263,7 @@ fn path_is_below(path: &Path, prefix: &Path) -> bool {
             .to_lowercase()
     }
     let (path, prefix) = (norm(path), norm(prefix));
-    path.len() > prefix.len()
-        && path.starts_with(&prefix)
-        && path.as_bytes()[prefix.len()] == b'\\'
+    path.len() > prefix.len() && path.starts_with(&prefix) && path.as_bytes()[prefix.len()] == b'\\'
 }
 
 /// Move a file, guaranteeing no overwrite. On Windows this is
@@ -283,9 +281,7 @@ fn move_no_overwrite(from: &Path, to: &Path) -> std::io::Result<()> {
         fn MoveFileExW(existing: *const u16, new: *const u16, flags: u32) -> i32;
     }
 
-    let wide = |p: &Path| -> Vec<u16> {
-        p.as_os_str().encode_wide().chain(Some(0)).collect()
-    };
+    let wide = |p: &Path| -> Vec<u16> { p.as_os_str().encode_wide().chain(Some(0)).collect() };
     let (from_w, to_w) = (wide(from), wide(to));
     // flags = 0: no REPLACE_EXISTING, no cross-volume copy fallback.
     let ok = unsafe { MoveFileExW(from_w.as_ptr(), to_w.as_ptr(), 0) };
@@ -357,10 +353,10 @@ pub fn count_restorable(
 /// on-disk data, and a crafted `$I…` must not be able to aim a
 /// restore at system files.
 pub fn restore_item(id: &str) -> Result<(), String> {
-    let (payload, info) = validate_item_id(id)
-        .ok_or_else(|| "item is no longer in the Recycle Bin".to_string())?;
-    let item = read_item(&payload, &info)
-        .ok_or_else(|| "item metadata is unreadable".to_string())?;
+    let (payload, info) =
+        validate_item_id(id).ok_or_else(|| "item is no longer in the Recycle Bin".to_string())?;
+    let item =
+        read_item(&payload, &info).ok_or_else(|| "item metadata is unreadable".to_string())?;
     let destination = PathBuf::from(&item.original_path);
     if destination_is_protected(&destination) {
         return Err(format!(
@@ -446,14 +442,15 @@ mod tests {
 
         // The exact same layout under a folder merely NAMED
         // `$Recycle.Bin` somewhere else does not qualify.
-        let fake_sid = dir.path().join("stash").join("$Recycle.Bin").join("S-1-5-21-1000");
+        let fake_sid = dir
+            .path()
+            .join("stash")
+            .join("$Recycle.Bin")
+            .join("S-1-5-21-1000");
         std::fs::create_dir_all(&fake_sid).unwrap();
         std::fs::write(fake_sid.join("$RABC123.txt"), b"payload").unwrap();
         std::fs::write(fake_sid.join("$IABC123.txt"), b"metadata").unwrap();
-        let fake_id = fake_sid
-            .join("$RABC123.txt")
-            .to_string_lossy()
-            .into_owned();
+        let fake_id = fake_sid.join("$RABC123.txt").to_string_lossy().into_owned();
         assert!(validate_item_id_within(&fake_id, &roots).is_none());
 
         // A payload whose `$I…` sibling is gone does not validate.
@@ -475,15 +472,21 @@ mod tests {
         assert!(destination_is_protected(Path::new(
             r"C:\Windows\System32\drivers\etc\hosts"
         )));
-        assert!(destination_is_protected(Path::new(r"C:\Program Files\App\app.exe")));
+        assert!(destination_is_protected(Path::new(
+            r"C:\Program Files\App\app.exe"
+        )));
         assert!(destination_is_protected(Path::new(r"C:\pagefile.sys")));
-        assert!(destination_is_protected(Path::new(r"C:\Windows.old\Users\Ana\x.txt")));
+        assert!(destination_is_protected(Path::new(
+            r"C:\Windows.old\Users\Ana\x.txt"
+        )));
         assert!(!destination_is_protected(Path::new(
             r"C:\Users\Ana\Downloads\report.pdf"
         )));
         assert!(!destination_is_protected(Path::new(r"D:\scratch\a.tmp")));
         // A lookalike prefix is not the protected folder.
-        assert!(!destination_is_protected(Path::new(r"C:\WindowsOld\file.txt")));
+        assert!(!destination_is_protected(Path::new(
+            r"C:\WindowsOld\file.txt"
+        )));
     }
 
     #[test]

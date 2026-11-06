@@ -213,8 +213,7 @@ struct Entry {
 /// Every startup entry on this machine, enabled and disabled:
 /// sorted enabled-first, then by name.
 pub fn list_items() -> Vec<StartupItem> {
-    let mut items: Vec<StartupItem> =
-        enumerate_entries().into_iter().map(|e| e.item).collect();
+    let mut items: Vec<StartupItem> = enumerate_entries().into_iter().map(|e| e.item).collect();
     items.sort_by(|a, b| {
         b.enabled
             .cmp(&a.enabled)
@@ -305,7 +304,7 @@ fn collect_folder_side(
 
 #[cfg(windows)]
 fn enumerate_registry_entries(out: &mut Vec<Entry>) {
-    use winreg::enums::{HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE, RegType};
+    use winreg::enums::{RegType, HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE};
     use winreg::types::FromRegValue;
     use winreg::{RegKey, RegValue};
 
@@ -340,8 +339,7 @@ fn enumerate_registry_entries(out: &mut Vec<Entry>) {
                     let Some(command) = string_value(&raw) else {
                         continue;
                     };
-                    let (target_path, target_exists, target_bytes) =
-                        resolve_target(&command);
+                    let (target_path, target_exists, target_bytes) = resolve_target(&command);
                     out.push(Entry {
                         item: StartupItem {
                             id: make_id(source, Some(base), &name),
@@ -421,8 +419,7 @@ fn apply_folder_move(root: &Path, name: &str, disabling: bool) -> Result<(), Str
         std::fs::create_dir_all(parent)
             .map_err(|e| format!("could not prepare the folder for \"{name}\": {e}"))?;
     }
-    std::fs::rename(&from, &to)
-        .map_err(|e| format!("could not move \"{name}\": {e}"))?;
+    std::fs::rename(&from, &to).map_err(|e| format!("could not move \"{name}\": {e}"))?;
     Ok(())
 }
 
@@ -433,8 +430,7 @@ fn apply_folder_move(root: &Path, name: &str, disabling: bool) -> Result<(), Str
 fn registry_error(machine: bool, action: &str, e: &std::io::Error) -> String {
     if machine && (e.kind() == std::io::ErrorKind::PermissionDenied || e.raw_os_error() == Some(5))
     {
-        "Changing machine-wide startup entries needs DiskPilot running as administrator"
-            .to_string()
+        "Changing machine-wide startup entries needs DiskPilot running as administrator".to_string()
     } else {
         format!("could not {action} the startup entry in the registry: {e}")
     }
@@ -493,9 +489,8 @@ pub fn set_enabled(id: &str, enabled: bool) -> Result<StartupItem, String> {
     #[cfg(windows)]
     {
         let entries = enumerate_entries();
-        let entry = find_by_id(&entries, id).ok_or_else(|| {
-            "that startup entry no longer exists — refresh the list".to_string()
-        })?;
+        let entry = find_by_id(&entries, id)
+            .ok_or_else(|| "that startup entry no longer exists — refresh the list".to_string())?;
         if entry.item.enabled == enabled {
             return Ok(entry.item.clone());
         }
@@ -555,10 +550,7 @@ mod tests {
             Some(r"%SystemRoot%\system32\ctfmon.exe".to_string())
         );
         // A bare program name resolves to its single token.
-        assert_eq!(
-            parse_command_target("notepad"),
-            Some("notepad".to_string())
-        );
+        assert_eq!(parse_command_target("notepad"), Some("notepad".to_string()));
         assert_eq!(parse_command_target("   "), None);
         assert_eq!(parse_command_target(""), None);
     }

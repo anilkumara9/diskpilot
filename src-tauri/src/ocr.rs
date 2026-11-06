@@ -227,9 +227,8 @@ pub fn spawn_pass(app: AppHandle, generation: u64) {
         let shard_b: Vec<OcrCandidate> = misses.drain(half..).collect();
         let generation_counter = state.ocr_generation.clone();
         let counter_a = generation_counter.clone();
-        let worker_a = tauri::async_runtime::spawn_blocking(move || {
-            run_shard(misses, &counter_a, generation)
-        });
+        let worker_a =
+            tauri::async_runtime::spawn_blocking(move || run_shard(misses, &counter_a, generation));
         let counter_b = generation_counter.clone();
         let worker_b = tauri::async_runtime::spawn_blocking(move || {
             run_shard(shard_b, &counter_b, generation)
@@ -359,7 +358,10 @@ mod tests {
             (key("/root/b.png"), "replacement".to_string()),
             // Text keyed for a DIFFERENT version of c.png (mtime 9):
             // it must not land on the current entry.
-            (ocr::cache_key("/root/c.png", 9, 10), "wrong version".to_string()),
+            (
+                ocr::cache_key("/root/c.png", 9, 10),
+                "wrong version".to_string(),
+            ),
         ]
         .into_iter()
         .collect();

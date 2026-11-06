@@ -47,11 +47,7 @@ pub fn detect_onedrive_root() -> Option<PathBuf> {
 /// resolves outside it, and this check is the only thing standing
 /// between a caller-supplied path and `attrib` running on it.
 pub fn path_is_within(root: &str, path: &str) -> bool {
-    let norm = |s: &str| {
-        s.replace('\\', "/")
-            .trim_end_matches('/')
-            .to_lowercase()
-    };
+    let norm = |s: &str| s.replace('\\', "/").trim_end_matches('/').to_lowercase();
     let root = norm(root);
     let path = norm(path);
     if root.is_empty() || path.is_empty() {
@@ -190,7 +186,10 @@ mod tests {
             r"C:\Users\meda\OneDrive\a.docx"
         ));
         // Sibling with a shared prefix is NOT inside.
-        assert!(!path_is_within(root, r"C:\Users\meda\OneDriveBackup\a.docx"));
+        assert!(!path_is_within(
+            root,
+            r"C:\Users\meda\OneDriveBackup\a.docx"
+        ));
         assert!(!path_is_within(root, r"C:\Users\meda\a.docx"));
         assert!(!path_is_within(root, r"D:\OneDrive\a.docx"));
         assert!(!path_is_within("", r"C:\Users\meda\OneDrive\a.docx"));

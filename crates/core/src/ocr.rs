@@ -145,8 +145,16 @@ mod windows_impl {
         {
             let writer = DataWriter::CreateDataWriter(&stream).map_err(engine_err)?;
             writer.WriteBytes(&bytes).map_err(engine_err)?;
-            writer.StoreAsync().map_err(engine_err)?.get().map_err(engine_err)?;
-            writer.FlushAsync().map_err(engine_err)?.get().map_err(engine_err)?;
+            writer
+                .StoreAsync()
+                .map_err(engine_err)?
+                .get()
+                .map_err(engine_err)?;
+            writer
+                .FlushAsync()
+                .map_err(engine_err)?
+                .get()
+                .map_err(engine_err)?;
             writer.DetachStream().map_err(engine_err)?;
         }
         stream.Seek(0).map_err(engine_err)?;
@@ -246,11 +254,11 @@ mod tests {
         let files = vec![
             entry("photo.png", 1_000, 10),
             entry("Screenshot 2024.jpg", 2_000, 30),
-            entry("clip.mp4", 1_000, 40),              // video kind, wrong extension
-            entry("notes.png.txt", 1_000, 50),         // image bytes, text extension
-            entry("empty.png", 0, 60),                 // zero bytes
+            entry("clip.mp4", 1_000, 40), // video kind, wrong extension
+            entry("notes.png.txt", 1_000, 50), // image bytes, text extension
+            entry("empty.png", 0, 60),    // zero bytes
             entry("huge.png", MAX_OCR_FILE_BYTES + 1, 70), // over the cap
-            entry("max.png", MAX_OCR_FILE_BYTES, 20),  // exactly at the cap
+            entry("max.png", MAX_OCR_FILE_BYTES, 20), // exactly at the cap
             entry("diagram.webp", 3_000, 15),
         ];
         let picked = select_candidates(&files);
@@ -280,10 +288,9 @@ mod tests {
         assert_eq!(picked.len(), MAX_OCR_FILES_PER_PASS);
         // The newest file overall is first; the oldest picked is
         // exactly at the cap boundary.
-        assert!(picked[0].path.ends_with(&format!(
-            "img{}.png",
-            MAX_OCR_FILES_PER_PASS + 49
-        )));
+        assert!(picked[0]
+            .path
+            .ends_with(&format!("img{}.png", MAX_OCR_FILES_PER_PASS + 49)));
     }
 
     #[cfg(not(windows))]

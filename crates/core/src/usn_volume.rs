@@ -219,9 +219,7 @@ mod imp {
         // The checkpoint must belong to this journal and still be
         // inside its retained range; anything else means changes
         // were lost and only a fresh scan can reconcile them.
-        if info.journal_id != journal_id
-            || start_usn < info.first_usn
-            || start_usn > info.next_usn
+        if info.journal_id != journal_id || start_usn < info.first_usn || start_usn > info.next_usn
         {
             return Err(UsnReadError::JournalReset);
         }
@@ -269,8 +267,7 @@ mod imp {
                 let code = e.code().0 as u32;
                 const ERROR_JOURNAL_DELETE_IN_PROGRESS: u32 = 1180;
                 const ERROR_JOURNAL_ENTRY_DELETED: u32 = 1181;
-                if code == ERROR_JOURNAL_DELETE_IN_PROGRESS || code == ERROR_JOURNAL_ENTRY_DELETED
-                {
+                if code == ERROR_JOURNAL_DELETE_IN_PROGRESS || code == ERROR_JOURNAL_ENTRY_DELETED {
                     return Err(UsnReadError::JournalReset);
                 }
                 if records.is_empty() {

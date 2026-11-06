@@ -417,10 +417,7 @@ pub fn find_similar_images(root: &Path) -> Vec<SimilarGroup> {
             // Keeper rule unchanged: largest LOGICAL file first.
             // Path breaks size ties so the keeper — and the whole
             // rendering — is deterministic across runs.
-            files.sort_by(|a, b| {
-                b.1.cmp(&a.1)
-                    .then(a.0.path.cmp(&b.0.path))
-            });
+            files.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.path.cmp(&b.0.path)));
             let files: Vec<SimilarImage> = files.into_iter().map(|(img, _)| img).collect();
             // Wasted is allocated-based: every non-keeper copy's
             // allocated bytes (files[0] is the keeper).

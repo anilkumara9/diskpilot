@@ -378,9 +378,7 @@ mod imp {
                 boot.total_sectors
                     .saturating_mul(boot.bytes_per_sector as u64)
             };
-            let mft_offset = boot
-                .mft_lcn
-                .saturating_mul(boot.cluster_bytes as u64);
+            let mft_offset = boot.mft_lcn.saturating_mul(boot.cluster_bytes as u64);
             if mft_offset >= volume_bytes {
                 return Err(MftUnavailable::ReadFailed(
                     "the $MFT starts beyond the volume's own geometry".into(),
@@ -393,7 +391,9 @@ mod imp {
             let mft_record = mft::parse_record(&scratch, &boot)
                 .ok()
                 .flatten()
-                .ok_or_else(|| MftUnavailable::ReadFailed("record 0 ($MFT) did not parse".into()))?;
+                .ok_or_else(|| {
+                    MftUnavailable::ReadFailed("record 0 ($MFT) did not parse".into())
+                })?;
             let mft_real_size = mft_record
                 .data
                 .as_ref()

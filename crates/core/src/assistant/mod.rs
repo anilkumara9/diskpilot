@@ -496,7 +496,13 @@ impl<T: Transport> AssistantClient for ProviderClient<T> {
         tool_defs: &[ToolDefinition],
     ) -> Result<Vec<ClientEvent>, String> {
         let info = provider::provider_info(self.provider);
-        let body = build_body(self.provider, &self.model, &self.system, messages, tool_defs);
+        let body = build_body(
+            self.provider,
+            &self.model,
+            &self.system,
+            messages,
+            tool_defs,
+        );
         let headers: Vec<(String, String)> = match self.provider {
             Provider::Anthropic => vec![
                 ("x-api-key".to_string(), self.api_key.clone()),
@@ -683,12 +689,7 @@ mod tests {
 
     #[test]
     fn openai_body_uses_function_tools_and_tool_messages() {
-        let body = build_openai_body(
-            "gpt-4o-mini",
-            "SYS",
-            &tool_exchange(),
-            &tool_definitions(),
-        );
+        let body = build_openai_body("gpt-4o-mini", "SYS", &tool_exchange(), &tool_definitions());
         assert_eq!(body["tools"][0]["type"], "function");
         assert_eq!(body["tools"][0]["function"]["name"], "get_category_totals");
         assert!(body["tools"][0]["function"].get("parameters").is_some());
@@ -852,9 +853,7 @@ mod tests {
         let second = client.transport.requests[1].1.to_string();
         assert!(second.contains("tool_result"), "body: {second}");
         assert!(second.contains("call_1"), "body: {second}");
-        assert!(client.transport.requests[0]
-            .0
-            .ends_with("/messages"));
+        assert!(client.transport.requests[0].0.ends_with("/messages"));
     }
 
     #[test]
