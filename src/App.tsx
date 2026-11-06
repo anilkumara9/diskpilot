@@ -1,6 +1,7 @@
 import { lazy, Suspense, useEffect } from "react";
 import { AlertTriangle, CheckCircle2, Info, MonitorX, X } from "lucide-react";
 import { useAppStore } from "@/lib/store";
+import { shouldShowWelcome } from "@/lib/welcome";
 import { watchSystemTheme } from "@/lib/theme";
 import type { PageId } from "@/lib/types";
 import { Sidebar } from "@/components/layout/Sidebar";
@@ -20,6 +21,7 @@ import { DownloadsPage } from "@/features/downloads/DownloadsPage";
 import { RecommendationsPage } from "@/features/recommendations/RecommendationsPage";
 import { HistoryPage } from "@/features/history/HistoryPage";
 import { SettingsPage } from "@/features/settings/SettingsPage";
+import { WelcomePage } from "@/features/welcome/WelcomePage";
 import { EmptyRecycleBinDialog } from "@/features/trash/EmptyRecycleBinDialog";
 
 /**
@@ -135,6 +137,10 @@ export default function App() {
   const inDesktop = useAppStore((s) => s.inDesktop);
   const page = useAppStore((s) => s.page);
   const assistantEnabled = useAppStore((s) => s.settings.assistantEnabled);
+  const onboarded = useAppStore((s) => s.settings.onboarded);
+  const ready = useAppStore((s) => s.ready);
+  const settingsLoaded = useAppStore((s) => s.settingsLoaded);
+  const hasSummary = useAppStore((s) => s.summary !== null);
   const init = useAppStore((s) => s.init);
   const recycleBinOpen = useAppStore((s) => s.recycleBinOpen);
   const setRecycleBinOpen = useAppStore((s) => s.setRecycleBinOpen);
@@ -146,6 +152,14 @@ export default function App() {
   useEffect(() => watchSystemTheme(() => useAppStore.getState().settings.theme), []);
 
   if (!inDesktop) return <DesktopOnlyState />;
+
+  /* First run: the welcome replaces the shell until setup is
+     finished or skipped. It waits for startup to settle and for
+     settings to have actually loaded — a failed load renders the
+     normal app, never a trap. */
+  if (ready && settingsLoaded && shouldShowWelcome({ onboarded }, hasSummary)) {
+    return <WelcomePage />;
+  }
 
   const effectivePage: PageId = page === "assistant" && !assistantEnabled ? "overview" : page;
   const PageComponent = effectivePage === "assistant" ? null : PAGE_COMPONENTS[effectivePage];

@@ -186,6 +186,19 @@ export interface HistoryEntry {
   reclaimedBytes: number;
   errors: string[];
   detail?: string | null;
+  /** For cleanup runs: how many of the run's Recycle Bin items the
+      shell can still restore to their original locations. Absent or
+      0 means nothing from this entry can be restored. */
+  restorableCount?: number;
+}
+
+/** `restore_cleanup_run` result: what came back, what failed, and
+    how many of the run's items were permanently deleted (and so
+    could not be restored at all). */
+export interface RestoreCleanupRunResult {
+  restored: string[];
+  failed: { path: string; error: string }[];
+  skippedPermanent: number;
 }
 
 export interface DuplicateFile {
@@ -351,6 +364,13 @@ export interface AppSettings {
   growthAlertGb: number;
   /** Launch DiskPilot when the user signs in to Windows. */
   autoStart: boolean;
+  /** True once the first-run welcome has been completed or skipped.
+      Older settings files without the field load as false. */
+  onboarded: boolean;
+  /** Read text inside images and screenshots (Windows built-in OCR,
+      on-device) so plain-language search can match words in them.
+      Older settings files without the field load as true. */
+  ocrEnabled: boolean;
 }
 
 /* ---------- Watch: scan history, forecast, biggest changes ---------- */
@@ -491,6 +511,9 @@ export interface SearchHit {
   bytes: number;
   category: Category;
   modifiedMs: number;
+  /** True when the hit matched only through text read inside the
+      file (OCR), not through its name. */
+  matchedInText?: boolean;
 }
 
 /** `search_files` response: chips + echoed filters + first hits. */
