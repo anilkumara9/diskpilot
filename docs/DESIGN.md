@@ -358,6 +358,23 @@ separated from the nav by a hairline and 12 px of air.
   "GB", "GB between checks" — so both inputs share left and right
   edges), and the sign-in toggle reflecting the registration the
   shell reports, not the last click.
+- **Automatic maintenance settings** — a Settings section in the
+  standard row form: the shared Switch enables it (off by
+  default); when on, a Daily/Weekly segmented control in the tab
+  strip's dress and the age threshold as a number field in the
+  Watch structure (96 px input, fixed 132 px unit span — "days
+  (7–365)"), clamped to 7–365 on save. The section states its
+  whole contract in one paragraph — permanently removes Recycle
+  Bin items older than the age set, clears old temporary files
+  through the manual cleanup's safety checks, every run recorded
+  in History — and ends with a "Last run" line ("Never" until the
+  shell records one).
+- **Explorer integration settings** — a Settings section with one
+  Switch row: the switch reflects the Explorer right-click
+  registration the shell reports (disabled until read), a failed
+  read shows as an alert line with Retry rather than a guessed
+  state, and a failed toggle shows its reason and leaves the
+  switch where the registration actually is.
 - **Guided cleanup items** — recommendations another tool owns
   (Windows.old) render with no checkbox, a muted "Guided" tag beside
   the tier badge (a plain ring-bordered chip, never a tier colour),
@@ -385,6 +402,21 @@ separated from the nav by a hairline and 12 px of air.
   schedule, both alert thresholds, sign-in state and last scan,
   with an "Open Settings" action — Health reports the watch; it
   never edits it.
+- **Drive health** — a Health section below Forecast: the drives'
+  physical state, as opposed to the space trend. One raised card
+  per physical drive: the model as the title (interface and
+  capacity as its caption), a status pill at the right in the
+  tier tag treatment (Healthy safe, Caution review, Critical
+  critical, Unknown muted), the life-left meter when the drive
+  reports one (a 4 px SizeBar coloured by the same thresholds —
+  accent above 20 %, review at 20, critical at 10 — with the
+  percentage beside its label), and the four-fact definition grid
+  (Temperature, Power-on hours, Power cycles, Reallocated
+  sectors) where every unreported value reads "Not reported" and
+  a measured zero reads "0". A drive predicting its own failure
+  carries a critical callout inside its card: back up now. A
+  system reporting no drive health gets one quiet bordered note;
+  a failed read gets the error note with Retry.
 - **Media page** — the scan's photos and videos. A StatStrip
   (Photos, Videos, Screenshots — each value over its file-count
   sub-caption; Screenshots is captioned "included in Photos", because it is a
@@ -404,7 +436,9 @@ separated from the nav by a hairline and 12 px of air.
   source as title, the library path as the description, the
   library subtotal as the section action; game rows are name over
   a 2 px accent Size bar (against the library's largest game),
-  size right-aligned, and a Reveal ghost button. A closing notice
+  size right-aligned, a Move… ghost button (the Move folder
+  dialog — games are its flagship use case), and a Reveal ghost
+  button. A closing notice
   states the boundary plainly: uninstalls happen in Steam or
   Epic — DiskPilot never removes game files. No libraries found
   is the standard medallion empty state.
@@ -430,6 +464,17 @@ separated from the nav by a hairline and 12 px of air.
   failed, and the permanently deleted count when items were
   skipped. The list refreshes behind it; the banner survives the
   refresh.
+- **History relocate undo** — a "Folder moved" entry shows a
+  "Moved to <target>" caption above its path record and carries
+  an Undo move action in its detail area, held to the restore
+  pattern: the result is kept by the list, not the row, so it
+  survives the refresh. The confirm is the house dialog (a move
+  is heavier than a restore): it names where the folder currently
+  sits and where it moves back to, warns that a large folder can
+  take a while, and cannot be dismissed mid-move; a failure keeps
+  the dialog open with the reason. Success leaves a callout-spec
+  banner in the entry — the move is undone and the folder is back
+  at its original location.
 - **Text match chip** — a search hit that matched only through
   text read inside the file carries the neutral marker tag
   "Text match" beside its name (tooltip: "Matched text inside
@@ -511,6 +556,19 @@ separated from the nav by a hairline and 12 px of air.
   is the medallion empty state ("Nothing opens at sign-in");
   a failed read is the error state with Retry, never the
   empty state.
+- **App caches** — a section at the foot of the Cleanup page,
+  above Compress & save: the cache locations of known
+  applications, measured by the shell where each app keeps them
+  (not from the scan). A row is the app name and cache label, the
+  shell's note and a file/location count caption, the allocated
+  size, and a Clean button; with more than one group the section
+  header carries Clean all. Cleaning moves cache CONTENTS to the
+  Recycle Bin — the section says so in a caption under the list —
+  and the outcome is the shared three-state banner in a callout
+  panel above the list (success names the bytes moved; partial
+  counts the failed locations; total failure is an error). The
+  section then re-measures. Nothing found means no section; a
+  failed read renders the section with an error note and Retry.
 - **Compress & save** — a section at the foot of the Cleanup
   page, below the cards and tier groups: large, long-untouched
   folders the shell offers for NTFS compression. The
@@ -558,6 +616,41 @@ separated from the nav by a hairline and 12 px of air.
   hairlines and indented to the chip column, like other
   detail-under-row content. With no scan, the view shows the
   standard Storage empty state like Folders and Map.
+- **Move folder dialog** — the house dialog for relocating a
+  folder to another drive, shared by the Storage Folders rows and
+  the Games rows. Entry points are ghost "Move…" buttons: folder
+  rows only (never files, never the scan root itself), and never
+  on system folders, which are report-only. The dialog names the
+  source (mono path), offers the destination as a drive select —
+  "D: · 214 GB free", the source's own drive excluded because
+  moving within a drive frees nothing — with the exact landing
+  path previewed ("It will move to …"); when the drive list
+  cannot be read, a plain destination-folder field takes its
+  place. The description carries the whole contract: the contents
+  move, a link stays at the original location so apps and games
+  keep working, and the move can be undone from History. While
+  moving, the dialog cannot be dismissed and says so ("Moving…
+  large folders can take a while"); a failure stays open with the
+  shell's reason. A completed move rescans the current root from
+  either entry page, so sizes never describe the pre-move disk.
+- **Applications updates** — the Applications page opens with an
+  Updates section: winget's outdated list, behind an explicit
+  Check for updates (checking changes nothing). Rows are the app
+  name over a muted "current → available" version line and a
+  per-row Update button; the section header carries Update all
+  when more than one row can run, and Check again after any run —
+  the list is re-read rather than trusting outcomes to describe
+  the new state. Every row wears its own outcome: Updated with a
+  safe-tier check, or the failure reason as an alert line under
+  the row. While any update runs, all update actions disable
+  (winget runs one queue). No winget on the PC is a quiet bordered
+  note; a failed check is an error note with Retry; an empty list
+  is the positive line "Everything is up to date."
+- **CSV export** — beside the Overview's Export report button, an
+  Export CSV menu with two items (Files CSV, Categories CSV) —
+  the HTML report's exact feedback contract through the shared
+  save dialog: the saved path earns a success banner, cancelling
+  stays silent, a failed save is an error banner.
 
 ## Charts
 
