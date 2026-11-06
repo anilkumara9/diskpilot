@@ -1148,6 +1148,35 @@ pub fn get_cloud_status(
     Ok(Some(diskpilot_core::cloud::cloud_status(&root, &index.files)))
 }
 
+/// Media totals (photos / videos / screenshots + biggest files)
+/// over the current scan index, classified with the same kind rules
+/// as natural-language search. `None` when no scan has run yet.
+#[tauri::command]
+pub fn get_media_summary(
+    state: State<'_, ShellState>,
+) -> CmdResult<Option<diskpilot_core::media::MediaSummary>> {
+    let engine = state
+        .engine
+        .lock()
+        .map_err(|_| "engine lock poisoned".to_string())?;
+    let Some(index) = engine.index.as_ref() else {
+        return Ok(None);
+    };
+    Ok(Some(diskpilot_core::media::media_summary(&index.files)))
+}
+
+/// Installed Steam and Epic games with their disk usage, read from
+/// the launchers' manifest files at call time — no scan needed. A
+/// machine with neither launcher gets an empty report, not an error.
+/// Runs on a blocking thread: a manifest without a recorded size
+/// falls back to measuring the game's install folder.
+#[tauri::command]
+pub async fn get_games() -> CmdResult<diskpilot_core::games::GamesReport> {
+    tauri::async_runtime::spawn_blocking(diskpilot_core::games::games_report)
+        .await
+        .map_err(|e| format!("background task failed: {e}"))
+}
+
 /// Ask OneDrive to free up the local copies of `paths` (Files
 /// On-Demand dehydration — nothing is deleted). The core refuses the
 /// whole call when any path sits outside the OneDrive folder.

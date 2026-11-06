@@ -340,6 +340,8 @@ pub fn run() {
             commands::restore_recycle_item,
             commands::cancel_empty_recycle_bin,
             commands::get_cloud_status,
+            commands::get_media_summary,
+            commands::get_games,
             commands::free_up_space,
             commands::export_report,
             commands::scan_transcript_secrets,
