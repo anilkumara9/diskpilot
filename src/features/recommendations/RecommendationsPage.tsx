@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   AlertTriangle,
   ChevronDown,
@@ -17,12 +17,14 @@ import { useAppStore } from "@/lib/store";
 import * as api from "@/lib/api";
 import { actionableBytes, groupRecommendationsByTier } from "@/lib/analysis";
 import { cardSubtitle, selectedCandidateBytes } from "@/lib/cards";
-import { displayPath, formatBytes, formatDate, formatRelative } from "@/lib/format";
+import { cleanupBanner } from "@/lib/cleanup";
+import { displayPath, formatBytes, formatCountdown, formatRelative } from "@/lib/format";
 import { CONFIDENCE_LABEL, tierMeta } from "@/lib/tiers";
 import type {
   CandidateGroup,
   CleanupMode,
   CleanupPlan,
+  CleanupResult,
   Recommendation,
 } from "@/lib/types";
 import { PageHeader } from "@/components/layout/PageHeader";
@@ -44,7 +46,10 @@ export function CleanupDialog({
 }: {
   plan: CleanupPlan;
   onClose: () => void;
-  onDone: (reclaimed: number) => void;
+  /** The FULL execution result — the page's banner is derived from
+      it, so partial and total failures are never hidden behind a
+      reclaimed-bytes figure. */
+  onDone: (result: CleanupResult) => void;
 }) {
   const homeDir = useAppStore((s) => s.env?.homeDir);
   const refreshRecommendations = useAppStore((s) => s.refreshRecommendations);
@@ -53,7 +58,14 @@ export function CleanupDialog({
   const [running, setRunning] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const expired = Date.now() > plan.expiresAtMs;
+  /* The expiry is live: a one-second tick drives both the footer
+     countdown and the moment the execute button disables. */
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const timer = window.setInterval(() => setNow(Date.now()), 1000);
+    return () => window.clearInterval(timer);
+  }, []);
+  const expired = now > plan.expiresAtMs;
 
   const execute = async () => {
     setRunning(true);
@@ -61,7 +73,7 @@ export function CleanupDialog({
     try {
       const result = await api.executeCleanupPlan(plan.id, mode);
       await Promise.all([refreshRecommendations(), refreshDisk()]);
-      onDone(result.reclaimedBytes);
+      onDone(result);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Cleanup could not be completed.");
       setRunning(false);
@@ -79,7 +91,12 @@ export function CleanupDialog({
       footer={
         <>
           <span className="mr-auto text-[12px] tabular text-muted">
-            Total {formatBytes(plan.totalBytes)} · expires {formatDate(plan.expiresAtMs)}
+            Total {formatBytes(plan.totalBytes)} ·{" "}
+            {expired ? (
+              <span className="text-critical">Expired</span>
+            ) : (
+              <>Expires in {formatCountdown(plan.expiresAtMs - now)}</>
+            )}
           </span>
           <Button variant="secondary" onClick={onClose} disabled={running}>Cancel</Button>
           <Button variant={mode === "permanent" ? "destructive" : "primary"} onClick={() => void execute()} disabled={running || expired}>
@@ -597,10 +614,10 @@ export function RecommendationsPage() {
         <CleanupDialog
           plan={plan}
           onClose={() => setPlan(null)}
-          onDone={(reclaimed) => {
+          onDone={(result) => {
             setPlan(null);
             setSelected(new Set());
-            setBanner({ kind: "success", message: `Cleanup complete. ${formatBytes(reclaimed)} reclaimed — see History for the full record.` });
+            setBanner(cleanupBanner(result));
           }}
         />
       ) : null}

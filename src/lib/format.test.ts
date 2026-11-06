@@ -3,6 +3,7 @@ import {
   basename,
   displayPath,
   formatBytes,
+  formatCountdown,
   formatCount,
   formatDuration,
   formatPercent,
@@ -41,6 +42,14 @@ describe("formatCount / formatPercent / formatDuration", () => {
     expect(formatDuration(5_000)).toBe("5s");
     expect(formatDuration(95_000)).toBe("1m 35s");
     expect(formatDuration(3_900_000)).toBe("1h 5m");
+  });
+  it("formats countdowns as m:ss, rounding up and clamping at zero", () => {
+    expect(formatCountdown(452_000)).toBe("7:32");
+    expect(formatCountdown(59_000)).toBe("0:59");
+    expect(formatCountdown(59_500)).toBe("1:00");
+    expect(formatCountdown(0)).toBe("0:00");
+    expect(formatCountdown(-1_000)).toBe("0:00");
+    expect(formatCountdown(Number.NaN)).toBe("0:00");
   });
 });
 

@@ -1,5 +1,8 @@
-/* Formatting helpers. Sizes use decimal units (1 GB = 10^9 bytes) to match
-   how Windows reports disk capacity in File Explorer properties. */
+/* Formatting helpers. Sizes use decimal units (1 GB = 10^9 bytes).
+   Windows Explorer's Properties dialog prints the exact byte count —
+   which matches DiskPilot's byte figures exactly — alongside a GB
+   figure that is actually binary (GiB); DiskPilot's GB column is
+   decimal, so the two GB numbers differ slightly by design. */
 
 const BYTE_UNITS = ["B", "KB", "MB", "GB", "TB", "PB"] as const;
 
@@ -52,6 +55,17 @@ export function formatDuration(ms: number): string {
   const hours = Math.floor(minutes / 60);
   const rest = minutes % 60;
   return rest ? `${hours}h ${rest}m` : `${hours}h`;
+}
+
+/** A countdown as m:ss ("7:32"), for the cleanup plan expiry —
+    always relative, never an absolute date. Negative or invalid
+    input clamps to "0:00". */
+export function formatCountdown(ms: number): string {
+  if (!Number.isFinite(ms) || ms <= 0) return "0:00";
+  const totalSeconds = Math.ceil(ms / 1000);
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  return `${minutes}:${String(seconds).padStart(2, "0")}`;
 }
 
 export function formatRelative(timestampMs: number, nowMs: number = Date.now()): string {

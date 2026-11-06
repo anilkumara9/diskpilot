@@ -60,37 +60,86 @@ export default function QuickSearchApp() {
   const listRef = useRef<HTMLUListElement>(null);
   const requestSeq = useRef(0);
 
-  /* One-time setup: theme from saved settings, home dir for path
-     display, and whether a scan index exists to search at all. */
+  /* Context refresh: theme from saved settings, home dir for path
+     display, and whether a scan index exists to search at all. This
+     window is created ONCE at startup and then only shown/hidden,
+     so a one-time mount fetch would freeze all three at their
+     first-run values — a user who scanned after launching would be
+     told "No scan to search yet" forever, and a theme change would
+     never arrive. The refresh therefore runs on mount AND on every
+     show (window focus / visibility), plus directly on the shell's
+     scan-finished event. Each read falls back independently: one
+     failed read keeps the last good value for that piece. */
+  const refreshContext = async () => {
+    const [settings, env, summary] = await Promise.all([
+      api.getSettings().catch(() => null),
+      api.getEnvironment().catch(() => null),
+      api.getScanSummary().catch(() => undefined),
+    ]);
+    if (settings) {
+      setThemePref(settings.theme);
+      applyTheme(settings.theme);
+    }
+    if (env) setHomeDir(env.homeDir);
+    if (summary !== undefined) setHasScan(summary !== null);
+  };
+  const refreshRef = useRef(refreshContext);
+  refreshRef.current = refreshContext;
+
   useEffect(() => {
-    let live = true;
-    void (async () => {
-      const [settings, env, summary] = await Promise.all([
-        api.getSettings(),
-        api.getEnvironment(),
-        api.getScanSummary(),
-      ]);
-      if (!live) return;
-      if (settings) {
-        setThemePref(settings.theme);
-        applyTheme(settings.theme);
-      }
-      setHomeDir(env?.homeDir);
-      setHasScan(summary !== null);
-    })();
-    return () => {
-      live = false;
-    };
+    void refreshRef.current();
   }, []);
 
   useEffect(() => watchSystemTheme(() => themePref), [themePref]);
 
   /* The shell shows/hides this window without reloading it: whenever
-     it regains focus, put the caret back in the search field. */
+     it is shown again, refresh the context (a scan may have finished,
+     the theme may have changed) and put the caret back in the field. */
   useEffect(() => {
-    const refocus = () => inputRef.current?.focus();
-    window.addEventListener("focus", refocus);
-    return () => window.removeEventListener("focus", refocus);
+    const onShow = () => {
+      void refreshRef.current();
+      inputRef.current?.focus();
+    };
+    window.addEventListener("focus", onShow);
+    const onVisibility = () => {
+      if (document.visibilityState === "visible") onShow();
+    };
+    document.addEventListener("visibilitychange", onVisibility);
+    let unlisten: (() => void) | undefined;
+    void (async () => {
+      try {
+        const { getCurrentWindow } = await import("@tauri-apps/api/window");
+        unlisten = await getCurrentWindow().onFocusChanged(({ payload: focused }) => {
+          if (focused) onShow();
+        });
+      } catch {
+        /* harness / browser: the DOM focus + visibility events above
+           are the fallback, and the scan-finished listener below
+           still covers the first-run case. */
+      }
+    })();
+    return () => {
+      window.removeEventListener("focus", onShow);
+      document.removeEventListener("visibilitychange", onVisibility);
+      unlisten?.();
+    };
+  }, []);
+
+  /* A finished scan is the exact moment "no scan yet" stops being
+     true — hear it directly rather than waiting for the next show. */
+  useEffect(() => {
+    let unlisten: (() => void) | undefined;
+    let live = true;
+    void api.onScanFinished(() => {
+      if (live) void refreshRef.current();
+    }).then((fn) => {
+      if (live) unlisten = fn;
+      else fn();
+    });
+    return () => {
+      live = false;
+      unlisten?.();
+    };
   }, []);
 
   const runSearch = async (text: string) => {
@@ -314,7 +363,7 @@ export default function QuickSearchApp() {
                     <span className="flex items-center gap-2">
                       <span className="flex min-w-0 items-center gap-1.5 text-[13px] text-foreground" title={hit.path}>
                         <CategoryDot category={hit.category} />
-                        <span className="truncate">{hit.name}</span>
+                        <span className="file-name truncate">{hit.name}</span>
                       </span>
                       {hit.matchedInText ? <TextMatchChip /> : null}
                     </span>
