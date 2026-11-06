@@ -185,6 +185,12 @@ pub struct ScanSummary {
     pub started_at_ms: i64,
     pub finished_at_ms: i64,
     pub duration_ms: i64,
+    /// Which engine produced this scan: `"mft"` for the fast
+    /// Master File Table path, `"walker"` for the standard
+    /// filesystem walk. `serde(default)` keeps snapshots written
+    /// before this field existed loadable (as `None`).
+    #[serde(default)]
+    pub scan_engine: Option<String>,
     /// Free space on the scanned root's drive at scan end, when the
     /// platform could report it. `serde(default)` keeps snapshots
     /// written before this field existed loadable (as `None`).

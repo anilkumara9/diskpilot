@@ -22,6 +22,8 @@ pub mod games;
 pub mod history;
 pub mod media;
 pub mod media_meta;
+pub mod mft;
+pub mod mft_volume;
 pub mod model;
 pub mod ocr;
 pub mod privacy;
