@@ -177,6 +177,11 @@ pub struct ScanSummary {
     pub started_at_ms: i64,
     pub finished_at_ms: i64,
     pub duration_ms: i64,
+    /// Free space on the scanned root's drive at scan end, when the
+    /// platform could report it. `serde(default)` keeps snapshots
+    /// written before this field existed loadable (as `None`).
+    #[serde(default)]
+    pub drive_free_bytes: Option<u64>,
     pub total_bytes: u64,
     pub file_count: u64,
     pub dir_count: u64,

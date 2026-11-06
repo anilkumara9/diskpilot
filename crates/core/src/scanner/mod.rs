@@ -189,6 +189,11 @@ impl Scanner {
             started_at_ms: started,
             finished_at_ms: finished,
             duration_ms: start_instant.elapsed().as_millis() as i64,
+            // Free space of the scanned root's drive at scan end; the
+            // scan-history time series and the space forecast read it
+            // from here. A failure to query the drive is not a scan
+            // failure — the field simply stays `None`.
+            drive_free_bytes: fs2::free_space(&self.root).ok(),
             total_bytes: agg.bytes,
             file_count: agg.files,
             dir_count: agg.dirs,

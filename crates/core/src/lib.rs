@@ -15,6 +15,7 @@ pub mod docker;
 pub mod duplicates;
 pub mod error;
 pub mod explorer;
+pub mod forecast;
 pub mod history;
 pub mod media_meta;
 pub mod model;
@@ -26,6 +27,7 @@ pub mod scanner;
 pub mod search;
 pub mod secrets;
 pub mod snapshot;
+pub mod snapshot_diff;
 pub mod state;
 
 pub use error::{CoreError, CoreResult};
