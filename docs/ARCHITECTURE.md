@@ -597,10 +597,12 @@ finishes. The sidebar is state-driven in three ways worth recording:
   checks in the background to feed a badge.
 - **Collapsed mode.** The sidebar collapses from 220 px to a 64 px
   icon rail (accessible names and tooltips retained; badges become
-  icon dots) via `settings.sidebarCollapsed`. The shell settings
-  struct predates the field, so the preference is mirrored to
-  localStorage and the mirror wins at startup. The Quick Search
-  window is a separate root with no sidebar and is unaffected.
+  icon dots) via `settings.sidebarCollapsed`, which the shell
+  settings struct carries natively; a localStorage mirror used by
+  early builds (whose shell dropped the field on save) is migrated
+  into settings once at startup and the key removed. The Quick
+  Search window is a separate root with no sidebar and is
+  unaffected.
 
 ## Data flow, end to end
 
