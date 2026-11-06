@@ -20,6 +20,14 @@ describe("appJunkBanner", () => {
     expect(banner.message).toContain("History");
   });
 
+  it("nothing attempted at all is a neutral note, not a success", () => {
+    const banner = appJunkBanner({ succeeded: [], failed: [], reclaimedBytes: 0 });
+    expect(banner.kind).toBe("info");
+    expect(banner.message).toBe(
+      "Nothing was cleaned — those caches were already empty or gone.",
+    );
+  });
+
   it("total failure is an error that says nothing was cleaned", () => {
     const banner = appJunkBanner({
       succeeded: [],

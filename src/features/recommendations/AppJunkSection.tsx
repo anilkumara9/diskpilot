@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { AlertTriangle, CheckCircle2 } from "lucide-react";
+import { AlertTriangle, CheckCircle2, Info } from "lucide-react";
 import * as api from "@/lib/api";
 import { useAppStore } from "@/lib/store";
 import { appJunkBanner, type CleanupBanner } from "@/lib/junk";
@@ -25,11 +25,16 @@ export function AppJunkSection() {
   const [reloadKey, setReloadKey] = useState(0);
   const [busyIds, setBusyIds] = useState<ReadonlySet<string>>(new Set());
   const [banner, setBanner] = useState<CleanupBanner | null>(null);
+  /* Set when the re-measure after a clean fails: the pre-clean
+     figures are cleared rather than left standing as if they
+     were current, and a note under the banner says why. */
+  const [refreshFailed, setRefreshFailed] = useState(false);
 
   const load = useCallback(async () => {
     const rows = await api.listAppJunk();
     setGroups(rows);
     setLoadError(null);
+    setRefreshFailed(false);
   }, []);
 
   /* Junk derives from the live system, not the scan, but a scan
@@ -50,6 +55,7 @@ export function AppJunkSection() {
   const clean = async (ids: string[]) => {
     setBusyIds(new Set(ids));
     setBanner(null);
+    setRefreshFailed(false);
     try {
       const result = await api.cleanAppJunk(ids);
       setBanner(appJunkBanner(result));
@@ -61,8 +67,15 @@ export function AppJunkSection() {
     } finally {
       setBusyIds(new Set());
       /* Re-measure either way: what was cleaned is gone, what
-         failed is still there to see. */
-      load().catch(() => undefined);
+         failed is still there to see. If the re-measure itself
+         fails, the stale pre-clean sizes must not linger as if
+         current — the list clears and a note says why. */
+      try {
+        await load();
+      } catch {
+        setGroups([]);
+        setRefreshFailed(true);
+      }
     }
   };
 
@@ -114,6 +127,8 @@ export function AppJunkSection() {
           >
             {banner.kind === "success" ? (
               <CheckCircle2 className="size-4 shrink-0 text-tier-safe" aria-hidden="true" />
+            ) : banner.kind === "info" ? (
+              <Info className="size-4 shrink-0 text-accent" aria-hidden="true" />
             ) : (
               <AlertTriangle
                 className={
@@ -127,6 +142,12 @@ export function AppJunkSection() {
             {banner.message}
           </p>
         </div>
+      ) : null}
+
+      {refreshFailed ? (
+        <p className="mb-3 text-[12px] leading-4 text-muted">
+          Couldn&rsquo;t refresh the sizes — reopen Cleanup to re-measure.
+        </p>
       ) : null}
 
       {groups.length > 0 ? (
@@ -146,6 +167,11 @@ export function AppJunkSection() {
                       {formatCount(group.fileCount)} files · {group.paths.length}{" "}
                       location{group.paths.length === 1 ? "" : "s"}
                     </p>
+                    {group.truncated ? (
+                      <p className="mt-0.5 text-[11px] text-subtle">
+                        Only part of this cache could be measured.
+                      </p>
+                    ) : null}
                   </div>
                   <span className="w-[92px] shrink-0 text-right text-[13px] tabular text-foreground">
                     {formatBytes(group.bytes)}

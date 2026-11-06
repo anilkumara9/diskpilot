@@ -46,6 +46,40 @@ pub struct RelocateResult {
     pub source: String,
     pub target: String,
     pub bytes: u64,
+    /// Set when the operation itself succeeded but recording it
+    /// to History failed: the work is done, but Undo (which is
+    /// driven by the History entry) is not available for it.
+    pub warning: Option<String>,
+}
+
+/// Why a relocation failed. The `SplitTree` variant is the
+/// delete-original failure: a verified copy exists at the
+/// destination and (part of) the original may still exist too, no
+/// junction was created — a state the user must be able to find
+/// again, so the command records it to History before reporting.
+enum RelocateError {
+    Message(String),
+    SplitTree {
+        message: String,
+        source: String,
+        target: String,
+        bytes: u64,
+    },
+}
+
+impl RelocateError {
+    fn message(&self) -> String {
+        match self {
+            RelocateError::Message(message) => message.clone(),
+            RelocateError::SplitTree { message, .. } => message.clone(),
+        }
+    }
+}
+
+impl From<String> for RelocateError {
+    fn from(message: String) -> Self {
+        RelocateError::Message(message)
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -64,16 +98,51 @@ pub async fn relocate_folder(
     source: String,
     dest_dir: String,
 ) -> CmdResult<RelocateResult> {
-    let result = tauri::async_runtime::spawn_blocking(move || relocate_impl(&source, &dest_dir))
+    let outcome = tauri::async_runtime::spawn_blocking(move || relocate_impl(&source, &dest_dir))
         .await
-        .map_err(|e| format!("background task failed: {e}"))??;
+        .map_err(|e| format!("background task failed: {e}"))?;
+    let mut result = match outcome {
+        Ok(result) => result,
+        Err(failure) => {
+            // A split tree (verified copy made, original not fully
+            // removed, no junction) is recorded before the error is
+            // reported, so the copy's location is never lost.
+            if let RelocateError::SplitTree {
+                source,
+                target,
+                bytes,
+                ..
+            } = &failure
+            {
+                let paths = vec![source.clone(), target.clone()];
+                let message = failure.message();
+                let detail = format!(
+                    "Relocation of {source} to {target} stopped after the copy was verified: the original could not be fully removed and no link was created"
+                );
+                let _ = with_history(&state, |history| {
+                    history
+                        .record_action(
+                            now_ms(),
+                            "relocate-failed",
+                            &paths,
+                            *bytes,
+                            std::slice::from_ref(&message),
+                            Some(&detail),
+                            diskpilot_core::history::RemovedItemMode::Permanent,
+                        )
+                        .map(|_| ())
+                });
+            }
+            return Err(failure.message());
+        }
+    };
     let detail = format!(
         "Moved {} to {} and left a junction at the original location",
         result.source, result.target
     );
     let paths = vec![result.source.clone(), result.target.clone()];
     let bytes = result.bytes;
-    let _ = with_history(&state, |history| {
+    let recorded = with_history(&state, |history| {
         history
             .record_action(
                 now_ms(),
@@ -91,6 +160,12 @@ pub async fn relocate_folder(
             )
             .map(|_| ())
     });
+    if recorded.is_err() {
+        result.warning = Some(
+            "The move completed, but it couldn't be recorded in History, so Undo won't be available for it."
+                .to_string(),
+        );
+    }
     Ok(result)
 }
 
@@ -119,7 +194,7 @@ pub async fn undo_relocation(
         return Err("that relocation record is incomplete".to_string());
     }
     let (source, target) = (entry.paths[0].clone(), entry.paths[1].clone());
-    let result = tauri::async_runtime::spawn_blocking(move || undo_impl(&source, &target))
+    let mut result = tauri::async_runtime::spawn_blocking(move || undo_impl(&source, &target))
         .await
         .map_err(|e| format!("background task failed: {e}"))??;
     let detail = format!(
@@ -128,7 +203,7 @@ pub async fn undo_relocation(
     );
     let paths = vec![result.target.clone(), result.source.clone()];
     let bytes = result.bytes;
-    let _ = with_history(&state, |history| {
+    let recorded = with_history(&state, |history| {
         history
             .record_action(
                 now_ms(),
@@ -141,6 +216,12 @@ pub async fn undo_relocation(
             )
             .map(|_| ())
     });
+    if recorded.is_err() {
+        result.warning = Some(
+            "The folder was moved back, but the undo couldn't be recorded in History."
+                .to_string(),
+        );
+    }
     Ok(result)
 }
 
@@ -149,13 +230,35 @@ pub async fn undo_relocation(
 // ---------------------------------------------------------------------------
 
 #[cfg(not(windows))]
-fn relocate_impl(_source: &str, _dest_dir: &str) -> Result<RelocateResult, String> {
-    Err("Folder relocation is only available on Windows".to_string())
+fn relocate_impl(_source: &str, _dest_dir: &str) -> Result<RelocateResult, RelocateError> {
+    Err(RelocateError::Message(
+        "Folder relocation is only available on Windows".to_string(),
+    ))
 }
 
 #[cfg(not(windows))]
 fn undo_impl(_source: &str, _target: &str) -> Result<RelocateResult, String> {
     Err("Folder relocation is only available on Windows".to_string())
+}
+
+/// The canonical spelling of an existing path with the `\\?\`
+/// verbatim prefix removed: links and 8.3 short names are resolved
+/// (so string-prefix protection checks see the real location),
+/// while the result stays an ordinary DOS path that robocopy and
+/// the junction code accept. `None` when the path cannot be
+/// canonicalized (it does not exist).
+#[cfg(windows)]
+fn resolved_spelling(path: &std::path::Path) -> Option<PathBuf> {
+    let canonical = std::fs::canonicalize(path).ok()?;
+    let text = canonical.to_string_lossy().into_owned();
+    let stripped = if let Some(rest) = text.strip_prefix(r"\\?\UNC\") {
+        format!(r"\\{rest}")
+    } else if let Some(rest) = text.strip_prefix(r"\\?\") {
+        rest.to_string()
+    } else {
+        text
+    };
+    Some(PathBuf::from(stripped))
 }
 
 /// Measure a tree the way the verification compares it: files only
@@ -238,97 +341,134 @@ fn same_location(a: &str, b: &str) -> bool {
 }
 
 #[cfg(windows)]
-fn relocate_impl(source: &str, dest_dir: &str) -> Result<RelocateResult, String> {
-    let source_path = PathBuf::from(source);
-    let dest_path = PathBuf::from(dest_dir);
+fn relocate_impl(source: &str, dest_dir: &str) -> Result<RelocateResult, RelocateError> {
+    let given_source = PathBuf::from(source);
+    let given_dest = PathBuf::from(dest_dir);
 
     // (a) The source must be a real, unprotected folder.
-    let md = std::fs::symlink_metadata(&source_path)
-        .map_err(|_| format!("that folder no longer exists: {source}"))?;
-    if md.file_type().is_symlink() || win::is_reparse_point(&source_path) {
+    // Link-ness is judged on the spelling the user gave:
+    // canonicalizing first would resolve a junction to its target
+    // and hide the fact that the path is a link at all.
+    let md = std::fs::symlink_metadata(&given_source).map_err(|_| {
+        RelocateError::Message(format!("that folder no longer exists: {source}"))
+    })?;
+    if md.file_type().is_symlink() || win::is_reparse_point(&given_source) {
         return Err(format!(
             "{source} is already a link — it cannot be relocated again"
-        ));
+        )
+        .into());
     }
     if !md.is_dir() {
-        return Err(format!("that path is not a folder: {source}"));
+        return Err(format!("that path is not a folder: {source}").into());
     }
+    if !given_dest.is_dir() {
+        return Err(format!("the destination folder does not exist: {dest_dir}").into());
+    }
+
+    // (b) Protection checks run on CANONICAL spellings. The
+    // protection layer compares path prefixes as strings, so an
+    // 8.3 spelling (PROGRA~1) or a verbatim (\\?\) spelling of a
+    // protected folder would otherwise slip a protected tree past
+    // both the shell check below and the core's validation. The
+    // user's original spelling is kept for display and History.
+    let source_path = resolved_spelling(&given_source).ok_or_else(|| {
+        RelocateError::Message(format!("that folder no longer exists: {source}"))
+    })?;
+    let dest_path = resolved_spelling(&given_dest).ok_or_else(|| {
+        RelocateError::Message(format!(
+            "the destination folder does not exist: {dest_dir}"
+        ))
+    })?;
     if is_protected_location(&source_path) {
         return Err(format!(
             "protected system location, never relocated: {source}"
-        ));
-    }
-    if !dest_path.is_dir() {
-        return Err(format!("the destination folder does not exist: {dest_dir}"));
+        )
+        .into());
     }
 
-    // (b) Measure.
+    // (c) Measure.
     let (bytes, files) = walk_tree(&source_path);
 
-    // (c) Different volumes, and room at the destination.
+    // (d) Different volumes, and room at the destination.
     let source_volume = win::volume_root(&source_path)
-        .ok_or_else(|| "could not determine the source drive".to_string())?;
-    let dest_volume = win::volume_root(&dest_path)
-        .ok_or_else(|| "could not determine the destination drive".to_string())?;
+        .ok_or_else(|| RelocateError::Message("could not determine the source drive".to_string()))?;
+    let dest_volume = win::volume_root(&dest_path).ok_or_else(|| {
+        RelocateError::Message("could not determine the destination drive".to_string())
+    })?;
     if same_location(&source_volume, &dest_volume) {
         return Err(format!(
             "Choose a folder on a different drive — {source} is already on {source_volume}"
-        ));
+        )
+        .into());
     }
-    let free = win::free_space(&dest_path)
-        .ok_or_else(|| "could not read the destination drive's free space".to_string())?;
+    let free = win::free_space(&dest_path).ok_or_else(|| {
+        RelocateError::Message("could not read the destination drive's free space".to_string())
+    })?;
 
-    // (d) The core rule decides the destination path (protection,
-    // containment, headroom).
+    // (e) The core rule decides the destination path (protection,
+    // containment, headroom) — on the same canonical spellings.
     let target_path =
         diskpilot_core::relocate::validate_relocation(&source_path, &dest_path, bytes, free)?;
     if target_path.symlink_metadata().is_ok() {
         return Err(format!(
             "something already exists at the destination: {}",
             target_path.display()
-        ));
+        )
+        .into());
     }
     let target_string = target_path.to_string_lossy().into_owned();
 
-    // (e) Copy.
+    // (f) Copy.
     let copy = win::run_robocopy(&source_path, &target_path)?;
     if copy.code < 0 || copy.code >= 8 {
         let _ = diskpilot_core::cleanup::executor::symlink_safe_delete(&target_path);
         return Err(format!(
             "the copy to {} failed (robocopy exit {}): {}",
             target_string, copy.code, copy.tail
-        ));
+        )
+        .into());
     }
 
-    // (f) Verify before anything is removed.
+    // (g) Verify before anything is removed.
     let (copied_bytes, copied_files) = walk_tree(&target_path);
     if copied_files != files || copied_bytes != bytes {
         let _ = diskpilot_core::cleanup::executor::symlink_safe_delete(&target_path);
         return Err(
             "Verification failed — the copy does not match the original, so the original was not touched"
-                .to_string(),
+                .to_string()
+                .into(),
         );
     }
 
-    // (g) Remove the original tree.
-    diskpilot_core::cleanup::executor::symlink_safe_delete(&source_path).map_err(|e| {
-        format!(
-            "the folder was copied and verified at {target_string}, but the original could not be removed: {e}"
-        )
-    })?;
+    // (h) Remove the original tree. A failure here splits the
+    // tree — a verified copy at the destination, a partial
+    // original, no junction — and is reported as `SplitTree` so
+    // the command records it to History before surfacing it.
+    if let Err(e) = diskpilot_core::cleanup::executor::symlink_safe_delete(&source_path) {
+        return Err(RelocateError::SplitTree {
+            message: format!(
+                "the folder was copied and verified at {target_string}, but the original could not be removed: {e}"
+            ),
+            source: source.to_string(),
+            target: target_string,
+            bytes,
+        });
+    }
 
-    // (h) Leave the junction. On failure: roll back.
+    // (i) Leave the junction. On failure: roll back.
     if let Err(junction_error) = win::create_junction(&source_path, &target_path) {
-        match rollback(&source_path, &target_path, files) {
+        match rollback(&source_path, &target_path, files, bytes) {
             Ok(()) => {
                 return Err(format!(
                     "could not create the link at the original location ({junction_error}); the move was rolled back — the folder is back at {source}"
-                ));
+                )
+                .into());
             }
             Err(rollback_error) => {
                 return Err(format!(
                     "could not create the link at the original location ({junction_error}), and the rollback copy also failed ({rollback_error}); the folder's contents are intact at {target_string}"
-                ));
+                )
+                .into());
             }
         }
     }
@@ -337,26 +477,33 @@ fn relocate_impl(source: &str, dest_dir: &str) -> Result<RelocateResult, String>
         source: source.to_string(),
         target: target_string,
         bytes,
+        warning: None,
     })
 }
 
 /// Roll a failed relocation back: copy the destination tree back
-/// to the (now empty) original path, verify the file count, and
-/// remove the destination tree.
+/// to the (now empty) original path, verify the copy back (file
+/// count AND allocated bytes — a count-only match could restore
+/// truncated content), and only then remove the destination tree.
+/// On a mismatch nothing is removed: both copies stay in place
+/// and the error names both paths.
 #[cfg(windows)]
 fn rollback(
     source_path: &std::path::Path,
     target_path: &std::path::Path,
     expected_files: u64,
+    expected_bytes: u64,
 ) -> Result<(), String> {
     let copy = win::run_robocopy(target_path, source_path)?;
     if copy.code < 0 || copy.code >= 8 {
         return Err(format!("robocopy exit {}: {}", copy.code, copy.tail));
     }
-    let (_, restored_files) = walk_tree(source_path);
-    if restored_files != expected_files {
+    let (restored_bytes, restored_files) = walk_tree(source_path);
+    if restored_files != expected_files || restored_bytes != expected_bytes {
         return Err(format!(
-            "restored {restored_files} of {expected_files} files"
+            "the copy back does not match the verified copy ({restored_files} of {expected_files} files, {restored_bytes} of {expected_bytes} bytes) — both copies were left in place: the partial restore at {} and the complete copy at {}",
+            source_path.display(),
+            target_path.display()
         ));
     }
     diskpilot_core::cleanup::executor::symlink_safe_delete(target_path)

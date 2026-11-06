@@ -11,7 +11,7 @@ import type { CleanupResult } from "./types";
  * points there.
  */
 export interface CleanupBanner {
-  kind: "success" | "warning" | "error";
+  kind: "success" | "warning" | "error" | "info";
   message: string;
 }
 

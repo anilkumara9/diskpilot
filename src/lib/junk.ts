@@ -13,6 +13,16 @@ export type { CleanupBanner };
  */
 export function appJunkBanner(result: CleanAppJunkResult): CleanupBanner {
   const failedCount = result.failed.length;
+  /* Nothing attempted at all — the caches vanished between
+     measuring and cleaning (emptied by the app, or already
+     cleaned). That is neither a success nor a failure: a
+     neutral note, not a green check. */
+  if (result.succeeded.length === 0 && failedCount === 0) {
+    return {
+      kind: "info",
+      message: "Nothing was cleaned — those caches were already empty or gone.",
+    };
+  }
   if (failedCount === 0) {
     return {
       kind: "success",

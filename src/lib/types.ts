@@ -778,6 +778,9 @@ export interface AppJunkGroup {
   paths: string[];
   bytes: number;
   fileCount: number;
+  /** True when only part of this cache could be measured, so
+      the size shown is a lower bound, not the whole cache. */
+  truncated: boolean;
 }
 
 export interface AppJunkFailure {
