@@ -1,3 +1,6 @@
+import { sameLocation } from "./moves";
+import type { HistoryEntry } from "./types";
+
 /**
  * Presentation rules for History entries. The shell records terse
  * machine operations ("empty-recycle-bin") and stores raw plan ids
@@ -53,4 +56,33 @@ export function historyDetail(detail: string | null | undefined): HistoryDetail 
 
 function shorten(id: string): string {
   return id.length > 12 ? `${id.slice(0, 12)}…` : id;
+}
+
+/**
+ * Ids of "relocate" entries whose move has already been undone.
+ * A relocation records paths [original, destination]; its undo
+ * records the reversed pair [destination, original] under the
+ * "relocate-undo" operation. A relocate entry is undone when a
+ * LATER undo entry carries that reversed pair — paths compared
+ * with Windows semantics (case/slash-insensitive). The page uses
+ * this to drop the Undo button from a move that is already back,
+ * where offering it again could only fail.
+ */
+export function undoneRelocationIds(entries: HistoryEntry[]): ReadonlySet<number> {
+  const undone = new Set<number>();
+  const undos = entries.filter((e) => e.operation === "relocate-undo" && e.paths.length >= 2);
+  if (undos.length === 0) return undone;
+  for (const entry of entries) {
+    if (entry.operation !== "relocate" || entry.paths.length < 2) continue;
+    const [from, to] = entry.paths;
+    const match = undos.some(
+      (u) =>
+        (u.timestampMs > entry.timestampMs ||
+          (u.timestampMs === entry.timestampMs && u.id > entry.id)) &&
+        sameLocation(u.paths[0], to) &&
+        sameLocation(u.paths[1], from),
+    );
+    if (match) undone.add(entry.id);
+  }
+  return undone;
 }

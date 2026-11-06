@@ -3,7 +3,7 @@ import { History as HistoryIcon, Search, Sparkles } from "lucide-react";
 import * as api from "@/lib/api";
 import { useAppStore } from "@/lib/store";
 import { displayPath, formatBytes, formatDate } from "@/lib/format";
-import { historyDetail, operationTitle } from "@/lib/history";
+import { historyDetail, operationTitle, undoneRelocationIds } from "@/lib/history";
 import type { HistoryEntry, RelocateResult, RestoreCleanupRunResult } from "@/lib/types";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { Input } from "@/components/ui/input";
@@ -27,6 +27,10 @@ export function CleanupHistory({
   const [restoreResults, setRestoreResults] = useState<Record<number, RestoreCleanupRunResult>>({});
   /* Same holding pattern for relocation undos. */
   const [relocateResults, setRelocateResults] = useState<Record<number, RelocateResult>>({});
+  /* Relocations a later relocate-undo entry already reversed:
+     they render a caption instead of an Undo button that could
+     only fail. */
+  const undoneIds = useMemo(() => undoneRelocationIds(entries), [entries]);
   const total = entries.reduce((acc, e) => acc + e.reclaimedBytes, 0);
   return (
     <div>
@@ -94,14 +98,18 @@ export function CleanupHistory({
               {(entry.operation === "relocate" && entry.paths.length >= 2) ||
               relocateResults[entry.id] ? (
                 <div className="mt-2 pl-[26px]">
-                  <UndoMoveAction
-                    entry={entry}
-                    result={relocateResults[entry.id] ?? null}
-                    onCompleted={(result) => {
-                      setRelocateResults((prev) => ({ ...prev, [entry.id]: result }));
-                      onRefresh?.();
-                    }}
-                  />
+                  {relocateResults[entry.id] || !undoneIds.has(entry.id) ? (
+                    <UndoMoveAction
+                      entry={entry}
+                      result={relocateResults[entry.id] ?? null}
+                      onCompleted={(result) => {
+                        setRelocateResults((prev) => ({ ...prev, [entry.id]: result }));
+                        onRefresh?.();
+                      }}
+                    />
+                  ) : (
+                    <p className="text-[12px] text-muted">Move undone</p>
+                  )}
                 </div>
               ) : null}
             </li>

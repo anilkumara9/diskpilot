@@ -59,6 +59,9 @@ pub struct RelocateResult {
 /// again, so the command records it to History before reporting.
 enum RelocateError {
     Message(String),
+    // Constructed only by the Windows implementation (the split
+    // can only happen where a relocation can run).
+    #[cfg_attr(not(windows), allow(dead_code))]
     SplitTree {
         message: String,
         source: String,

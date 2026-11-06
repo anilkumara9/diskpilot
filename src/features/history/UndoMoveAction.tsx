@@ -57,10 +57,18 @@ export function UndoMoveAction({
       onCompleted(undone);
     } catch (err) {
       /* The dialog stays open with the reason — the same failure
-         treatment as the cleanup dialog. */
+         treatment as the cleanup dialog. The error lives ONLY in
+         the dialog: rendering it under the button as well would
+         announce it twice, and once the dialog closes the entry
+         itself (with its refreshed record) is the surface. */
       setError(err instanceof Error ? err.message : "The move could not be undone.");
       setPhase("confirming");
     }
+  };
+
+  const close = () => {
+    setPhase("idle");
+    setError(null);
   };
 
   return (
@@ -74,16 +82,11 @@ export function UndoMoveAction({
         <Undo2 className="size-3.5" aria-hidden="true" />
         {phase === "undoing" ? "Moving back…" : "Undo move"}
       </Button>
-      {error ? (
-        <p role="alert" className="mt-1 text-[12px] text-critical">
-          {error}
-        </p>
-      ) : null}
 
       {phase !== "idle" ? (
         <Dialog
           open
-          onClose={() => setPhase("idle")}
+          onClose={close}
           title="Undo this move?"
           description="The folder's contents move back to the original location, and the link left there is removed once everything is back. Apps keep working throughout."
           dismissible={phase !== "undoing"}
@@ -91,7 +94,7 @@ export function UndoMoveAction({
             <>
               <Button
                 variant="secondary"
-                onClick={() => setPhase("idle")}
+                onClick={close}
                 disabled={phase === "undoing"}
               >
                 Cancel

@@ -393,54 +393,6 @@ fn normalize_scan_path(raw: &str) -> String {
     raw.to_string()
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn normalize_repairs_mangled_drive_root() {
-        assert_eq!(normalize_scan_path("C:\""), "C:\\");
-        assert_eq!(normalize_scan_path("d:\""), "d:\\");
-        assert_eq!(normalize_scan_path("Z:\""), "Z:\\");
-    }
-
-    #[test]
-    fn normalize_strips_stray_trailing_quote_when_clean_path_exists() {
-        let dir = std::env::temp_dir();
-        let mangled = format!("{}\"", dir.display());
-        assert_eq!(normalize_scan_path(&mangled), dir.to_string_lossy());
-    }
-
-    #[test]
-    fn normalize_keeps_stray_quote_when_clean_path_does_not_exist() {
-        let raw = "definitely-not-a-real-place\"";
-        assert_eq!(normalize_scan_path(raw), raw);
-    }
-
-    #[test]
-    fn normalize_leaves_ordinary_paths_alone() {
-        assert_eq!(normalize_scan_path("C:\\Games"), "C:\\Games");
-        assert_eq!(normalize_scan_path("D:\\"), "D:\\");
-        assert_eq!(normalize_scan_path(""), "");
-    }
-
-    #[test]
-    fn scan_path_from_args_extracts_and_normalizes() {
-        let args: Vec<String> = ["diskpilot", "--scan", "C:\""]
-            .iter()
-            .map(|s| s.to_string())
-            .collect();
-        assert_eq!(scan_path_from_args(&args).as_deref(), Some("C:\\"));
-        let bare: Vec<String> = ["diskpilot"].iter().map(|s| s.to_string()).collect();
-        assert_eq!(scan_path_from_args(&bare), None);
-        let empty: Vec<String> = ["diskpilot", "--scan", ""]
-            .iter()
-            .map(|s| s.to_string())
-            .collect();
-        assert_eq!(scan_path_from_args(&empty), None);
-    }
-}
-
 /// Build and run the application.
 pub fn run() {
     tauri::Builder::default()
@@ -643,4 +595,52 @@ pub fn run() {
         ])
         .run(tauri::generate_context!())
         .expect("error while running DiskPilot");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn normalize_repairs_mangled_drive_root() {
+        assert_eq!(normalize_scan_path("C:\""), "C:\\");
+        assert_eq!(normalize_scan_path("d:\""), "d:\\");
+        assert_eq!(normalize_scan_path("Z:\""), "Z:\\");
+    }
+
+    #[test]
+    fn normalize_strips_stray_trailing_quote_when_clean_path_exists() {
+        let dir = std::env::temp_dir();
+        let mangled = format!("{}\"", dir.display());
+        assert_eq!(normalize_scan_path(&mangled), dir.to_string_lossy());
+    }
+
+    #[test]
+    fn normalize_keeps_stray_quote_when_clean_path_does_not_exist() {
+        let raw = "definitely-not-a-real-place\"";
+        assert_eq!(normalize_scan_path(raw), raw);
+    }
+
+    #[test]
+    fn normalize_leaves_ordinary_paths_alone() {
+        assert_eq!(normalize_scan_path("C:\\Games"), "C:\\Games");
+        assert_eq!(normalize_scan_path("D:\\"), "D:\\");
+        assert_eq!(normalize_scan_path(""), "");
+    }
+
+    #[test]
+    fn scan_path_from_args_extracts_and_normalizes() {
+        let args: Vec<String> = ["diskpilot", "--scan", "C:\""]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+        assert_eq!(scan_path_from_args(&args).as_deref(), Some("C:\\"));
+        let bare: Vec<String> = ["diskpilot"].iter().map(|s| s.to_string()).collect();
+        assert_eq!(scan_path_from_args(&bare), None);
+        let empty: Vec<String> = ["diskpilot", "--scan", ""]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+        assert_eq!(scan_path_from_args(&empty), None);
+    }
 }

@@ -53,12 +53,6 @@ fn collect_drive_health() -> Vec<DriveHealth> {
 #[cfg(any(windows, test))]
 const STORAGE_PROTOCOL_COMMAND_FLAG_ADAPTER_REQUEST: u32 = 0x8000_0000;
 
-/// `STORAGE_PROTOCOL_STATUS_SUCCESS` (winioctl.h): the value the
-/// driver writes to the request's ReturnStatus field when the
-/// protocol command completes successfully.
-#[cfg(any(windows, test))]
-const STORAGE_PROTOCOL_STATUS_SUCCESS: u32 = 0x1;
-
 /// Offset of the NVMe admin command inside the request buffer,
 /// and of the data region behind it. The command is 64 bytes, so
 /// the data starts at 80 + 64 = 144 and the buffer totals
@@ -179,10 +173,12 @@ mod win {
         health_from_ata, health_from_nvme, parse_ata_attributes, parse_nvme_health, DriveHealth,
     };
 
-    use super::{
-        build_nvme_health_request, unknown_health, NVME_DATA_OFFSET, NVME_LOG_PAGE_LEN,
-        STORAGE_PROTOCOL_STATUS_SUCCESS,
-    };
+    use super::{build_nvme_health_request, unknown_health, NVME_DATA_OFFSET, NVME_LOG_PAGE_LEN};
+
+    /// `STORAGE_PROTOCOL_STATUS_SUCCESS` (winioctl.h): the value
+    /// the driver writes to the request's ReturnStatus field when
+    /// the protocol command completes successfully.
+    const STORAGE_PROTOCOL_STATUS_SUCCESS: u32 = 0x1;
 
     type Handle = *mut c_void;
 
