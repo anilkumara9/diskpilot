@@ -18,6 +18,13 @@
 //! removed, `validate_item_id` re-checks that the id really points at a
 //! `$R…` payload inside a `$Recycle.Bin` folder with its `$I…` sibling
 //! present, so the command cannot be aimed elsewhere.
+//!
+//! Two more operations live here because they speak the same on-disk
+//! language: restoring one item (move the `$R…` payload back to the
+//! path its `$I…` metadata records, then remove the metadata), and
+//! emptying the whole bin through the shell API
+//! (`SHEmptyRecycleBinW`), which is what Explorer's "Empty Recycle
+//! Bin" does.
 
 use std::path::PathBuf;
 
@@ -97,7 +104,6 @@ pub fn list_items() -> Vec<RecycleBinItem> {
 }
 
 /// Parse one `$I…` metadata file.
-#[cfg(windows)]
 fn parse_info_file(data: &[u8], payload_path: &std::path::Path) -> Option<RecycleBinItem> {
     if data.len() < 24 {
         return None;
@@ -135,7 +141,6 @@ fn parse_info_file(data: &[u8], payload_path: &std::path::Path) -> Option<Recycl
 }
 
 /// Decode up to `max_chars` UTF-16LE code units, stopping at NUL.
-#[cfg(windows)]
 fn read_utf16(data: &[u8], max_chars: usize) -> String {
     let units: Vec<u16> = data
         .chunks_exact(2)
@@ -169,4 +174,95 @@ pub fn validate_item_id(id: &str) -> Option<(PathBuf, PathBuf)> {
         return None;
     }
     Some((payload, info))
+}
+
+/// Restore one recycled item to the original path recorded in its
+/// `$I…` metadata: the `$R…` payload moves back (parent folders are
+/// recreated when the original folder has since been removed) and
+/// the metadata file is deleted. Refuses when anything already sits
+/// at the destination — a restore never overwrites.
+pub fn restore_item(id: &str) -> Result<(), String> {
+    let (payload, info) = validate_item_id(id)
+        .ok_or_else(|| "item is no longer in the Recycle Bin".to_string())?;
+    let data = std::fs::read(&info).map_err(|e| format!("could not read item metadata: {e}"))?;
+    let item = parse_info_file(&data, &payload)
+        .ok_or_else(|| "item metadata is unreadable".to_string())?;
+    let destination = PathBuf::from(&item.original_path);
+    if destination.symlink_metadata().is_ok() {
+        return Err(format!(
+            "{} already exists — restore refused",
+            item.original_path
+        ));
+    }
+    if let Some(parent) = destination.parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|e| format!("could not recreate the original folder: {e}"))?;
+    }
+    std::fs::rename(&payload, &destination)
+        .map_err(|e| format!("could not restore {}: {e}", item.original_path))?;
+    // The payload is home; a metadata file left behind would list a
+    // ghost item, so its removal is part of the operation.
+    std::fs::remove_file(&info)
+        .map_err(|e| format!("restored, but could not remove the item metadata: {e}"))?;
+    Ok(())
+}
+
+/// Empty the whole Recycle Bin on the system drive, the way Explorer
+/// does it. Returns `(items_removed, bytes_freed)` counted from the
+/// listing taken just before the empty, so the figures describe
+/// exactly the bin the listing showed.
+pub fn empty_all() -> Result<(u32, u64), String> {
+    #[cfg(not(windows))]
+    {
+        Err("Emptying the Recycle Bin is available on Windows only.".to_string())
+    }
+    #[cfg(windows)]
+    {
+        let items = list_items();
+        let items_removed = items.len() as u32;
+        let bytes_freed: u64 = items.iter().map(|i| i.bytes).sum();
+        empty_bin_windows()?;
+        Ok((items_removed, bytes_freed))
+    }
+}
+
+/// `SHEmptyRecycleBinW` on the system drive, with no confirmation
+/// dialog, no progress UI and no sound (the app confirms itself).
+/// Raw FFI, matching how the core reaches Windows APIs.
+#[cfg(windows)]
+fn empty_bin_windows() -> Result<(), String> {
+    use std::os::windows::ffi::OsStrExt;
+    #[link(name = "shell32")]
+    extern "system" {
+        fn SHEmptyRecycleBinW(
+            hwnd: *mut std::ffi::c_void,
+            root_path: *const u16,
+            flags: u32,
+        ) -> i32;
+    }
+    const SHERB_NOCONFIRMATION: u32 = 0x0000_0001;
+    const SHERB_NOPROGRESSUI: u32 = 0x0000_0002;
+    const SHERB_NOSOUND: u32 = 0x0000_0004;
+
+    let drive = std::env::var("SystemDrive").unwrap_or_else(|_| "C:".to_string());
+    let root = format!("{drive}\\");
+    let wide: Vec<u16> = std::ffi::OsStr::new(&root)
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect();
+    let hr = unsafe {
+        SHEmptyRecycleBinW(
+            std::ptr::null_mut(),
+            wide.as_ptr(),
+            SHERB_NOCONFIRMATION | SHERB_NOPROGRESSUI | SHERB_NOSOUND,
+        )
+    };
+    if hr == 0 {
+        Ok(())
+    } else {
+        Err(format!(
+            "Windows could not empty the Recycle Bin (HRESULT 0x{:08X})",
+            hr as u32
+        ))
+    }
 }

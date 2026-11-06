@@ -22,6 +22,7 @@ use tauri::{
 use diskpilot_core::model::DiskInfo;
 
 use crate::tray_icon;
+use crate::ShellState;
 
 pub const TRAY_ID: &str = "diskpilot-tray";
 
@@ -55,6 +56,26 @@ fn recent_download_entries() -> Vec<(String, String, String)> {
         .enumerate()
         .map(|(i, file)| (format!("{RECENT_ID_PREFIX}{i}"), file.name, file.path))
         .collect()
+}
+
+/// The digest line heading the menu once a scan exists: how much the
+/// last scan found reclaimable. A readout, not an action — the menu
+/// item is disabled. Rebuilt with the menu after every scan (the
+/// engine summary is restored from the snapshot at startup, so the
+/// line survives restarts too).
+fn digest_item(app: &AppHandle) -> Option<MenuItem<tauri::Wry>> {
+    let state = app.state::<ShellState>();
+    let engine = state.engine.lock().ok()?;
+    let summary = engine.summary.as_ref()?;
+    let reclaimable: u64 = summary.recoverable_by_category.values().sum();
+    MenuItem::with_id(
+        app,
+        "cleanable-digest",
+        format!("{} can be cleaned", format_decimal_gb(reclaimable)),
+        false,
+        None::<&str>,
+    )
+    .ok()
 }
 
 /// Build the full tray menu, including the Recent downloads submenu
@@ -102,18 +123,19 @@ fn build_menu(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
         Submenu::with_items(app, "Recent downloads", true, &refs)?
     };
 
-    Menu::with_items(
-        app,
-        &[
-            &open,
-            &cleanup,
-            &duplicates,
-            &recent_menu,
-            &empty_bin,
-            &separator,
-            &quit,
-        ],
-    )
+    let digest = digest_item(app);
+    let mut items: Vec<&dyn IsMenuItem<_>> = Vec::new();
+    if let Some(item) = &digest {
+        items.push(item);
+    }
+    items.push(&open);
+    items.push(&cleanup);
+    items.push(&duplicates);
+    items.push(&recent_menu);
+    items.push(&empty_bin);
+    items.push(&separator);
+    items.push(&quit);
+    Menu::with_items(app, &items)
 }
 
 /// Build the tray icon and its menu. Called once from `setup`.

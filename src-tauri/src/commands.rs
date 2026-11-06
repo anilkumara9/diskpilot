@@ -27,7 +27,12 @@
 //!   core has no Recycle Bin *inventory* API (its safety gate protects
 //!   `$Recycle.Bin` from plan-based cleanup). The shell parses the
 //!   `$I…` metadata read-only and, on empty, removes exactly the listed
-//!   `$R…` payloads after re-validating each ID.
+//!   `$R…` payloads after re-validating each ID. The same module
+//!   restores single items from their metadata and empties the whole
+//!   bin through the shell API (`SHEmptyRecycleBinW`).
+//! - OneDrive status is computed by the core from the scan index (no
+//!   second walk of the folder); `export_report` writes the frontend's
+//!   HTML through the dialog plugin's Rust-side save dialog.
 //! - `search_files` / `run_search_filters` compose the core's query
 //!   parser and index search; the one filter dimension the index
 //!   cannot carry — the download source — is applied in the shell by
@@ -175,6 +180,14 @@ pub fn get_disk_info(
     let info = disk::disk_info_for(Path::new(&root));
     crate::tray::update_tray(&app, &info);
     info
+}
+
+/// Every mounted drive (volume) with its total and free space,
+/// probed by the core. Blocking: unresponsive volumes can take a
+/// moment to answer.
+#[tauri::command]
+pub async fn get_drives() -> CmdResult<Vec<diskpilot_core::drives::DriveInfo>> {
+    blocking_value(diskpilot_core::drives::list_drives).await
 }
 
 // ---------------------------------------------------------------------------
@@ -1099,6 +1112,118 @@ pub async fn empty_recycle_bin(
 pub fn cancel_empty_recycle_bin(state: State<'_, ShellState>) -> CmdResult<()> {
     state.recycle_bin_cancel.store(true, Ordering::SeqCst);
     Ok(())
+}
+
+/// Outcome of emptying the entire Recycle Bin at once.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EmptyRecycleBinResult {
+    pub items_removed: u32,
+    pub bytes_freed: u64,
+}
+
+/// Empty the entire Recycle Bin on the system drive in one shell
+/// operation (`SHEmptyRecycleBinW`), instead of the item-by-item
+/// removal `empty_recycle_bin` performs over a listed selection.
+/// The counts come from the listing taken just before the empty and
+/// the result is recorded to History.
+#[tauri::command]
+pub async fn empty_entire_recycle_bin(
+    state: State<'_, ShellState>,
+) -> CmdResult<EmptyRecycleBinResult> {
+    let (items_removed, bytes_freed) = blocking_value(crate::recycle_bin::empty_all).await??;
+    let result = CleanupResult {
+        plan_id: "recycle-bin".to_string(),
+        succeeded: Vec::new(),
+        failed: Vec::new(),
+        reclaimed_bytes: bytes_freed,
+        finished_at_ms: now_ms(),
+    };
+    let _ = with_history(&state, |history| {
+        history
+            .record_cleanup(
+                "empty-recycle-bin",
+                &result,
+                Some(&format!(
+                    "Emptied the entire Recycle Bin ({items_removed} items)"
+                )),
+            )
+            .map(|_| ())
+    });
+    Ok(EmptyRecycleBinResult {
+        items_removed,
+        bytes_freed,
+    })
+}
+
+/// Restore one Recycle Bin item (by the id `get_recycle_bin_items`
+/// returned) to its original location. Refuses when the destination
+/// already exists; recreates the original folder when it is gone.
+#[tauri::command]
+pub async fn restore_recycle_item(id: String) -> CmdResult<()> {
+    blocking_value(move || crate::recycle_bin::restore_item(&id)).await?
+}
+
+// ---------------------------------------------------------------------------
+// Cloud storage & reports
+// ---------------------------------------------------------------------------
+
+/// The OneDrive folder on this PC and how much of it the current scan
+/// found stored locally (files occupying allocated bytes). `None`
+/// when no OneDrive folder exists or no scan has run yet — the status
+/// is computed from the scan index, never by re-walking the folder.
+#[tauri::command]
+pub fn get_cloud_status(
+    state: State<'_, ShellState>,
+) -> CmdResult<Option<diskpilot_core::cloud::CloudStatus>> {
+    let Some(root) = diskpilot_core::cloud::detect_onedrive_root() else {
+        return Ok(None);
+    };
+    let engine = state
+        .engine
+        .lock()
+        .map_err(|_| "engine lock poisoned".to_string())?;
+    let Some(index) = engine.index.as_ref() else {
+        return Ok(None);
+    };
+    let root = root.to_string_lossy().into_owned();
+    Ok(Some(diskpilot_core::cloud::cloud_status(&root, &index.files)))
+}
+
+/// Ask OneDrive to free up the local copies of `paths` (Files
+/// On-Demand dehydration — nothing is deleted). The core refuses the
+/// whole call when any path sits outside the OneDrive folder.
+#[tauri::command]
+pub async fn free_up_space(
+    paths: Vec<String>,
+) -> CmdResult<diskpilot_core::cloud::FreeUpSpaceResult> {
+    tauri::async_runtime::spawn_blocking(move || diskpilot_core::cloud::free_up_space(&paths))
+        .await
+        .map_err(|e| format!("background task failed: {e}"))?
+}
+
+/// Save an HTML storage report through the native save dialog
+/// (default name `DiskPilot-Report.html`). Resolves with the chosen
+/// path, or `None` when the user cancelled. The dialog runs on the
+/// Rust side, so no extra capability permission is involved.
+#[tauri::command]
+pub async fn export_report(app: AppHandle, html: String) -> CmdResult<Option<String>> {
+    use tauri_plugin_dialog::DialogExt;
+    blocking_value(move || -> Result<Option<String>, String> {
+        let Some(file) = app
+            .dialog()
+            .file()
+            .set_file_name("DiskPilot-Report.html")
+            .add_filter("HTML", &["html"])
+            .blocking_save_file()
+        else {
+            return Ok(None);
+        };
+        let path = file.into_path().map_err(|e| e.to_string())?;
+        std::fs::write(&path, html.as_bytes()).map_err(|e| e.to_string())?;
+        Ok(Some(path.to_string_lossy().into_owned()))
+    })
+    .await?
 }
 
 // ---------------------------------------------------------------------------

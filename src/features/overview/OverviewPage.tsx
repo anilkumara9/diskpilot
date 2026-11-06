@@ -1,20 +1,36 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   ArrowRight,
   Bot,
+  Cloud,
+  FileDown,
   FolderLock,
   HardDrive,
   Info,
   ScanSearch,
   Sparkles,
   Trash2,
+  TrendingUp,
 } from "lucide-react";
 import { useAppStore } from "@/lib/store";
 import * as api from "@/lib/api";
 import { categoryRows, sortLocations, totalRecoverable } from "@/lib/analysis";
 import { categoryMeta } from "@/lib/categories";
 import { displayPath, formatBytes, formatCount, formatDate, formatDuration, formatPercent, formatSignedBytes, formatSignedCount } from "@/lib/format";
-import type { Category, DiskInfo, RecycleBinItem, ScanComparison, ScanSummary } from "@/lib/types";
+import { buildReportHtml } from "@/lib/report";
+import type {
+  BiggestChanges,
+  Category,
+  CloudStatus,
+  DirChange,
+  DiskInfo,
+  DriveInfo,
+  RecycleBinItem,
+  ScanComparison,
+  ScanHistoryEntry,
+  ScanSummary,
+  SpaceForecast,
+} from "@/lib/types";
 import { Button } from "@/components/ui/button";
 import { Section } from "@/components/ui/section";
 import { Tooltip } from "@/components/ui/tooltip";
@@ -22,8 +38,16 @@ import { CategoryBadge, CategoryDot } from "@/components/shared/CategoryBadge";
 import { TierBadge } from "@/components/shared/TierBadge";
 import { SizeBar } from "@/components/shared/SizeBar";
 import { EmptyState } from "@/components/shared/EmptyState";
+import { FreeUpSpaceDialog } from "@/components/shared/FreeUpSpaceDialog";
 import { ResultsAge } from "@/components/shared/ResultsAge";
 import { ScanControl } from "@/components/layout/ScanControl";
+
+/** Root comparison the way Windows treats paths: trailing separators
+    ignored, case-insensitive. */
+export function sameRootPath(a: string, b: string): boolean {
+  const normalise = (s: string) => s.replace(/[\\/]+$/, "").toLowerCase();
+  return normalise(a) === normalise(b);
+}
 
 /* ---------------- StorageStrip ---------------- */
 
@@ -228,6 +252,267 @@ export function SinceLastScan({ comparison }: { comparison: ScanComparison }) {
   );
 }
 
+/* ---------------- Drives strip ---------------- */
+
+/**
+ * One card per drive on this PC. Hidden when there is only the scan
+ * root's drive — the strip above already tells that drive's story.
+ * A drive that is not the scan root offers to scan it instead.
+ */
+export function DrivesStrip({
+  drives,
+  scanRoot,
+  onScanDrive,
+}: {
+  drives: DriveInfo[];
+  scanRoot: string;
+  onScanDrive: (rootPath: string) => void;
+}) {
+  if (drives.length === 0) return null;
+  if (drives.length === 1 && sameRootPath(drives[0].rootPath, scanRoot)) return null;
+  return (
+    <div className="flex flex-wrap gap-3">
+      {drives.map((drive) => {
+        const isScanRoot = sameRootPath(drive.rootPath, scanRoot);
+        const usedFraction =
+          drive.totalBytes > 0 ? Math.min(1, Math.max(0, 1 - drive.freeBytes / drive.totalBytes)) : 0;
+        const label = drive.rootPath.replace(/[\\/]+$/, "");
+        return (
+          <div
+            key={drive.rootPath}
+            className="min-w-[220px] flex-1 rounded-[10px] border border-border bg-panel-raised px-4 py-3"
+          >
+            <div className="flex items-center gap-2">
+              <HardDrive className="size-4 shrink-0 text-muted" aria-hidden="true" />
+              <span className="text-[13px] font-medium text-foreground">{label}</span>
+              {isScanRoot ? (
+                <span className="text-[11px] text-subtle">Scan root</span>
+              ) : (
+                <Button
+                  variant="subtle"
+                  size="sm"
+                  className="ml-auto"
+                  onClick={() => onScanDrive(drive.rootPath)}
+                >
+                  Scan
+                </Button>
+              )}
+            </div>
+            <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-hover" aria-hidden="true">
+              <div className="h-full rounded-full bg-accent" style={{ width: `${usedFraction * 100}%` }} />
+            </div>
+            <p className="mt-1.5 text-[12px] tabular text-muted">
+              {formatBytes(drive.freeBytes)} free of {formatBytes(drive.totalBytes)}
+            </p>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+/* ---------------- Forecast ---------------- */
+
+function HistorySparkline({ points }: { points: number[] }) {
+  const width = 240;
+  const height = 52;
+  const pad = 4;
+  const { line, baselineY } = useMemo(() => {
+    if (points.length === 0) return { line: "", baselineY: height - pad };
+    const min = Math.min(...points);
+    const max = Math.max(...points);
+    const span = max - min;
+    const y = (v: number) =>
+      span === 0
+        ? height / 2
+        : height - pad - ((v - min) / span) * (height - pad * 2);
+    const coords = points.map((v, i) => {
+      const x = points.length === 1 ? width / 2 : pad + (i / (points.length - 1)) * (width - pad * 2);
+      return `${x.toFixed(1)},${y(v).toFixed(1)}`;
+    });
+    return { line: coords.join(" "), baselineY: y(min) };
+  }, [points]);
+  if (points.length === 0) return null;
+  return (
+    <svg
+      width={width}
+      height={height}
+      viewBox={`0 0 ${width} ${height}`}
+      role="img"
+      aria-label="Total scanned size across recent scans"
+      className="shrink-0"
+    >
+      <line
+        x1={pad}
+        x2={width - pad}
+        y1={baselineY}
+        y2={baselineY}
+        stroke="var(--border-strong)"
+        strokeWidth={1}
+        strokeDasharray="3 3"
+      />
+      <polyline points={line} fill="none" stroke="var(--accent)" strokeWidth={1.5} strokeLinejoin="round" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+/**
+ * Where the current growth rate leads, from the scan-history time
+ * series. Renders only when the forecast fit used at least two
+ * points — a single scan has no rate to project.
+ */
+export function ForecastCard({
+  forecast,
+  history,
+  root,
+}: {
+  forecast: SpaceForecast;
+  history: ScanHistoryEntry[];
+  root: string;
+}) {
+  const points = useMemo(
+    () =>
+      history
+        .filter((entry) => sameRootPath(entry.rootPath, root))
+        .sort((a, b) => a.scannedAtMs - b.scannedAtMs)
+        .map((entry) => entry.totalBytes),
+    [history, root],
+  );
+  const filling = forecast.daysUntilFull !== null && forecast.projectedFullAtMs !== null;
+  return (
+    <div className="flex flex-wrap items-center gap-x-8 gap-y-3 rounded-[10px] border border-border bg-panel-raised px-4 py-3">
+      <div className="min-w-[240px] flex-1">
+        <p className="flex items-center gap-1.5 text-[12px] text-muted">
+          <TrendingUp className="size-3.5" aria-hidden="true" />
+          {filling ? "Fill-up forecast" : "Growth forecast"}
+        </p>
+        <p className="mt-0.5 text-[15px] font-semibold leading-5 text-foreground">
+          {filling
+            ? `At your current rate, this drive fills in about ${Math.round(forecast.daysUntilFull as number)} days`
+            : "Your disk isn't growing — no fill-up date in sight."}
+        </p>
+        <p className="mt-0.5 text-[12px] leading-4 text-muted">
+          {filling
+            ? `${formatBytes(Math.max(0, forecast.dailyGrowthBytes))} more per day on average · full around ${formatDate(forecast.projectedFullAtMs as number)}.`
+            : forecast.dailyGrowthBytes < 0
+              ? `Usage is shrinking by ${formatBytes(-forecast.dailyGrowthBytes)} per day on average across the last ${forecast.pointsUsed} scans.`
+              : `Usage has been flat across the last ${forecast.pointsUsed} scans.`}
+        </p>
+      </div>
+      <HistorySparkline points={points} />
+    </div>
+  );
+}
+
+/* ---------------- Biggest changes ---------------- */
+
+function ChangeList({ title, changes, tone }: { title: string; changes: DirChange[]; tone: "grew" | "freed" }) {
+  const homeDir = useAppStore((s) => s.env?.homeDir);
+  if (changes.length === 0) return null;
+  return (
+    <div className="min-w-[240px] flex-1">
+      <p className="text-[12px] font-medium text-muted">{title}</p>
+      <ul className="mt-1 divide-y divide-border/60">
+        {changes.map((change) => (
+          <li key={change.path} className="flex items-baseline gap-3 py-1.5">
+            <span className="min-w-0 flex-1">
+              <span className="block truncate text-[13px] text-foreground" title={change.path}>
+                {change.name}
+              </span>
+              <span className="mono-path block truncate text-subtle" title={change.path}>
+                {displayPath(change.path, homeDir)}
+              </span>
+            </span>
+            <span
+              className={`shrink-0 text-[12px] tabular ${tone === "grew" ? "text-tier-review" : "text-tier-safe"}`}
+            >
+              {formatSignedBytes(change.deltaBytes)}
+            </span>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+/**
+ * The folders behind the scan-over-scan delta: what grew most
+ * (including folders that only exist now) and what freed space
+ * (shrunk plus removed). Renders nothing when the diff is empty.
+ */
+export function BiggestChanges({ changes }: { changes: BiggestChanges }) {
+  const grew = useMemo(
+    () => [...changes.grown, ...changes.added].sort((a, b) => b.deltaBytes - a.deltaBytes).slice(0, 5),
+    [changes],
+  );
+  const freed = useMemo(
+    () => [...changes.shrunk, ...changes.removed].sort((a, b) => a.deltaBytes - b.deltaBytes).slice(0, 5),
+    [changes],
+  );
+  if (grew.length === 0 && freed.length === 0) return null;
+  return (
+    <div className="mt-3 flex flex-wrap gap-x-10 gap-y-3">
+      <ChangeList title="Grew most" changes={grew} tone="grew" />
+      <ChangeList title="Freed" changes={freed} tone="freed" />
+    </div>
+  );
+}
+
+/* ---------------- OneDrive / cloud ---------------- */
+
+/**
+ * The cloud sync folder's local footprint, with the online-only
+ * escape hatch. Renders only when the shell found a cloud folder.
+ */
+export function OneDriveCard({
+  cloud,
+  onChanged,
+}: {
+  cloud: CloudStatus;
+  onChanged: () => void;
+}) {
+  const homeDir = useAppStore((s) => s.env?.homeDir);
+  const setBanner = useAppStore((s) => s.setBanner);
+  const [confirmOpen, setConfirmOpen] = useState(false);
+  return (
+    <div className="flex items-center gap-3 rounded-[10px] border border-border bg-panel-raised px-4 py-3">
+      <Cloud className="size-4 shrink-0 text-accent" aria-hidden="true" />
+      <p className="min-w-0 flex-1 text-[12px] leading-4 text-muted">
+        <span className="font-medium text-foreground">
+          {cloud.provider} is keeping {formatBytes(cloud.localBytes)} on this PC
+        </span>{" "}
+        — {formatCount(cloud.fileCount)} file{cloud.fileCount === 1 ? "" : "s"} stored locally in{" "}
+        <span className="mono-path">{displayPath(cloud.rootPath, homeDir)}</span>. Making them
+        online-only frees the space; they download again when opened.
+      </p>
+      <Button variant="secondary" size="sm" onClick={() => setConfirmOpen(true)}>
+        Free up space
+      </Button>
+      <FreeUpSpaceDialog
+        open={confirmOpen}
+        provider={cloud.provider}
+        paths={[cloud.rootPath]}
+        bytes={cloud.localBytes}
+        onClose={() => setConfirmOpen(false)}
+        onDone={(result) => {
+          if (result.failed.length > 0) {
+            setBanner({
+              kind: "error",
+              message: `Could not free up space in ${cloud.provider}: ${result.failed[0].error}`,
+            });
+          } else {
+            setBanner({
+              kind: "success",
+              message: `Freed up space for ${result.succeeded.length} item${result.succeeded.length === 1 ? "" : "s"} in ${cloud.provider}. The files stay in ${cloud.provider} and download again when opened.`,
+            });
+          }
+          onChanged();
+        }}
+      />
+    </div>
+  );
+}
+
 export function LocationList({ summary, homeDir }: { summary: ScanSummary; homeDir?: string }) {
   const locations = sortLocations(summary.locations).slice(0, 8);
   const max = locations[0]?.bytes ?? 1;
@@ -395,8 +680,72 @@ export function OverviewPage() {
   const scanning = useAppStore((s) => s.scanning);
   const homeDir = useAppStore((s) => s.env?.homeDir);
   const navigate = useAppStore((s) => s.navigate);
+  const recommendations = useAppStore((s) => s.recommendations);
+  const settings = useAppStore((s) => s.settings);
+  const updateSettings = useAppStore((s) => s.updateSettings);
+  const startScan = useAppStore((s) => s.startScan);
+  const refreshDisk = useAppStore((s) => s.refreshDisk);
+  const setBanner = useAppStore((s) => s.setBanner);
+
+  const [drives, setDrives] = useState<DriveInfo[]>([]);
+  const [forecast, setForecast] = useState<SpaceForecast | null>(null);
+  const [history, setHistory] = useState<ScanHistoryEntry[]>([]);
+  const [changes, setChanges] = useState<BiggestChanges | null>(null);
+  const [cloud, setCloud] = useState<CloudStatus | null>(null);
+  const [exporting, setExporting] = useState(false);
+
+  /* Watch data (drives, forecast, history, biggest changes, cloud)
+     refreshes whenever a scan finishes — the finished timestamp is
+     the trigger, the loaders themselves are best-effort. */
+  const finishedAtMs = summary?.finishedAtMs;
+  useEffect(() => {
+    let live = true;
+    void (async () => {
+      const [d, f, h, c, cl] = await Promise.all([
+        api.getDrives(),
+        api.getSpaceForecast(),
+        api.getScanHistory(),
+        api.getBiggestChanges(5),
+        api.getCloudStatus(),
+      ]);
+      if (!live) return;
+      setDrives(d);
+      setForecast(f);
+      setHistory(h);
+      setChanges(c);
+      setCloud(cl);
+    })();
+    return () => {
+      live = false;
+    };
+  }, [finishedAtMs]);
 
   const shown = summary;
+
+  const scanDrive = async (rootPath: string) => {
+    await updateSettings({ scanRoot: rootPath });
+    await startScan(rootPath);
+  };
+
+  const exportReport = async () => {
+    if (!summary || exporting) return;
+    setExporting(true);
+    try {
+      const html = buildReportHtml({
+        summary,
+        disk,
+        forecast,
+        recommendations,
+        generatedAtMs: Date.now(),
+      });
+      const path = await api.exportReport(html);
+      if (path) {
+        setBanner({ kind: "success", message: `Report saved to ${path}` });
+      }
+    } finally {
+      setExporting(false);
+    }
+  };
 
   return (
     <div className="h-full overflow-y-auto px-6 py-6">
@@ -412,10 +761,19 @@ export function OverviewPage() {
             {summary ? <ResultsAge finishedAtMs={summary.finishedAtMs} /> : null}
           </p>
         </div>
-        <ScanControl />
+        <div className="flex shrink-0 items-center gap-2">
+          {summary ? (
+            <Button variant="secondary" onClick={() => void exportReport()} disabled={exporting}>
+              <FileDown className="size-4" aria-hidden="true" />
+              {exporting ? "Exporting…" : "Export report"}
+            </Button>
+          ) : null}
+          <ScanControl />
+        </div>
       </div>
 
-      <div className="mt-5">
+      <div className="mt-5 space-y-3">
+        <DrivesStrip drives={drives} scanRoot={settings.scanRoot} onScanDrive={(root) => void scanDrive(root)} />
         <StorageStrip disk={disk} summary={shown} />
       </div>
 
@@ -447,6 +805,13 @@ export function OverviewPage() {
               description={`Compared with the previous scan, finished ${formatDate(comparison.previousScannedAtMs)}.`}
             >
               <SinceLastScan comparison={comparison} />
+              {changes ? <BiggestChanges changes={changes} /> : null}
+            </Section>
+          ) : null}
+
+          {forecast && forecast.pointsUsed >= 2 ? (
+            <Section title="Forecast" description="Projected from your scan history — the trend, not a promise.">
+              <ForecastCard forecast={forecast} history={history} root={summary.root} />
             </Section>
           ) : null}
 
@@ -473,6 +838,15 @@ export function OverviewPage() {
 
           <div className="mt-6 space-y-3">
             <PrivateFoldersNotice summary={summary} />
+            {cloud ? (
+              <OneDriveCard
+                cloud={cloud}
+                onChanged={() => {
+                  void api.getCloudStatus().then(setCloud);
+                  void refreshDisk();
+                }}
+              />
+            ) : null}
             <TrashWaitingNotice />
             <AssistantPrompt />
           </div>
