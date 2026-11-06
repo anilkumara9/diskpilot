@@ -187,9 +187,22 @@ separated from the nav by a hairline and 12 px of air.
   recoverable part when there is one; the tooltip layer sits outside
   the clipped bar so the card is never cut off. Legend items never
   wrap mid-item.
-- **Figures** — one figure style everywhere: 12 px muted label, 20 px
-  semibold tabular value. Overview stats, the since-last-scan deltas
-  and the Docker summary cards all use it.
+- **StatStrip (header figures)** — one header-stats pattern
+  everywhere, implemented once as the shared StatStrip component:
+  a page's headline numbers sit in equal bordered blocks (10 px
+  radius, hairline border, 14 px horizontal / 12 px vertical
+  padding) on a responsive auto-fit grid — never as loose text on
+  the page background. Each block is a 12 px muted label (a 14 px
+  icon precedes it only where the page already has a natural one,
+  as Docker's cards do), a 20 px semibold tabular value, and an
+  optional 11 px muted sub-caption (Media's file counts, Docker's
+  reclaimable subtotals). Blocks stretch to equal height and wrap
+  cleanly at the minimum window width. A strip that already sits
+  inside a surfaced panel (Health's forecast figures) uses the
+  bare variant — the same grid and type rhythm with no second
+  outline. The Overview hero's figures are the one exception:
+  they carry Info tooltips and an accent variant inside the hero
+  composition, and keep their own markup.
 - **Size bar** — the single meter implementation for the whole app:
   a proportional bar under a figure, in the row's category colour
   (accent when the row has no category). 2 px under figures, 4 px in
@@ -360,8 +373,9 @@ separated from the nav by a hairline and 12 px of air.
   tag treatment, never a new style: free ≥ 20 % is "Healthy"
   (safe tier), 10–20 % "Getting low" (review tier), under 10 %
   "Low space" (critical). **Forecast** is the Overview forecast at
-  page scale — Fills in / Daily growth / Projected full as figures
-  (or the flat/shrinking wording) — over the growth chart: the
+  page scale — Fills in / Daily growth / Projected full as a
+  StatStrip in its bare variant inside the panel (or the
+  flat/shrinking wording) — over the growth chart: the
   shared Chart at ~140 px, scanned size as the accent area + curve,
   free space as a muted second line on the same scale, the min–max
   ranges as a caption beneath (the Chart's own axis carries the
@@ -371,9 +385,9 @@ separated from the nav by a hairline and 12 px of air.
   schedule, both alert thresholds, sign-in state and last scan,
   with an "Open Settings" action — Health reports the watch; it
   never edits it.
-- **Media page** — the scan's photos and videos. A figures row
-  (Photos, Videos, Screenshots — each bytes over its file count;
-  Screenshots is captioned "included in Photos", because it is a
+- **Media page** — the scan's photos and videos. A StatStrip
+  (Photos, Videos, Screenshots — each value over its file-count
+  sub-caption; Screenshots is captioned "included in Photos", because it is a
   subset, never a separate total). Biggest videos and biggest
   photos are hairline lists: name over a `mono-path` parent folder
   and date caption, size right-aligned; a row click reveals the
@@ -385,7 +399,7 @@ separated from the nav by a hairline and 12 px of air.
   view, because the mode lives in the store. Before the first scan
   the page is the standard empty state.
 - **Games page** — installed Steam and Epic games, read from the
-  launchers' manifests (no scan involved). A figures row (Total in
+  launchers' manifests (no scan involved). A StatStrip (Total in
   games, Games, Libraries), then one section per library: the
   source as title, the library path as the description, the
   library subtotal as the section action; game rows are name over
@@ -481,7 +495,7 @@ separated from the nav by a hairline and 12 px of air.
   for per-item state like Startup entries.
 - **Startup page** — System group; reads the registry Run keys
   and Startup folders at mount (scan-independent) and re-reads
-  after every toggle. Figure row: Entries / Enabled /
+  after every toggle. StatStrip: Entries / Enabled /
   Disabled. Entries group by source under "Registry — current
   user", "Registry — all users", "Startup folder — current
   user", "Startup folder — all users"; empty groups are
@@ -531,7 +545,7 @@ separated from the nav by a hairline and 12 px of air.
   dialog and byte-for-byte re-verification still stand
   between it and the Recycle Bin.
 - **Storage Types view** — a fourth Storage tab ("Types"),
-  same tab strip and arrow-key model. Figure row: File
+  same tab strip and arrow-key model. StatStrip: File
   types, Largest type (label and size together), Coverage of
   top 10 against the scan's total bytes. Rows are hairline
   divided, capped at 50 with a "Showing the 50 largest types"
