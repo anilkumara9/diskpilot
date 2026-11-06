@@ -473,7 +473,9 @@ separated from the nav by a hairline and 12 px of air.
 - **Switch** — the house toggle for controls that ARE a state:
   a 32×18 pill track (neutral `selected` grey with a hairline
   ring off, accent fill on) and a 14 px white knob with a soft
-  shadow, 120 ms transitions throughout. A button with
+  shadow, 120 ms transitions throughout. Hover mirrors the
+  primary button: opacity when on, a stronger ring when off
+  (never on a disabled switch). A button with
   `role="switch"` and `aria-checked`, labelled by the thing it
   controls. Settings keep their checkbox rows; the switch is
   for per-item state like Startup entries.
@@ -538,7 +540,9 @@ separated from the nav by a hairline and 12 px of air.
   file count, the size bar against the largest type at 4 px,
   and the allocated bytes. A row expands inline to the type's
   largest files — name, path caption, size, Reveal — fetched
-  on first expansion. With no scan, the view shows the
+  on first expansion. The expansion is ruled with soft
+  hairlines and indented to the chip column, like other
+  detail-under-row content. With no scan, the view shows the
   standard Storage empty state like Folders and Map.
 
 ## Charts

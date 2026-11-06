@@ -27,8 +27,9 @@ export function Switch({
       disabled={disabled}
       onClick={() => onChange(!checked)}
       className={cn(
-        "relative h-[18px] w-8 shrink-0 rounded-full transition-colors duration-120",
+        "relative h-[18px] w-8 shrink-0 rounded-full transition duration-120",
         checked ? "bg-[var(--accent-fill)]" : "bg-selected ring-1 ring-border",
+        !disabled && (checked ? "hover:opacity-90" : "hover:ring-border-strong"),
         disabled ? "cursor-not-allowed opacity-50" : "cursor-pointer",
       )}
     >

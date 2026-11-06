@@ -70,7 +70,7 @@ function TypeFiles({ extension }: { extension: string }) {
 
   if (error) {
     return (
-      <div className="flex items-center gap-3 px-3 py-2">
+      <div className="flex items-center gap-3 py-2 pl-[40px] pr-3">
         <p role="alert" className="flex-1 text-[12px] text-critical">{error}</p>
         <Button variant="secondary" size="sm" onClick={() => setReloadKey((n) => n + 1)}>
           Retry
@@ -78,14 +78,20 @@ function TypeFiles({ extension }: { extension: string }) {
       </div>
     );
   }
-  if (files === null) return <SkeletonRows rows={3} />;
+  if (files === null) {
+    return (
+      <div className="py-1 pl-[40px] pr-3">
+        <SkeletonRows rows={3} />
+      </div>
+    );
+  }
   if (files.length === 0) {
-    return <p className="px-3 py-2 text-[12px] text-muted">No files of this type in the scan.</p>;
+    return <p className="py-2 pl-[40px] pr-3 text-[12px] text-muted">No files of this type in the scan.</p>;
   }
   return (
-    <div className="px-3 py-1">
+    <div className="py-1 pl-[40px] pr-3">
       {revealError ? <p role="alert" className="pb-1 text-[12px] text-critical">{revealError}</p> : null}
-      <ul>
+      <ul className="divide-y divide-border/60">
         {files.map((file) => (
           <li key={file.path} className="flex items-center gap-3 py-1.5">
             <div className="min-w-0 flex-1">
