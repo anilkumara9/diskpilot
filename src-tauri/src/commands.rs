@@ -54,7 +54,9 @@ use diskpilot_core::assistant::{
 };
 use diskpilot_core::cleanup::{execute_plan, ExecuteMode, FileOps, RealFileOps};
 use diskpilot_core::error::CoreError;
+use diskpilot_core::forecast::{self, Forecast, HistoryPoint};
 use diskpilot_core::history::HistoryStore;
+use diskpilot_core::snapshot_diff::{diff_snapshots, BiggestChanges, SnapshotView};
 use diskpilot_core::model::{
     now_ms, AppEntry, Category, Classification, CleanupFailure, CleanupPlan, CleanupResult,
     DiskInfo, DuplicateGroup, HistoryEntry, Recommendation, ScanSummary, SecretFinding, ToolReport,
@@ -200,7 +202,22 @@ pub async fn start_scan(
         Some(r) if !r.is_empty() => r,
         _ => state.scan_root(),
     };
+    run_scan(app, &state, root_path, false).await
+}
 
+/// The one scan routine, shared by the manual command above and the
+/// scheduler in `crate::watch`. A scheduled run differs only in the
+/// `scheduled` flag: after it completes, the alert checks run (manual
+/// scans never notify). Everything else — progress/finished events,
+/// snapshot rotation, History recording, the scan-history append —
+/// is identical, so a scheduled scan is indistinguishable in the app
+/// from a manual one.
+pub(crate) async fn run_scan(
+    app: AppHandle,
+    state: &ShellState,
+    root_path: String,
+    scheduled: bool,
+) -> CmdResult<ScanSummary> {
     if !Path::new(&root_path).exists() {
         return Err(format!("That folder no longer exists: {root_path}"));
     }
@@ -273,7 +290,11 @@ pub async fn start_scan(
     }
 
     let _ = snapshot::save_snapshot(&summary, &snapshot_file);
-    let _ = with_history(&state, |history| history.record_scan(&summary).map(|_| ()));
+    let _ = with_history(state, |history| history.record_scan(&summary).map(|_| ()));
+
+    // Append to the scan-history time series (forecast + alerts).
+    // Best-effort inside `scan_history::append`: it never fails here.
+    crate::scan_history::append(state, &summary);
 
     // Keep the tray ring honest about the scanned volume, and the
     // tray's Recent downloads submenu current.
@@ -282,7 +303,65 @@ pub async fn start_scan(
     crate::tray::refresh_recent_downloads(&app);
 
     let _ = app.emit("scan://finished", summary.clone());
+
+    if scheduled {
+        send_scheduled_scan_alerts(&app, state, &summary);
+    }
     Ok(summary)
+}
+
+/// Notifications after a SCHEDULED scan only (manual scans never
+/// notify): low free space on the scanned drive, and total growth
+/// beyond the configured threshold since the previous scan of the
+/// same root. Sending is best-effort — a notification failure must
+/// not fail the scan.
+fn send_scheduled_scan_alerts(app: &AppHandle, state: &ShellState, summary: &ScanSummary) {
+    use tauri_plugin_notification::NotificationExt;
+
+    let settings = match state.settings.lock() {
+        Ok(settings) => settings.clone(),
+        Err(_) => return,
+    };
+
+    if let Some(free) = summary.drive_free_bytes {
+        if (free as f64) < settings.low_space_alert_gb * 1e9 {
+            let body = format!(
+                "Only {:.1} GB free on {}. DiskPilot's Overview shows what is using the space.",
+                free as f64 / 1e9,
+                summary.root
+            );
+            let _ = app
+                .notification()
+                .builder()
+                .title("DiskPilot: low disk space")
+                .body(body)
+                .show();
+        }
+    }
+
+    // Growth is measured against the previous history entry for the
+    // same root; the last entry is the scan that just finished.
+    let history = crate::scan_history::load(state);
+    let previous = history
+        .iter()
+        .rev()
+        .skip(1)
+        .find(|entry| same_scan_root(&entry.root_path, &summary.root));
+    if let Some(previous) = previous {
+        let growth = summary.total_bytes as i64 - previous.total_bytes as i64;
+        if growth > 0 && (growth as f64) > settings.growth_alert_gb * 1e9 {
+            let body = format!(
+                "+{:.1} GB since the last check — open DiskPilot to see what grew",
+                growth as f64 / 1e9
+            );
+            let _ = app
+                .notification()
+                .builder()
+                .title("DiskPilot: disk usage grew")
+                .body(body)
+                .show();
+        }
+    }
 }
 
 /// Cancel the running scan, if any. The scanner stops at its next
@@ -395,10 +474,87 @@ pub fn get_scan_comparison(state: State<'_, ShellState>) -> CmdResult<Option<Sca
     }))
 }
 
+/// The scan-history time series (oldest → newest), from
+/// `scan_history.json`. Empty when no scan has completed yet.
+#[tauri::command]
+pub fn get_scan_history(
+    state: State<'_, ShellState>,
+) -> CmdResult<Vec<crate::scan_history::ScanHistoryEntry>> {
+    Ok(crate::scan_history::load(&state))
+}
+
+/// Space forecast for the configured scan root: the core's
+/// least-squares fit over the scan history for that root. An empty
+/// (or too-thin) history yields the zeroed forecast.
+#[tauri::command]
+pub fn get_space_forecast(state: State<'_, ShellState>) -> CmdResult<Forecast> {
+    let root = state
+        .settings
+        .lock()
+        .map_err(|_| "settings lock poisoned".to_string())?
+        .scan_root
+        .clone();
+    let points: Vec<HistoryPoint> = crate::scan_history::load(&state)
+        .into_iter()
+        .filter(|entry| same_scan_root(&entry.root_path, &root))
+        .map(|entry| HistoryPoint {
+            scanned_at_ms: entry.scanned_at_ms,
+            total_bytes: entry.total_bytes,
+            drive_free_bytes: entry.drive_free_bytes,
+        })
+        .collect();
+    Ok(forecast::forecast(&points, now_ms()))
+}
+
+/// Biggest directory-level changes between the persisted current and
+/// previous snapshots (`snapshot.json` vs `previous_snapshot.json`).
+/// All four lists are empty when there is no previous snapshot, no
+/// current snapshot, or the two cover different roots (a root change
+/// makes a directory diff meaningless, same rule as the comparison).
+#[tauri::command]
+pub fn get_biggest_changes(
+    state: State<'_, ShellState>,
+    limit: u32,
+) -> CmdResult<BiggestChanges> {
+    let limit = if limit == 0 { 8 } else { limit as usize };
+    let current = snapshot::load_snapshot(&state.snapshot_file())
+        .ok()
+        .flatten();
+    let previous = snapshot::load_snapshot(&state.previous_snapshot_file())
+        .ok()
+        .flatten();
+    let (Some(current), Some(previous)) = (current, previous) else {
+        return Ok(BiggestChanges::default());
+    };
+    if !same_scan_root(&current.root, &previous.root) {
+        return Ok(BiggestChanges::default());
+    }
+    Ok(diff_snapshots(
+        &SnapshotView::from_summary(&current),
+        &SnapshotView::from_summary(&previous),
+        limit,
+    ))
+}
+
+/// Whether launch-at-login is currently registered.
+#[tauri::command]
+pub fn get_autostart() -> bool {
+    crate::watch::get_autostart_impl()
+}
+
+/// Register or unregister launch-at-login. Resolves with the state
+/// now in effect (`false` off Windows, where there is no
+/// registration to write).
+#[tauri::command]
+pub fn set_autostart(enabled: bool) -> CmdResult<bool> {
+    crate::watch::set_autostart_impl(enabled)
+}
+
 /// Root comparison for the scan-over-scan delta: trailing separators
 /// are ignored, and the comparison is case-insensitive on Windows
-/// (mirroring how Windows treats paths).
-fn same_scan_root(a: &str, b: &str) -> bool {
+/// (mirroring how Windows treats paths). Shared with the scheduler
+/// and the forecast/history commands.
+pub(crate) fn same_scan_root(a: &str, b: &str) -> bool {
     let normalise = |s: &str| {
         let trimmed = s.trim_end_matches(['\\', '/']);
         if cfg!(windows) {

@@ -8,8 +8,10 @@
 
 mod commands;
 mod recycle_bin;
+mod scan_history;
 mod tray;
 mod tray_icon;
+mod watch;
 
 use std::path::{Path, PathBuf};
 use std::sync::atomic::AtomicBool;
@@ -46,6 +48,37 @@ pub struct Settings {
     /// page, oldest first. Same `#[serde(default)]` treatment.
     #[serde(default)]
     pub saved_searches: Vec<String>,
+    /// Scheduled scans: `"off"` (default), `"daily"` or `"weekly"`.
+    /// The scheduler in `crate::watch` runs due scans in the
+    /// background and raises the alerts below after them.
+    #[serde(default = "default_auto_scan")]
+    pub auto_scan: String,
+    /// After a scheduled scan, notify when the scanned drive's free
+    /// space drops below this many GB (decimal).
+    #[serde(default = "default_low_space_alert_gb")]
+    pub low_space_alert_gb: f64,
+    /// After a scheduled scan, notify when total usage grew by more
+    /// than this many GB (decimal) since the previous scan.
+    #[serde(default = "default_growth_alert_gb")]
+    pub growth_alert_gb: f64,
+    /// Launch DiskPilot at login (per-user Run key on Windows).
+    /// Applied by `set_autostart` when the setting changes and
+    /// re-applied at every startup, so a registry entry lost outside
+    /// the app self-heals.
+    #[serde(default)]
+    pub auto_start: bool,
+}
+
+fn default_auto_scan() -> String {
+    "off".to_string()
+}
+
+fn default_low_space_alert_gb() -> f64 {
+    10.0
+}
+
+fn default_growth_alert_gb() -> f64 {
+    5.0
 }
 
 impl Default for Settings {
@@ -57,6 +90,10 @@ impl Default for Settings {
             assistant_provider: "anthropic".to_string(),
             exclusions: Vec::new(),
             saved_searches: Vec::new(),
+            auto_scan: default_auto_scan(),
+            low_space_alert_gb: default_low_space_alert_gb(),
+            growth_alert_gb: default_growth_alert_gb(),
+            auto_start: false,
         }
     }
 }
@@ -111,6 +148,13 @@ impl ShellState {
         self.app_data_dir.join("previous_snapshot.json")
     }
 
+    /// Path of the scan-history time series (`scan_history.json`):
+    /// one entry per completed scan, powering the space forecast and
+    /// the scheduled-scan alerts.
+    pub fn scan_history_file(&self) -> PathBuf {
+        self.app_data_dir.join("scan_history.json")
+    }
+
     /// Root the safety contexts are built against: the scanned root when
     /// a scan exists, otherwise the configured scan root.
     pub fn scan_root(&self) -> String {
@@ -154,17 +198,46 @@ fn persist_settings(dir: &Path, settings: &Settings) -> std::io::Result<()> {
     std::fs::rename(&tmp, dir.join("settings.json"))
 }
 
+/// The Quick Search toggle shortcut: Ctrl+Shift+Space.
+fn quicksearch_shortcut() -> tauri_plugin_global_shortcut::Shortcut {
+    tauri_plugin_global_shortcut::Shortcut::new(
+        Some(
+            tauri_plugin_global_shortcut::Modifiers::CONTROL
+                | tauri_plugin_global_shortcut::Modifiers::SHIFT,
+        ),
+        tauri_plugin_global_shortcut::Code::Space,
+    )
+}
+
 /// Build and run the application.
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_notification::init())
+        .plugin(
+            tauri_plugin_global_shortcut::Builder::new()
+                .with_handler(|app, shortcut, event| {
+                    if event.state() == tauri_plugin_global_shortcut::ShortcutState::Pressed
+                        && *shortcut == quicksearch_shortcut()
+                    {
+                        watch::toggle_quicksearch(app);
+                    }
+                })
+                .build(),
+        )
         .setup(|app| {
             let data_dir = app.path().app_data_dir()?;
             std::fs::create_dir_all(&data_dir)?;
 
             let settings = load_settings(&data_dir);
             let scan_root = settings.scan_root.clone();
+
+            // Re-apply the autostart setting so a registration removed
+            // outside the app self-heals on the next launch.
+            if let Err(e) = watch::set_autostart_impl(settings.auto_start) {
+                eprintln!("diskpilot: could not apply the autostart setting: {e}");
+            }
 
             // Engine state, with the last scan's summary restored from
             // the snapshot so the Overview is populated immediately.
@@ -194,6 +267,22 @@ pub fn run() {
             let info = diskpilot_core::disk::disk_info_for(Path::new(&scan_root));
             tray::update_tray(app.handle(), &info);
 
+            // Quick Search: a hidden popup window toggled by the
+            // global shortcut. A failure to create it or to register
+            // the shortcut costs the feature, not the app.
+            if let Err(e) = watch::create_quicksearch_window(app.handle()) {
+                eprintln!("diskpilot: could not create the Quick Search window: {e}");
+            }
+            {
+                use tauri_plugin_global_shortcut::GlobalShortcutExt;
+                if let Err(e) = app.global_shortcut().register(quicksearch_shortcut()) {
+                    eprintln!("diskpilot: could not register the Quick Search shortcut: {e}");
+                }
+            }
+
+            // Scheduled scans + alerts (see `crate::watch`).
+            watch::spawn_scheduler(app.handle().clone());
+
             Ok(())
         })
         .on_window_event(|window, event| {
@@ -205,6 +294,13 @@ pub fn run() {
                     let _ = window.hide();
                 }
             }
+            // Quick Search behaves like a launcher popup: it hides
+            // when it loses focus.
+            if window.label() == "quicksearch" {
+                if let tauri::WindowEvent::Focused(false) = event {
+                    let _ = window.hide();
+                }
+            }
         })
         .invoke_handler(tauri::generate_handler![
             commands::get_environment,
@@ -213,6 +309,11 @@ pub fn run() {
             commands::cancel_scan,
             commands::get_scan_summary,
             commands::get_scan_comparison,
+            commands::get_scan_history,
+            commands::get_space_forecast,
+            commands::get_biggest_changes,
+            commands::get_autostart,
+            commands::set_autostart,
             commands::list_directory,
             commands::get_recommendations,
             commands::get_cleanup_cards,
