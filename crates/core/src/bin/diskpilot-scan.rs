@@ -23,7 +23,13 @@ fn main() -> ExitCode {
         return ExitCode::from(2);
     }
     let scanner = Scanner::new(&root);
-    let (summary, _index) = scanner.scan();
+    // scan_auto attempts the fast MFT path for volume roots (see
+    // core::mft_volume); anything else — or any failure — walks.
+    let (summary, _index) = scanner.scan_auto();
+    eprintln!(
+        "scan engine: {}",
+        summary.scan_engine.as_deref().unwrap_or("walker")
+    );
     match serde_json::to_string_pretty(&summary) {
         Ok(json) => {
             println!("{}", json);

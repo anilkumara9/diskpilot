@@ -30,9 +30,12 @@ reqwest = { version = "0.12", features = ["blocking", "rustls-tls", "json"], def
 [target.'cfg(target_os = "windows")'.dependencies]
 keyring = { version = "3", features = ["windows-native"], optional = true }
 # WinRT surface for the OCR module only (Windows.Media.Ocr over
-# image bytes in a memory stream). Kept to the few features that
-# module names so the crate's footprint stays confined to `ocr.rs`.
-windows = { version = "0.59", features = ["Foundation", "Foundation_Collections", "Globalization", "Graphics_Imaging", "Media_Ocr", "Storage_Streams"] }
+# image bytes in a memory stream), plus the small Win32 file-IO
+# surface the MFT volume reader names (CreateFileW / ReadFile /
+# SetFilePointerEx on the raw volume). Kept to the features those
+# two modules name so the crate's footprint stays confined to
+# `ocr.rs` and `mft_volume.rs`.
+windows = { version = "0.59", features = ["Foundation", "Foundation_Collections", "Globalization", "Graphics_Imaging", "Media_Ocr", "Storage_Streams", "Win32_Foundation", "Win32_Security", "Win32_Storage_FileSystem", "Win32_System_IO"] }
 
 [target.'cfg(not(target_os = "windows"))'.dependencies]
 keyring = { version = "3", optional = true }

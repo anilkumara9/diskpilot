@@ -278,7 +278,12 @@ pub(crate) async fn run_scan(
         .with_cancel(cancel)
         .with_progress(callback)
         .with_exclusions(exclusions);
-    let scan_result = tauri::async_runtime::spawn_blocking(move || scanner.scan()).await;
+    // scan_auto engages the fast MFT path when the root is a whole
+    // NTFS volume and the process can read it (the app is running
+    // elevated); any failure falls back to the standard walk,
+    // invisibly. Everything below this line — snapshots, history,
+    // OCR, tray — is the one shared completion path.
+    let scan_result = tauri::async_runtime::spawn_blocking(move || scanner.scan_auto()).await;
 
     let (summary, index) = match scan_result {
         Ok(pair) => pair,

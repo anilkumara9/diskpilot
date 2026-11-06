@@ -59,6 +59,61 @@ fn scanner_totals_equal_category_totals() {
     assert!(!summary.top_files.is_empty());
 }
 
+/// The MFT fast path's virtual walk: flat entries in, the same
+/// index and summary shape the walker produces out — totals,
+/// tree sizes, counts, skipped list, and the engine tag.
+#[test]
+fn mft_entry_build_matches_walker_shape() {
+    use diskpilot_core::mft::MftEntry;
+    let dir = tempfile::tempdir().unwrap();
+    let root_str = dir.path().to_string_lossy().to_string();
+    let entry = |rel: &str, is_dir: bool, allocated: u64| {
+        let name = rel.rsplit('\\').next().unwrap_or(rel).to_string();
+        MftEntry {
+            path: format!("{root_str}\\{rel}"),
+            name,
+            is_dir,
+            logical_bytes: allocated,
+            allocated_bytes: allocated,
+            modified_ms: 0,
+        }
+    };
+    let entries = vec![
+        entry("docs", true, 0),
+        entry("docs\\a.txt", false, 1024),
+        entry("b.bin", false, 4096),
+    ];
+    let skipped = vec![format!("{root_str}\\linkdir")];
+    let (summary, index) = Scanner::new(dir.path()).build_from_entries(entries, skipped);
+    assert_eq!(summary.scan_engine.as_deref(), Some("mft"));
+    assert_eq!(summary.total_bytes, 5120);
+    assert_eq!(summary.file_count, 2);
+    assert_eq!(summary.dir_count, 1);
+    let cat_sum: u64 = summary.category_totals.values().sum();
+    assert_eq!(cat_sum, summary.total_bytes);
+    assert_eq!(summary.skipped.len(), 1);
+    assert_eq!(index.files.len(), 2);
+    assert_eq!(index.dir_sizes.get(&root_str), Some(&5120));
+    assert_eq!(
+        index.dir_sizes.get(&format!("{root_str}\\docs")),
+        Some(&1024)
+    );
+    let root_children = index.children.get(&root_str).unwrap();
+    assert_eq!(root_children.len(), 2);
+    assert!(root_children.iter().any(|c| c.is_dir && c.bytes == 1024));
+}
+
+/// scan_auto on an ordinary folder (never a volume root) falls
+/// back to the walker and says so.
+#[test]
+fn scan_auto_on_folder_uses_walker() {
+    let dir = tempfile::tempdir().unwrap();
+    write_file(&dir.path().join("a.txt"), 100);
+    let (summary, _index) = Scanner::new(dir.path()).scan_auto();
+    assert_eq!(summary.scan_engine.as_deref(), Some("walker"));
+    assert_eq!(summary.file_count, 1);
+}
+
 #[test]
 fn scanner_does_not_follow_symlink() {
     let dir = tempfile::tempdir().unwrap();

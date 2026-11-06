@@ -80,6 +80,43 @@ fn lock_shared(shared: &Mutex<Shared>) -> std::sync::MutexGuard<'_, Shared> {
         .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
+/// Timing and provenance for one scan, handed to the shared
+/// summary finisher so both scan paths report identically.
+struct FinishCtx {
+    started_ms: i64,
+    start: Instant,
+    engine: &'static str,
+}
+
+/// Working state for the MFT virtual walk (`Scanner::build_dir`):
+/// entries grouped by parent index key, plus the progress counters
+/// the walker's `Shared` carries on its side.
+#[derive(Default)]
+struct EntryBuild {
+    children: HashMap<String, Vec<crate::mft::MftEntry>>,
+    files_seen: u64,
+    bytes_seen: u64,
+    last_progress: Option<Instant>,
+}
+
+impl EntryBuild {
+    fn report_progress(&mut self, progress: &Option<ProgressCallback>, path: &str) {
+        let Some(cb) = progress else { return };
+        let due = self
+            .last_progress
+            .map(|t: Instant| t.elapsed().as_millis() >= 120)
+            .unwrap_or(true);
+        if due {
+            self.last_progress = Some(Instant::now());
+            cb(ScanProgress {
+                path: path.to_string(),
+                files_seen: self.files_seen,
+                bytes_seen: self.bytes_seen,
+            });
+        }
+    }
+}
+
 impl Scanner {
     pub fn new(root: impl AsRef<Path>) -> Self {
         Self {
@@ -130,11 +167,252 @@ impl Scanner {
             &shared,
             &mut index,
         );
-        let finished = now_ms();
         let (errors, skipped) = {
             let s = lock_shared(&shared);
             (s.errors.clone(), s.skipped.clone())
         };
+        let summary = self.finish_summary(
+            &index,
+            &agg,
+            FinishCtx {
+                started_ms: started,
+                start: start_instant,
+                engine: "walker",
+            },
+            errors,
+            skipped,
+        );
+        (summary, index)
+    }
+
+    /// Scan this scanner's root, preferring the fast Master File
+    /// Table path when it is safely available.
+    ///
+    /// The fast path engages only when the root is a whole NTFS
+    /// volume root AND the volume read succeeds end to end (see
+    /// `crate::mft_volume` — it needs administrator rights, which
+    /// are never requested). Any failure at any point falls back to
+    /// the standard walk, with no user-visible difference beyond
+    /// `ScanSummary::scan_engine`. On success the MFT entries feed
+    /// the exact same index build and summary finisher as the walk,
+    /// so downstream results are indistinguishable.
+    pub fn scan_auto(&self) -> (ScanSummary, DirIndex) {
+        if crate::mft_volume::is_volume_root(&self.root) {
+            if let Ok(volume) = crate::mft_volume::scan_volume(&self.root) {
+                // The volume layer anchors paths at the canonical
+                // prefix (`C:\…`); re-anchor onto the root string
+                // exactly as given so index keys take the same form
+                // the walker's `read_dir` joins would produce.
+                let root_str = path_to_string(&self.root);
+                let canonical = crate::mft_volume::volume_prefix(&self.root).unwrap_or_default();
+                let reanchor = |p: &str| -> String {
+                    match p.strip_prefix(canonical.trim_end_matches('\\')) {
+                        Some(rest) if rest.starts_with('\\') => {
+                            if root_str.ends_with('\\') || root_str.ends_with('/') {
+                                format!("{root_str}{}", &rest[1..])
+                            } else {
+                                format!("{root_str}{rest}")
+                            }
+                        }
+                        _ => p.to_string(),
+                    }
+                };
+                let entries = volume
+                    .entries
+                    .into_iter()
+                    .map(|mut e| {
+                        e.path = reanchor(&e.path);
+                        e
+                    })
+                    .collect();
+                let skipped = volume.skipped.iter().map(|p| reanchor(p)).collect();
+                return self.build_from_entries(entries, skipped);
+            }
+        }
+        self.scan()
+    }
+
+    /// Build the scan index and summary from flat entries produced
+    /// outside the walker (the MFT fast path). This is a virtual
+    /// walk over the entry tree: the same classifier calls with the
+    /// same inheritance, the same exclusion rule, the same
+    /// aggregation, and the same summary finisher as [`Scanner::scan`]
+    /// — only the source of directory entries differs.
+    pub fn build_from_entries(
+        &self,
+        entries: Vec<crate::mft::MftEntry>,
+        skipped: Vec<String>,
+    ) -> (ScanSummary, DirIndex) {
+        let started = now_ms();
+        let start_instant = Instant::now();
+        let root_str = path_to_string(&self.root);
+        let join_root = |rel: &str| -> String {
+            if root_str.ends_with('\\') || root_str.ends_with('/') {
+                format!("{root_str}{rel}")
+            } else {
+                format!("{root_str}\\{rel}")
+            }
+        };
+        let mut build = EntryBuild::default();
+        for entry in entries {
+            let Some(rel) = entry.path.strip_prefix(&root_str) else {
+                continue; // not under the root: cannot be indexed
+            };
+            // Drop the separator between root and first segment so
+            // parent keys are built from bare segment joins.
+            let rel = rel.strip_prefix(['\\', '/']).unwrap_or(rel);
+            let parent_key = match rel.rfind('\\') {
+                Some(i) => join_root(&rel[..i]),
+                None => root_str.clone(),
+            };
+            build.children.entry(parent_key).or_default().push(entry);
+        }
+        let mut index = DirIndex::default();
+        let root_class = classifier::classify_inner_from(&self.root, self.base_skip());
+        let root_scope = classifier::scope_of(&root_class.rule_id);
+        let agg = self.build_dir(
+            &root_str,
+            Some(&(root_class, root_scope)),
+            &mut build,
+            &mut index,
+        );
+        let summary = self.finish_summary(
+            &index,
+            &agg,
+            FinishCtx {
+                started_ms: started,
+                start: start_instant,
+                engine: "mft",
+            },
+            Vec::new(),
+            skipped,
+        );
+        (summary, index)
+    }
+
+    /// One directory of the virtual walk: the twin of `walk_dir`,
+    /// sourcing entries from the pre-built children map instead of
+    /// `read_dir`. Keep the two in step — classification, exclusion
+    /// and aggregation semantics must not drift apart.
+    fn build_dir(
+        &self,
+        dir_key: &str,
+        inherited: Option<&(Classification, RuleScope)>,
+        build: &mut EntryBuild,
+        index: &mut DirIndex,
+    ) -> Agg {
+        let mut agg = Agg::default();
+        if self.cancel.load(Ordering::Relaxed) {
+            return agg;
+        }
+        let dir_path = PathBuf::from(dir_key);
+        let dir_class = match inherited {
+            Some((c, _)) => c.clone(),
+            None => classifier::classify_inner_from(&dir_path, self.base_skip()),
+        };
+        let dir_scope = classifier::scope_of(&dir_class.rule_id);
+        let mut kids = build.children.remove(dir_key).unwrap_or_default();
+        kids.sort_by(|a, b| a.name.cmp(&b.name));
+
+        let mut subdirs: Vec<(crate::mft::MftEntry, Classification, RuleScope)> = Vec::new();
+        let mut children: Vec<IndexChild> = Vec::new();
+        for kid in &kids {
+            if self.cancel.load(Ordering::Relaxed) {
+                break;
+            }
+            // Same exclusion rule as the walker: silently out of
+            // scope, matched on the path relative to the scan root.
+            if !self.exclusions.is_empty() {
+                let kid_path = Path::new(&kid.path);
+                let rel = kid_path.strip_prefix(&self.root).unwrap_or(kid_path);
+                if is_excluded(rel, &self.exclusions) {
+                    continue;
+                }
+            }
+            let kid_path = PathBuf::from(&kid.path);
+            if kid.is_dir {
+                let (class, scope) = classifier::classify_child_from(
+                    &kid_path,
+                    true,
+                    Some(&(dir_class.clone(), dir_scope)),
+                    self.base_skip(),
+                );
+                subdirs.push((kid.clone(), class, scope));
+            } else {
+                let (class, _) = classifier::classify_child_from(
+                    &kid_path,
+                    false,
+                    Some(&(dir_class.clone(), dir_scope)),
+                    self.base_skip(),
+                );
+                agg.bytes += kid.allocated_bytes;
+                agg.files += 1;
+                build.files_seen += 1;
+                build.bytes_seen += kid.allocated_bytes;
+                index.files.push(FileEntry {
+                    path: kid.path.clone(),
+                    name: kid.name.clone(),
+                    bytes: kid.allocated_bytes,
+                    category: class.category,
+                    modified_ms: kid.modified_ms,
+                    ocr_text: None,
+                });
+                children.push(IndexChild {
+                    name: kid.name.clone(),
+                    path: kid.path.clone(),
+                    bytes: kid.allocated_bytes,
+                    is_dir: false,
+                    category: class.category,
+                });
+                build.report_progress(&self.progress, &kid.path);
+            }
+        }
+
+        for (sub, class, scope) in subdirs {
+            let sub_agg = self.build_dir(
+                &sub.path,
+                Some(&(class.clone(), scope)),
+                build,
+                index,
+            );
+            agg.bytes += sub_agg.bytes;
+            agg.files += sub_agg.files;
+            agg.dirs += sub_agg.dirs + 1;
+            children.push(IndexChild {
+                name: sub.name.clone(),
+                path: sub.path.clone(),
+                bytes: sub_agg.bytes,
+                is_dir: true,
+                category: class.category,
+            });
+        }
+
+        children.sort_by(|a, b| a.name.cmp(&b.name));
+        index.dir_sizes.insert(dir_key.to_string(), agg.bytes);
+        index.dir_category.insert(dir_key.to_string(), dir_class.category);
+        index
+            .dir_classification
+            .insert(dir_key.to_string(), dir_class);
+        index.children.insert(dir_key.to_string(), children);
+        agg
+    }
+
+    /// The summary finisher shared by the walker and the MFT build:
+    /// category totals, largest files, root locations, heavy
+    /// folders, and the summary itself, computed identically from
+    /// whichever index was built.
+    fn finish_summary(
+        &self,
+        index: &DirIndex,
+        agg: &Agg,
+        ctx: FinishCtx,
+        errors: Vec<ScanError>,
+        skipped: Vec<String>,
+    ) -> ScanSummary {
+        let started = ctx.started_ms;
+        let start_instant = ctx.start;
+        let engine = ctx.engine;
+        let finished = now_ms();
         let mut category_totals: HashMap<Category, u64> = HashMap::new();
         let mut recoverable: HashMap<Category, u64> = HashMap::new();
         for f in &index.files {
@@ -189,6 +467,7 @@ impl Scanner {
             started_at_ms: started,
             finished_at_ms: finished,
             duration_ms: start_instant.elapsed().as_millis() as i64,
+            scan_engine: Some(engine.to_string()),
             // Free space of the scanned root's drive at scan end; the
             // scan-history time series and the space forecast read it
             // from here. A failure to query the drive is not a scan
@@ -213,7 +492,7 @@ impl Scanner {
             summary.total_bytes,
             "category totals must equal total bytes"
         );
-        (summary, index)
+        summary
     }
 
     fn report_progress(&self, shared: &Arc<Mutex<Shared>>, path: &Path) {
