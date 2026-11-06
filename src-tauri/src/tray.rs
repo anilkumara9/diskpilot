@@ -1,5 +1,7 @@
-//! System tray: a live free-space ring, a navigation menu with a
-//! Recent downloads submenu, and hide-to-tray behaviour (wired up in
+//! System tray: a live free-space ring, a navigation menu headed —
+//! once a scan exists — by a disabled digest line ("{reclaimable} can
+//! be cleaned", from the last scan's recoverable totals), a Recent
+//! downloads submenu, and hide-to-tray behaviour (wired up in
 //! `lib.rs` via `on_window_event`).
 //!
 //! Menu entries that target a page emit a `tray://navigate` event with a

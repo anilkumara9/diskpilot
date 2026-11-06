@@ -89,6 +89,13 @@ shown to the user instead of deleting behind the tool's back), and a
 source tag. Recommendations are pure data; building them changes
 nothing on disk.
 
+One recommendation is *guided only*: a `Windows.old` folder at the
+scan root (the previous Windows installation) is flagged with
+`guidedOnly` and a `guidance` text naming the removal route through
+Windows' own storage tools. The planner rejects guided-only items
+outright, and the safety gate treats the location as report-only, so
+no plan can ever contain the folder.
+
 ### Planner & safety gate (`cleanup`, `safety`)
 
 The frontend sends recommendation **IDs only**. The planner resolves
@@ -150,6 +157,18 @@ History.
   count. The raw transcript text is never stored or transmitted.
 - **Disk (`disk`)** — volume information (total / used / available /
   name) for the Overview figures and the tray ring.
+- **Drives (`drives`)** — enumeration of every mounted volume
+  (drive letters on Windows, `/` elsewhere) with total and free
+  space, probed via `fs2`; volumes that do not answer or report zero
+  total are dropped.
+- **Cloud (`cloud`)** — OneDrive awareness. The local folder is
+  found from the `OneDrive` / `OneDriveConsumer` /
+  `OneDriveCommercial` environment variables; its on-disk footprint
+  is computed from a scan index (files under the root occupying
+  allocated bytes). "Free up space" marks paths unpinned
+  (`attrib +U -P`) so OneDrive dehydrates them to online-only —
+  nothing is deleted, and any path outside the detected root refuses
+  the whole call.
 - **Snapshot (`snapshot`)** — the last scan summary, persisted as JSON
   in the app data folder so the Overview is populated on launch before
   a fresh scan. Each scan also records the scanned drive's free space
@@ -204,7 +223,17 @@ view — it is the audit trail for "what did DiskPilot ever do?".
   code: an RGBA ring rasterised from the used fraction of the system
   volume, with a tooltip showing available space and a menu that emits
   `tray://navigate` events. Closing the window hides it to the tray
-  instead of quitting.
+  instead of quitting. Once a scan exists, the menu is headed by a
+  disabled digest line — "{reclaimable} can be cleaned", summed from
+  the last scan's recoverable category totals — refreshed whenever
+  the menu is rebuilt after a scan.
+- **Recycle Bin (`recycle_bin.rs`)** — `$Recycle.Bin` inventory from
+  the on-disk `$I…` metadata: listing, item-by-item emptying,
+  restoring one item to its recorded original path (refused when the
+  destination exists again), and a whole-bin empty through
+  `SHEmptyRecycleBinW`. Report export is a command too: the
+  frontend's HTML is written through the dialog plugin's Rust-side
+  save dialog, so it needs no capability permission.
 - **Scan history (`scan_history.rs`)** — every completed scan
   (manual or scheduled) appends one entry to `scan_history.json` in
   the app data folder: time, root, totals, drive free space and

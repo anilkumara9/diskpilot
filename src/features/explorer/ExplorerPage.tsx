@@ -1,23 +1,39 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ChevronRight, File, Folder, FolderOpen, Search, X } from "lucide-react";
+import { ChevronRight, CloudUpload, File, Folder, FolderOpen, Search, X } from "lucide-react";
 import * as api from "@/lib/api";
 import { useAppStore } from "@/lib/store";
 import { filterByQuery, sortExplorerRows, type FileSortKey, type SortDirection } from "@/lib/analysis";
 import { categoryMeta } from "@/lib/categories";
-import { basename, displayPath, formatBytes, parentPath } from "@/lib/format";
+import { basename, displayPath, formatBytes, formatDate, parentPath } from "@/lib/format";
 import { tierMeta } from "@/lib/tiers";
-import type { DirectoryEntry, Recommendation } from "@/lib/types";
+import type { CloudStatus, DirectoryEntry, MediaInfo, Recommendation } from "@/lib/types";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Treemap, type TreemapBlock } from "@/components/Treemap";
 import { CategoryBadge } from "@/components/shared/CategoryBadge";
 import { CategorySelect, type CategoryFilter } from "@/components/shared/CategorySelect";
 import { ClassificationCard } from "@/components/shared/ClassificationCard";
 import { DetailsPanel, DetailRow } from "@/components/shared/DetailsPanel";
 import { EmptyState } from "@/components/shared/EmptyState";
+import { FreeUpSpaceDialog } from "@/components/shared/FreeUpSpaceDialog";
 import { SizeBar } from "@/components/shared/SizeBar";
 import { SortHeader } from "@/components/shared/SortHeader";
 import { TierBadge } from "@/components/shared/TierBadge";
 import { cn } from "@/lib/utils";
+
+/** Extensions the shell's media-info reader understands (EXIF). */
+const IMAGE_EXTENSIONS = new Set(["png", "jpg", "jpeg", "gif", "bmp", "webp", "tif", "tiff", "heic", "heif"]);
+
+/** How many individual file blocks the map shows before the rest are
+    folded into one aggregate block. */
+const MAP_FILE_LIMIT = 48;
+
+/** True when `path` is the cloud root itself or lives under it. */
+export function isPathUnder(path: string, root: string): boolean {
+  const p = path.replace(/\//g, "\\").replace(/\\+$/, "").toLowerCase();
+  const r = root.replace(/\//g, "\\").replace(/\\+$/, "").toLowerCase();
+  return p === r || p.startsWith(r + "\\");
+}
 
 export interface ExplorerRow {
   kind: "folder" | "file";
@@ -82,12 +98,17 @@ function recommendationFor(path: string, recommendations: Recommendation[]): Rec
 export function ExplorerView({
   rootPath,
   embedded = false,
+  mode = "list",
 }: {
   rootPath: string;
   embedded?: boolean;
+  /** "list" is the file table; "map" renders the same level as a
+      treemap. Both share navigation, filters and the inspector. */
+  mode?: "list" | "map";
 }) {
   const homeDir = useAppStore((s) => s.env?.homeDir);
   const recommendations = useAppStore((s) => s.recommendations);
+  const setBanner = useAppStore((s) => s.setBanner);
   const [currentPath, setCurrentPath] = useState(rootPath);
   const [entries, setEntries] = useState<DirectoryEntry[] | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -97,7 +118,22 @@ export function ExplorerView({
   const [direction, setDirection] = useState<SortDirection>("desc");
   const [selectedPath, setSelectedPath] = useState<string | null>(null);
   const [revealError, setRevealError] = useState<string | null>(null);
+  const [cloud, setCloud] = useState<CloudStatus | null>(null);
+  const [mediaInfo, setMediaInfo] = useState<MediaInfo | null>(null);
+  const [freeUpOpen, setFreeUpOpen] = useState(false);
   const requestSeq = useRef(0);
+
+  /* The cloud folder (if any) decides whether the inspector offers
+     "Free up space" for the selected file. Best-effort. */
+  useEffect(() => {
+    let live = true;
+    void api.getCloudStatus().then((status) => {
+      if (live) setCloud(status);
+    });
+    return () => {
+      live = false;
+    };
+  }, []);
 
   // A new scan (new root) restarts browsing at the root.
   useEffect(() => {
@@ -142,6 +178,77 @@ export function ExplorerView({
   const selectedRec = selected ? recommendationFor(selected.path, recommendations) : null;
   const classification = selected?.entry.classification ?? null;
   const maxBytes = rows.length > 0 ? Math.max(...rows.map((r) => r.bytes), 1) : 1;
+
+  /* EXIF for the selected image, loaded lazily; the cancelled flag
+     keeps a slow read from landing on a newer selection. */
+  const selectedFilePath = selected?.kind === "file" ? selected.path : null;
+  useEffect(() => {
+    setMediaInfo(null);
+    if (!selectedFilePath) return;
+    const ext = selectedFilePath.split(".").pop()?.toLowerCase() ?? "";
+    if (!IMAGE_EXTENSIONS.has(ext)) return;
+    let live = true;
+    void api.getMediaInfo(selectedFilePath).then((info) => {
+      if (live) setMediaInfo(info);
+    });
+    return () => {
+      live = false;
+    };
+  }, [selectedFilePath]);
+
+  const selectedInCloud =
+    selected?.kind === "file" && cloud ? isPathUnder(selected.path, cloud.rootPath) : false;
+
+  /* Map blocks for the current level: every folder, the largest
+     files individually, and the long tail folded into one aggregate. */
+  const treemapBlocks = useMemo<TreemapBlock[]>(() => {
+    const blocks: TreemapBlock[] = [];
+    const folders = rows.filter((r) => r.kind === "folder");
+    const files = [...rows.filter((r) => r.kind === "file")].sort((a, b) => b.bytes - a.bytes);
+    for (const row of folders) {
+      blocks.push({
+        id: row.path,
+        name: row.name,
+        bytes: row.bytes,
+        colorVar: categoryMeta(row.category).colorVar,
+        isDir: true,
+        path: row.path,
+      });
+    }
+    const shownFiles = files.slice(0, MAP_FILE_LIMIT);
+    const restFiles = files.slice(MAP_FILE_LIMIT);
+    for (const row of shownFiles) {
+      blocks.push({
+        id: row.path,
+        name: row.name,
+        bytes: row.bytes,
+        colorVar: categoryMeta(row.category).colorVar,
+        isDir: false,
+        path: row.path,
+      });
+    }
+    if (restFiles.length > 0) {
+      blocks.push({
+        id: `${currentPath}::other-files`,
+        name: `${restFiles.length} more files`,
+        bytes: restFiles.reduce((acc, r) => acc + r.bytes, 0),
+        colorVar: categoryMeta("unknown").colorVar,
+        isDir: false,
+        path: currentPath,
+        aggregate: true,
+      });
+    }
+    return blocks;
+  }, [rows, currentPath]);
+
+  const activateBlock = (block: TreemapBlock) => {
+    if (block.aggregate) return;
+    if (block.isDir) {
+      navigateTo(block.path);
+    } else {
+      setSelectedPath(block.path);
+    }
+  };
 
   const onSort = (key: string) => {
     const k = key as FileSortKey;
@@ -222,7 +329,18 @@ export function ExplorerView({
           <p role="alert" className="pb-2 text-[12px] text-critical">{loadError}</p>
         ) : null}
 
-        {/* Table */}
+        {/* Table or map */}
+        {mode === "map" ? (
+          <div className="min-h-0 flex-1">
+            {entries === null ? (
+              <div className="flex h-full items-center justify-center rounded-[10px] border border-border text-[12px] text-muted">
+                Loading folder…
+              </div>
+            ) : (
+              <Treemap blocks={treemapBlocks} selectedId={selectedPath} onActivate={activateBlock} />
+            )}
+          </div>
+        ) : (
         <div className="min-h-0 flex-1 overflow-y-auto rounded-[10px] border border-border">
           <table className="w-full border-collapse">
             <thead className="sticky top-0 bg-panel">
@@ -307,8 +425,11 @@ export function ExplorerView({
             </tbody>
           </table>
         </div>
+        )}
         <p className="pt-2 text-[12px] text-muted">
-          Double-click a folder to open it. Select any row to see its classification and details.
+          {mode === "map"
+            ? "Block size is the item's size. Click a folder to open it; click a file to inspect it."
+            : "Double-click a folder to open it. Select any row to see its classification and details."}
           {currentPath.replace(/[\\/]+$/, "").toLowerCase() !== rootPath.replace(/[\\/]+$/, "").toLowerCase() ? (
             <>
               {" "}
@@ -330,10 +451,18 @@ export function ExplorerView({
           subtitle={<span className="mono-path block text-subtle">{displayPath(selected.path, homeDir)}</span>}
           onClose={() => setSelectedPath(null)}
           footer={
-            <Button variant="secondary" className="w-full" onClick={() => void reveal(selected.path)}>
-              <FolderOpen className="size-4" aria-hidden="true" />
-              Reveal in Explorer
-            </Button>
+            <div className="space-y-2">
+              <Button variant="secondary" className="w-full" onClick={() => void reveal(selected.path)}>
+                <FolderOpen className="size-4" aria-hidden="true" />
+                Reveal in Explorer
+              </Button>
+              {selectedInCloud && cloud ? (
+                <Button variant="secondary" className="w-full" onClick={() => setFreeUpOpen(true)}>
+                  <CloudUpload className="size-4" aria-hidden="true" />
+                  Free up space
+                </Button>
+              ) : null}
+            </div>
           }
         >
           <div>
@@ -341,6 +470,24 @@ export function ExplorerView({
             <DetailRow label="Type">{selected.kind === "folder" ? "Folder" : "File"}</DetailRow>
             <DetailRow label="Category"><CategoryBadge category={selected.category} /></DetailRow>
           </div>
+          {mediaInfo && (mediaInfo.width || mediaInfo.height || mediaInfo.make || mediaInfo.model || mediaInfo.takenAtMs) ? (
+            <div className="mt-4 border-t border-border pt-3">
+              <h4 className="pb-2 text-[12px] font-semibold text-foreground">Media</h4>
+              {mediaInfo.width && mediaInfo.height ? (
+                <DetailRow label="Dimensions">
+                  <span className="tabular">{mediaInfo.width} × {mediaInfo.height}</span>
+                </DetailRow>
+              ) : null}
+              {mediaInfo.make || mediaInfo.model ? (
+                <DetailRow label="Camera">
+                  {[mediaInfo.make, mediaInfo.model].filter(Boolean).join(" ")}
+                </DetailRow>
+              ) : null}
+              {mediaInfo.takenAtMs ? (
+                <DetailRow label="Captured">{formatDate(mediaInfo.takenAtMs)}</DetailRow>
+              ) : null}
+            </div>
+          ) : null}
           {classification ? (
             <div className="mt-4 border-t border-border pt-3">
               <h4 className="pb-2 text-[12px] font-semibold text-foreground">Classification</h4>
@@ -356,6 +503,30 @@ export function ExplorerView({
             </div>
           ) : null}
         </DetailsPanel>
+      ) : null}
+
+      {cloud && selected && selectedInCloud ? (
+        <FreeUpSpaceDialog
+          open={freeUpOpen}
+          provider={cloud.provider}
+          paths={[selected.path]}
+          bytes={selected.bytes}
+          onClose={() => setFreeUpOpen(false)}
+          onDone={(result) => {
+            if (result.failed.length > 0) {
+              setBanner({
+                kind: "error",
+                message: `Could not free up space: ${result.failed[0].error}`,
+              });
+            } else {
+              setBanner({
+                kind: "success",
+                message: `${selected.name} is now online-only in ${cloud.provider}. It downloads again when opened.`,
+              });
+            }
+            void api.getCloudStatus().then(setCloud);
+          }}
+        />
       ) : null}
     </div>
   );

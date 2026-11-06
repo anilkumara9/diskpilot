@@ -27,6 +27,28 @@ based on Keep a Changelog, and the project follows semantic versioning.
 - **Quick Search window** — a global Ctrl+Shift+Space shortcut
   toggles a compact, always-on-top search popup over the current
   scan index; it hides when it loses focus.
+- **Drives** — every mounted drive is enumerated with its total and
+  free space, so multi-drive PCs get a per-volume picture.
+- **Previous Windows installation** — a `Windows.old` folder at the
+  scan root is reported as a guided-only recommendation carrying the
+  removal route through Windows' own storage tools; DiskPilot never
+  deletes it (the planner rejects it and the safety gate treats the
+  location as report-only).
+- **Big files, long forgotten** — a fifth Clean Up card: any file of
+  at least 500 MB untouched for over 180 days that no other card
+  claims.
+- **OneDrive awareness** — the local OneDrive folder is detected and
+  its on-disk footprint read from the scan; selected files and
+  folders can be marked online-only ("free up space"), asking
+  OneDrive to evict the local copies without deleting anything.
+- **Recycle Bin restore + whole-bin empty** — a recycled item can be
+  restored to its original location (refused when something already
+  sits there), and the whole bin can be emptied in one shell
+  operation alongside the existing item-by-item removal.
+- **Tray digest** — once a scan exists, the tray menu is headed by a
+  "{reclaimable} can be cleaned" readout from the last scan.
+- **Report export** — a standalone HTML storage report can be saved
+  through the native save dialog.
 
 ## [0.5.1] — 2026-11-06 — Windows release
 

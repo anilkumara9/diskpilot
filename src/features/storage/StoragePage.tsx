@@ -13,7 +13,7 @@ import { LargeFilesPage } from "@/features/large-files/LargeFilesPage";
 import { SearchResults, type ActiveSearch } from "@/features/storage/SearchResults";
 import { cn } from "@/lib/utils";
 
-export type StorageTab = "folders" | "largest";
+export type StorageTab = "folders" | "largest" | "map";
 
 export function StorageTabs({
   tab,
@@ -25,6 +25,7 @@ export function StorageTabs({
   const tabs: { id: StorageTab; label: string }[] = [
     { id: "folders", label: "Folders" },
     { id: "largest", label: "Largest items" },
+    { id: "map", label: "Map" },
   ];
   return (
     <div role="tablist" aria-label="Storage views" className="flex gap-1 rounded-md bg-panel-raised p-1">
@@ -206,7 +207,11 @@ export function StoragePage() {
             />
           ) : (
             <div className="min-h-0 flex-1">
-              <ExplorerView rootPath={summary.root} embedded />
+              <ExplorerView
+                rootPath={summary.root}
+                embedded
+                mode={tab === "map" ? "map" : "list"}
+              />
             </div>
           )}
         </>
