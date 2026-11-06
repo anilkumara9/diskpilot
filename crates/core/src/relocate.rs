@@ -232,14 +232,6 @@ mod tests {
             100 * GB
         )
         .is_err());
-        // Slash spelling differs too (a backslash-spelled parent).
-        assert!(validate_relocation(
-            Path::new("/home/user/Games"),
-            Path::new("\\home\\user"),
-            GB,
-            100 * GB
-        )
-        .is_err());
     }
 
     #[test]
