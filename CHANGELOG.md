@@ -48,6 +48,10 @@ based on Keep a Changelog, and the project follows semantic versioning.
   "{reclaimable} can be cleaned" readout from the last scan.
 - **Report export** — a standalone HTML storage report can be saved
   through the native save dialog.
+- **Health page** — every drive judged by the room it has left
+  (Healthy / Getting low / Low space), the fill-up forecast with its
+  growth chart (scanned size and free space across the scan history),
+  and the watch configuration at a glance.
 - **Media summary** — photos, videos and screenshots are totalled
   from the scan index (allocated bytes and file counts, classified
   with the same kind rules as file search; screenshots are a subset
@@ -57,6 +61,14 @@ based on Keep a Changelog, and the project follows semantic versioning.
   `appmanifest_*.acf` sizes, Epic `.item` manifests), reporting every
   game's on-disk size per library; games whose Steam manifest has no
   recorded size are measured directly.
+
+### Changed
+
+- **Interface** — full design-system upgrade pass across every page:
+  the Overview was recomposed around its new sections, the sidebar
+  regrouped (Overview and Health on top; Analyze, System and Clean up
+  groups), and the treemap, biggest-changes panel, forecast card and
+  settings forms were brought to one finish.
 
 ## [0.5.1] — 2026-11-06 — Windows release
 

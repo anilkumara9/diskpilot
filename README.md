@@ -60,6 +60,15 @@ Scans you start yourself never raise alerts. An optional **launch at
 sign-in** setting starts DiskPilot in the tray automatically, so the
 watch is on whenever you are signed in.
 
+### Health
+
+One page that answers "is this PC okay?": every drive with a plain
+status — *Healthy*, *Getting low*, *Low space* — judged by the room it
+has left, the fill-up forecast with the growth chart behind it
+(scanned size and free space across your scan history), and the watch
+as configured: schedule, alert thresholds, and how many scans of
+history the trend rests on.
+
 ### Storage explorer & natural-language search
 
 Drill into the scanned tree with breadcrumbs, sorting, and a details
@@ -121,6 +130,16 @@ hashing. Look-alikes can't be byte-verified by definition, so that tab
 is review-only — one copy always stays, and deletion stays with the
 byte-verified flow.
 
+### Media
+
+Photos and videos usually hold the space that matters, so they get
+their own page: totals for photos, videos, and screenshots (a subset
+of photos, labelled as such), and the 15 biggest files of each kind
+with their dates. The counts use exactly the same kind rules as
+search, so the two never disagree. A look-alike strip counts the
+near-duplicate photos the perceptual scan found and takes you
+straight to them in Duplicates.
+
 ### Clean Up — tiers, cards, plans
 
 Classification becomes recommendations in three risk tiers: *Likely
@@ -139,6 +158,15 @@ warnings, and any items the safety gate rejected. Plans are single-use
 and expire after 10 minutes. The default action is *Move to Recycle
 Bin*; *Permanently delete* is offered only when every item in the plan
 is regenerable, and card plans are Recycle-Bin-only by construction.
+
+### Games
+
+Games are read from the launchers' own records — Steam's
+`libraryfolders.vdf` and app manifests, Epic's `.item` manifests —
+and listed per library with the size each game takes: the size the
+launcher recorded, or a direct measurement where it recorded none.
+The page is report-only: uninstalling stays with Steam or Epic, and
+DiskPilot never removes game files.
 
 ### Developer Tools
 
