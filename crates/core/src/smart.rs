@@ -197,9 +197,19 @@ pub fn health_from_ata(
     // Life left: attribute 231's *normalized* value when a drive
     // reports it with SSD-life semantics (100 = new .. 0 = spent);
     // values outside 1..=100 are not life readings and are ignored.
-    let life_left_percent = ata_attr(attrs, 231)
-        .map(|a| u32::from(a.current))
-        .filter(|v| (1..=100).contains(v));
+    // Attribute 231 is dual-use across vendors — temperature on some
+    // drives, SSD life left on others — so a single 231 reading can
+    // never be read as both at once. Life is only sourced from 231
+    // when attribute 194 is present and temperature is independently
+    // secured; when 194 is absent, 231's raw byte is the temperature
+    // fallback above and its normalized value means nothing here.
+    let life_left_percent = if ata_attr(attrs, 194).is_some() {
+        ata_attr(attrs, 231)
+            .map(|a| u32::from(a.current))
+            .filter(|v| (1..=100).contains(v))
+    } else {
+        None
+    };
     let reallocated_sectors = ata_attr(attrs, 5).map(|a| a.raw);
     let power_on_hours = ata_attr(attrs, 9).map(|a| a.raw);
     let power_cycles = ata_attr(attrs, 12).map(|a| a.raw);
@@ -276,7 +286,10 @@ mod tests {
         write_attr(1, 9, 98, 98, 12_345); // power-on hours
         write_attr(2, 12, 99, 99, 432); // power cycles
         write_attr(3, 194, 64, 40, 41); // temperature 41 C
-        write_attr(4, 231, 87, 87, 41); // life-left semantics: current 87
+        // Life-left semantics: normalized 87. The raw byte is 0 (not
+        // reported): temperature comes from 194 above, never from
+        // this same attribute.
+        write_attr(4, 231, 87, 87, 0);
         data
     }
 
@@ -334,6 +347,26 @@ mod tests {
         // A predicted failure alone is Critical even with no vitals.
         let h2 = health_from_ata("Mystery", "USB", 0, &[], true);
         assert_eq!(h2.status, HealthStatus::Critical);
+    }
+
+    #[test]
+    fn ata_231_alone_is_temperature_never_life() {
+        // Panel repro: a drive reporting ONLY attribute 231, with
+        // temperature semantics (raw low byte 45). Sourcing life
+        // from the same reading would take the normalized value 10
+        // as "10% life left" and call this healthy-temperature
+        // drive Critical. 231 alone is temperature, never life.
+        let attrs = vec![AtaAttribute {
+            id: 231,
+            current: 10,
+            worst: 10,
+            raw: 45,
+        }];
+        let h = health_from_ata("Solo 231", "SATA", 0, &attrs, false);
+        assert_eq!(h.temperature_c, Some(45));
+        assert_eq!(h.life_left_percent, None);
+        assert_ne!(h.status, HealthStatus::Critical);
+        assert_eq!(h.status, HealthStatus::Healthy);
     }
 
     #[test]
