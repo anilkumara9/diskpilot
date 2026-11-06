@@ -124,6 +124,46 @@ based on Keep a Changelog, and the project follows semantic versioning.
   scan's allocated bytes and file counts per file extension
   (extensionless files grouped together), with the largest files of
   any type one click away.
+- **App caches** — the Cleanup page measures a curated rule set of
+  known, regenerable per-app cache locations (Discord, Slack, Teams,
+  Chrome, Edge, Firefox, VS Code, NVIDIA shader and driver-download
+  caches, the DirectX shader cache, Windows Update downloads,
+  Explorer thumbnail/icon caches) and cleans them per app or all at
+  once. Only cache locations are ever listed — never profiles,
+  history, cookies or offline data — overlapping locations are
+  counted once, very deep cache trees are flagged as truncated
+  rather than walked forever, and cleaning re-validates the rule
+  set on the machine side and moves files to the Recycle Bin.
+- **Drive health (SMART)** — the Health page reads every physical
+  drive's self-monitoring data (ATA SMART attributes or the NVMe
+  health log): SSD life left, temperature, power-on hours, power
+  cycles, reallocated sectors, and a Healthy / Caution / Critical
+  verdict — including a plain "likely to fail, back up now" warning
+  when a drive predicts its own failure. Values a drive does not
+  report are shown as not reported, never guessed.
+- **Software updates** — the Applications page can check `winget`
+  for installed apps with a newer version available (current →
+  available per app, including apps whose installed version winget
+  reports as unknown) and run the upgrade for one app or all of
+  them, with each result reported as it actually came back. A
+  machine without winget gets an honest unavailable state.
+- **Move to another drive** — a big folder (from Storage or Games)
+  can be relocated to another drive: the copy is verified
+  file-for-file (count and allocated bytes) before the original is
+  replaced with a directory junction, so apps keep working at the
+  old path. Protected folders are refused, the destination needs
+  the folder's size plus headroom, any failure leaves the original
+  untouched, and every move is recorded in History with an undo
+  that reverses it the same verified way.
+- **Automatic maintenance** — on the Watch schedule, DiskPilot can
+  permanently clear only Recycle Bin items and temporary files
+  older than a configurable age (at least a day), through the same
+  safety gate as manual cleanup; an item exactly at the age limit
+  is kept, and every run is recorded in History.
+- **Explorer integration** — an optional per-user right-click entry,
+  *Analyze with DiskPilot*, for folders and drives: it opens
+  DiskPilot already scanning that location. Off by default;
+  turning it off removes the entry.
 
 ### Changed
 
@@ -243,6 +283,40 @@ based on Keep a Changelog, and the project follows semantic versioning.
   of pretending the change stuck; muted text meets contrast
   targets in the light theme; duplicate totals no longer count
   hard-linked copies as reclaimable.
+- **NVMe health reads use the documented request geometry** — the
+  protocol-command request now matches the platform header layout
+  (header length, adapter-request flag, command and data offsets),
+  and a response counts as read only when the driver reports
+  success in its status field; a drive that will not answer gets
+  an honest Unknown instead of zeroed vitals.
+- **ATA temperature/life disambiguation** — attribute 231 is
+  dual-use across vendors (SSD life left on some drives, a
+  temperature reading on others): a drive reporting only 231 no
+  longer reads its temperature byte as a life percentage (which
+  could verdict a healthy drive Critical); life is taken from 231
+  only when attribute 194 independently secures the temperature.
+- **CSV export hardening** — both CSV exports now start with a
+  UTF-8 byte-order mark so Excel detects the encoding, and any
+  field beginning with `=`, `+`, `-`, `@`, a tab or a carriage
+  return is prefixed so a crafted file name cannot become a
+  spreadsheet formula; quoting and round-trip fidelity are
+  unchanged for ordinary fields.
+- **Move rollback is byte-verified** — if a folder move has to
+  roll back, the restored copy is verified to the same standard
+  as the move itself before the working copy is removed, so a
+  rollback can never silently return less than it took.
+- **Launch intent fires once** — a scan path handed over by the
+  Explorer entry (or a second launch) is delivered exactly once,
+  even when the app was already running; a repeated delivery can
+  no longer restart a scan the user already saw start.
+- **Updates error state** — if checking for software updates
+  fails, the Applications page shows the failure with a retry
+  instead of an empty "everything is up to date" list.
+- **winget parsing hardening** — localized `winget upgrade`
+  output (whose headers are not English) is parsed from the
+  table's separator geometry, and rows whose package id winget
+  itself truncated with an ellipsis are dropped rather than
+  offered as updatable packages.
 
 ## [0.5.1] — 2026-11-06 — Windows release
 

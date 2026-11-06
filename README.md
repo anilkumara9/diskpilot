@@ -87,6 +87,14 @@ Scans you start yourself never raise alerts. An optional **launch at
 sign-in** setting starts DiskPilot in the tray automatically, so the
 watch is on whenever you are signed in.
 
+**Automatic maintenance** is the set-and-forget companion: on the
+watch's schedule it permanently clears only what is already safe to
+lose — Recycle Bin items older than the age you set, and temporary
+files older than that age from the last scan — through the same
+safety gate as a manual cleanup. Nothing else is ever touched, an
+item exactly at the age limit is kept, and every run is recorded in
+History with what it removed.
+
 ### Fast scans & a live index (NTFS)
 
 When DiskPilot runs with administrator rights and the scan target is a
@@ -117,6 +125,14 @@ has left, the fill-up forecast with the growth chart behind it
 (scanned size and free space across your scan history), and the watch
 as configured: schedule, alert thresholds, and how many scans of
 history the trend rests on.
+
+The same page reads each physical drive's own **SMART health**:
+SSD life left, temperature, power-on hours, power cycles and
+reallocated sectors, rolled into a *Healthy* / *Caution* / *Critical*
+verdict from the drive's self-monitoring data (ATA attributes or the
+NVMe health log, whichever the drive speaks). A drive that reports
+it is likely to fail says so in plain words — back up now. Values a
+drive does not report are shown as *Not reported*, never guessed.
 
 ### Storage explorer & natural-language search
 
@@ -240,6 +256,17 @@ report-only folders are never offered, already-compressed folders are
 filtered out, and the folder is re-validated through the safety gate
 at action time.
 
+**App caches** names the junk that generic temp rules cannot see: a
+curated rule set measures the known, regenerable cache locations of
+the apps people actually run — Discord, Slack, Teams, Chrome, Edge,
+Firefox, VS Code, NVIDIA's shader and driver-download caches, the
+DirectX shader cache, Windows Update downloads, and Explorer's
+thumbnail and icon caches. Only cache locations are ever listed —
+never profiles, history, cookies or offline data — each app shows
+its measured allocated size, and cleaning re-validates the exact
+rule set on the machine side and moves the files to the Recycle Bin,
+so a group can always be brought back.
+
 ### Games
 
 Games are read from the launchers' own records — Steam's
@@ -248,6 +275,19 @@ and listed per library with the size each game takes: the size the
 launcher recorded, or a direct measurement where it recorded none.
 The page is report-only: uninstalling stays with Steam or Epic, and
 DiskPilot never removes game files.
+
+### Move to another drive
+
+When one drive is full and another has room, a big folder — a game,
+a media library, a project tree — can be **moved to another drive**
+from Storage or Games. DiskPilot copies the folder, verifies the
+copy file-for-file (count and allocated bytes must match), and only
+then replaces the original with a directory junction, so every app
+keeps finding it at the old path. Protected and system folders are
+refused, the destination must have the folder's size plus headroom,
+and a failed copy or verification leaves the original untouched.
+Every move is recorded in History with an **Undo move** that brings
+the folder back the same verified way.
 
 ### Developer Tools
 
@@ -271,6 +311,19 @@ before it runs. Volumes are never removed. A WSL2 diagnostic compares
 the Docker virtual disk's file size with Docker's own reclaimable
 figure and shows the manual compaction steps; it never runs them for
 you.
+
+### Applications & software updates
+
+Installed applications with their install locations and the size of
+the data each one keeps in AppData — including leftover folders from
+apps that were uninstalled, reported for review and never removed
+automatically. **Check for updates** asks `winget` which installed
+apps have a newer version available and lists each with its current
+and available versions; updating one app (or all of them) runs
+winget's own upgrade for exactly the listed package ids, and each
+result is reported as it actually came back — an app whose update
+fails says so. If winget is not available on the machine, the
+section says that instead of pretending to check.
 
 ### Startup
 
@@ -330,6 +383,12 @@ anywhere. **Exclusions** — folder names or wildcard patterns, one per
 line — keep paths out of scans entirely. Settings, the last scan
 snapshot, and the history database all live in
 `%APPDATA%\dev.diskpilot.windows`.
+
+**Explorer integration** (off by default) adds an *Analyze with
+DiskPilot* entry to the right-click menu for folders and drives:
+choosing it opens DiskPilot already scanning that location. It is a
+per-user registration — no administrator rights, and turning the
+setting off removes it.
 
 ## Screenshots
 
