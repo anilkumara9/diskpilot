@@ -11,6 +11,7 @@ mod live;
 mod ocr;
 mod recycle_bin;
 mod scan_history;
+mod startup;
 mod tray;
 mod tray_icon;
 mod watch;
@@ -426,6 +427,12 @@ pub fn run() {
             commands::get_cloud_status,
             commands::get_media_summary,
             commands::get_games,
+            commands::get_startup_items,
+            commands::set_startup_item_enabled,
+            commands::get_compression_candidates,
+            commands::set_folder_compression,
+            commands::get_extension_stats,
+            commands::get_extension_files,
             commands::free_up_space,
             commands::export_report,
             commands::scan_transcript_secrets,

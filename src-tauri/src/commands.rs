@@ -69,7 +69,8 @@ use diskpilot_core::history::HistoryStore;
 use diskpilot_core::snapshot_diff::{diff_snapshots, BiggestChanges, SnapshotView};
 use diskpilot_core::model::{
     now_ms, AppEntry, Category, Classification, CleanupFailure, CleanupPlan, CleanupResult,
-    DiskInfo, DuplicateGroup, HistoryEntry, Recommendation, ScanSummary, SecretFinding, ToolReport,
+    DiskInfo, DuplicateGroup, FileEntry, HistoryEntry, Recommendation, ScanSummary, SecretFinding,
+    ToolReport,
 };
 use diskpilot_core::safety::SafetyContext;
 use diskpilot_core::scanner::{ProgressCallback, ScanProgress, Scanner};
@@ -1452,6 +1453,343 @@ pub async fn free_up_space(
     tauri::async_runtime::spawn_blocking(move || diskpilot_core::cloud::free_up_space(&paths))
         .await
         .map_err(|e| format!("background task failed: {e}"))?
+}
+
+/// Per-extension totals over the current scan index (largest
+/// first, at most 100 groups). Empty until a scan has run — the
+/// Types view shows its empty state.
+#[tauri::command]
+pub fn get_extension_stats(
+    state: State<'_, ShellState>,
+) -> CmdResult<Vec<diskpilot_core::extensions::ExtensionStat>> {
+    let engine = state
+        .engine
+        .lock()
+        .map_err(|_| "engine lock poisoned".to_string())?;
+    let Some(index) = engine.index.as_ref() else {
+        return Ok(Vec::new());
+    };
+    Ok(diskpilot_core::extensions::extension_stats(index, 100))
+}
+
+/// The current index's largest files carrying one extension (the
+/// bare extension, `""` for files with none), at most 100. Empty
+/// until a scan has run.
+#[tauri::command]
+pub fn get_extension_files(
+    state: State<'_, ShellState>,
+    extension: String,
+) -> CmdResult<Vec<FileEntry>> {
+    let engine = state
+        .engine
+        .lock()
+        .map_err(|_| "engine lock poisoned".to_string())?;
+    let Some(index) = engine.index.as_ref() else {
+        return Ok(Vec::new());
+    };
+    Ok(diskpilot_core::extensions::largest_files_with_extension(
+        index, &extension, 100,
+    ))
+}
+
+// ---------------------------------------------------------------------------
+// Startup manager
+// ---------------------------------------------------------------------------
+
+/// The programs registered to run at sign-in (registry Run /
+/// RunOnce values and Startup-folder items), enabled and disabled,
+/// with each command's target resolved against the disk. See
+/// `crate::startup`.
+#[tauri::command]
+pub async fn get_startup_items() -> CmdResult<Vec<crate::startup::StartupItem>> {
+    blocking_value(crate::startup::list_items).await
+}
+
+/// Enable or disable one startup entry. The shell re-enumerates
+/// and matches by the opaque `id` (`crate::startup::set_enabled`) —
+/// the webview never names the registry key or file to move. The
+/// change is recorded to History.
+#[tauri::command]
+pub async fn set_startup_item_enabled(
+    state: State<'_, ShellState>,
+    id: String,
+    enabled: bool,
+) -> CmdResult<()> {
+    let item = blocking_value(move || crate::startup::set_enabled(&id, enabled)).await??;
+    let detail = format!(
+        "{} startup entry \"{}\"",
+        if enabled { "Enabled" } else { "Disabled" },
+        item.name
+    );
+    let _ = with_history(&state, |history| {
+        history
+            .record_action(
+                now_ms(),
+                "startup",
+                &[],
+                0,
+                &[],
+                Some(&detail),
+                diskpilot_core::history::RemovedItemMode::Permanent,
+            )
+            .map(|_| ())
+    });
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// NTFS compression
+// ---------------------------------------------------------------------------
+
+/// One compression candidate as the Cleanup page consumes it: the
+/// core's index-derived candidate plus the folder's live
+/// compression attribute.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CompressionCandidateDto {
+    pub path: String,
+    pub bytes: u64,
+    pub file_count: u64,
+    pub newest_modified_ms: i64,
+    pub compressed: bool,
+}
+
+/// Big, cold folders from the current scan that NTFS compression
+/// could shrink in place. Folders already compressed are excluded
+/// (the shell checks each candidate's live attribute). Empty until
+/// a scan has run.
+#[tauri::command]
+pub fn get_compression_candidates(
+    state: State<'_, ShellState>,
+) -> CmdResult<Vec<CompressionCandidateDto>> {
+    let engine = state
+        .engine
+        .lock()
+        .map_err(|_| "engine lock poisoned".to_string())?;
+    let Some(index) = engine.index.as_ref() else {
+        return Ok(Vec::new());
+    };
+    Ok(
+        diskpilot_core::compress::compression_candidates(index)
+            .into_iter()
+            .map(|c| CompressionCandidateDto {
+                compressed: dir_is_compressed(&c.path),
+                path: c.path,
+                bytes: c.bytes,
+                file_count: c.file_count,
+                newest_modified_ms: c.newest_modified_ms,
+            })
+            .filter(|dto| !dto.compressed)
+            .collect(),
+    )
+}
+
+/// Whether a directory carries `FILE_ATTRIBUTE_COMPRESSED`
+/// (Windows). Off Windows there is no NTFS attribute to read:
+/// `false`.
+#[cfg(windows)]
+fn dir_is_compressed(path: &str) -> bool {
+    use std::os::windows::ffi::OsStrExt;
+
+    #[link(name = "Kernel32")]
+    extern "system" {
+        fn GetFileAttributesW(file_name: *const u16) -> u32;
+    }
+
+    const FILE_ATTRIBUTE_COMPRESSED: u32 = 0x0000_0800;
+    const INVALID_FILE_ATTRIBUTES: u32 = 0xFFFF_FFFF;
+    let wide: Vec<u16> = Path::new(path)
+        .as_os_str()
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect();
+    let attrs = unsafe { GetFileAttributesW(wide.as_ptr()) };
+    attrs != INVALID_FILE_ATTRIBUTES && attrs & FILE_ATTRIBUTE_COMPRESSED != 0
+}
+
+#[cfg(not(windows))]
+fn dir_is_compressed(_path: &str) -> bool {
+    false
+}
+
+/// Outcome of a `set_folder_compression` call that passed
+/// validation: `ok` with `error: None`, or the `compact.exe`
+/// failure in `error`. Validation failures (and non-Windows
+/// hosts) reject the command itself instead.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CompressionOutcome {
+    pub path: String,
+    pub ok: bool,
+    pub error: Option<String>,
+}
+
+/// Compress or decompress one folder in place with NTFS
+/// compression (`compact.exe`): nothing is deleted, the folder
+/// keeps working, and the change is fully reversible by calling
+/// again with the opposite flag. The path is validated with the
+/// same safety context cleanup uses (inside the scan root or the
+/// profile, not protected, not report-only) plus an
+/// exists-and-is-a-folder check. The action is recorded to
+/// History with the subtree size the last scan recorded.
+#[tauri::command]
+pub async fn set_folder_compression(
+    state: State<'_, ShellState>,
+    path: String,
+    compress: bool,
+) -> CmdResult<CompressionOutcome> {
+    #[cfg(not(windows))]
+    {
+        let _ = (&state, &path, compress);
+        Err("NTFS compression is Windows-only".to_string())
+    }
+    #[cfg(windows)]
+    {
+        let target = Path::new(&path);
+        let metadata = std::fs::metadata(target)
+            .map_err(|_| format!("that folder no longer exists: {path}"))?;
+        if !metadata.is_dir() {
+            return Err(format!("that path is not a folder: {path}"));
+        }
+        let ctx = SafetyContext::new(state.scan_root());
+        safety::validate(target, &ctx).map_err(err)?;
+        let known_bytes = state
+            .engine
+            .lock()
+            .ok()
+            .and_then(|engine| {
+                engine
+                    .index
+                    .as_ref()
+                    .map(|index| index.size_of(&path))
+            })
+            .filter(|bytes| *bytes > 0);
+        let to_run = path.clone();
+        let outcome =
+            blocking_value(move || run_compact(&to_run, compress)).await?;
+        let detail = match known_bytes {
+            Some(bytes) => format!(
+                "{} {path} ({bytes} bytes in the last scan)",
+                if compress {
+                    "Compressed folder"
+                } else {
+                    "Removed compression from folder"
+                }
+            ),
+            None => format!(
+                "{} {path}",
+                if compress {
+                    "Compressed folder"
+                } else {
+                    "Removed compression from folder"
+                }
+            ),
+        };
+        let errors: Vec<String> = match &outcome.error {
+            Some(error) => vec![error.clone()],
+            None => Vec::new(),
+        };
+        let _ = with_history(&state, |history| {
+            history
+                .record_action(
+                    now_ms(),
+                    "compression",
+                    &[],
+                    0,
+                    &errors,
+                    Some(&detail),
+                    diskpilot_core::history::RemovedItemMode::Permanent,
+                )
+                .map(|_| ())
+        });
+        Ok(outcome)
+    }
+}
+
+/// Run `compact.exe` over one folder subtree as an argv vector
+/// (never through a shell), capturing output so a chatty run over
+/// a big tree cannot deadlock on a full pipe, with a 10-minute
+/// ceiling after which the process is killed and the outcome
+/// reports the folder may be partly processed.
+#[cfg(windows)]
+fn run_compact(path: &str, compress: bool) -> CompressionOutcome {
+    use std::io::Read;
+    use std::process::{Command, Stdio};
+    use std::time::{Duration, Instant};
+
+    let fail = |error: String| CompressionOutcome {
+        path: path.to_string(),
+        ok: false,
+        error: Some(error),
+    };
+    let flag = if compress { "/C" } else { "/U" };
+    let subtree = format!("/S:{path}");
+    let mut child = match Command::new("compact.exe")
+        .args([flag, &subtree, "/I", "/Q"])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+    {
+        Ok(child) => child,
+        Err(e) => return fail(format!("could not run compact.exe: {e}")),
+    };
+    let mut out_pipe = child.stdout.take();
+    let out_thread = std::thread::spawn(move || {
+        let mut buf = Vec::new();
+        if let Some(pipe) = out_pipe.as_mut() {
+            let _ = pipe.read_to_end(&mut buf);
+        }
+        buf
+    });
+    let mut err_pipe = child.stderr.take();
+    let err_thread = std::thread::spawn(move || {
+        let mut buf = Vec::new();
+        if let Some(pipe) = err_pipe.as_mut() {
+            let _ = pipe.read_to_end(&mut buf);
+        }
+        buf
+    });
+    let deadline = Instant::now() + Duration::from_secs(600);
+    let status = loop {
+        match child.try_wait() {
+            Ok(Some(status)) => break status,
+            Ok(None) => {
+                if Instant::now() >= deadline {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    return fail(
+                        "compact.exe did not finish within 10 minutes; the folder may be partly processed"
+                            .to_string(),
+                    );
+                }
+                std::thread::sleep(Duration::from_millis(200));
+            }
+            Err(e) => return fail(format!("could not wait for compact.exe: {e}")),
+        }
+    };
+    let stdout = out_thread.join().unwrap_or_default();
+    let stderr = err_thread.join().unwrap_or_default();
+    if status.success() {
+        return CompressionOutcome {
+            path: path.to_string(),
+            ok: true,
+            error: None,
+        };
+    }
+    let mut detail = String::from_utf8_lossy(&stderr).trim().to_string();
+    if detail.is_empty() {
+        detail = String::from_utf8_lossy(&stdout).trim().to_string();
+    }
+    let tail: String = {
+        let chars: Vec<char> = detail.chars().collect();
+        let start = chars.len().saturating_sub(300);
+        chars[start..].iter().collect()
+    };
+    fail(if tail.is_empty() {
+        format!("compact.exe exited with {status}")
+    } else {
+        format!("compact.exe exited with {status}: {tail}")
+    })
 }
 
 /// Save an HTML storage report through the native save dialog
