@@ -3,6 +3,7 @@ import { Copy, FolderOpen, Images, ShieldCheck } from "lucide-react";
 import * as api from "@/lib/api";
 import { useAppStore } from "@/lib/store";
 import { basename, displayPath, formatBytes, formatCount, formatDate } from "@/lib/format";
+import { smartSelect, type SmartSelectRule } from "@/lib/smartSelect";
 import { tabIndexForKey } from "@/lib/tabs";
 import type {
   CleanupFailure,
@@ -226,6 +227,17 @@ function ExactDuplicatesView({
     return out;
   }, [groups, selected, keepers]);
 
+  /** One-click keeper rule: picks the keeper in every group and
+      selects every other copy. The selection still goes through
+      the review dialog and byte-for-byte re-verification — the
+      rule only saves the clicking. */
+  const applySmartSelect = (rule: SmartSelectRule) => {
+    if (!groups) return;
+    const result = smartSelect(groups, rule);
+    setKeepers(result.keepers);
+    setSelected(result.selected);
+  };
+
   const chooseKeeper = (group: DuplicateGroup, path: string) => {
     setKeepers((prev) => ({ ...prev, [group.hash]: path }));
     setSelected((prev) => {
@@ -347,6 +359,29 @@ function ExactDuplicatesView({
               {groups.length} groups · up to <span className="font-medium tabular text-foreground">{formatBytes(wastedTotal)}</span> wasted.
               Pick the copy to keep in each group; one copy always stays.
             </p>
+            <div className="flex flex-wrap items-center gap-1.5 pb-3">
+              <span className="text-[12px] text-muted">Select copies:</span>
+              <Button variant="subtle" size="sm" onClick={() => applySmartSelect("newest")}>
+                Keep newest
+              </Button>
+              <Button variant="subtle" size="sm" onClick={() => applySmartSelect("oldest")}>
+                Keep oldest
+              </Button>
+              <Button variant="subtle" size="sm" onClick={() => applySmartSelect("shortestPath")}>
+                Keep shortest path
+              </Button>
+              <Button
+                variant="subtle"
+                size="sm"
+                disabled={selected.size === 0}
+                onClick={() => setSelected(new Set())}
+              >
+                Clear
+              </Button>
+              <span className="ml-auto text-[12px] tabular text-muted" aria-live="polite">
+                {formatBytes(selectedBytes)} reclaimable
+              </span>
+            </div>
             {groups.map((group) => {
               const keeper = keepers[group.hash] ?? group.files[0]?.path;
               const wasted = groupWastedBytes(group, keeper);

@@ -109,7 +109,7 @@ mod tests {
         }
     }
 
-    fn index(files: Vec<FileEntry>) -> DirIndex {
+    fn make_index(files: Vec<FileEntry>) -> DirIndex {
         DirIndex {
             files,
             ..DirIndex::default()
@@ -118,7 +118,7 @@ mod tests {
 
     #[test]
     fn case_folds_and_extensionless_files_group_under_empty() {
-        let index = index(vec![
+        let index = make_index(vec![
             entry(r"C:\Pics\a.JPG", 100),
             entry(r"C:\Pics\b.jpg", 50),
             entry(r"C:\Pics\c.Jpeg", 30),
@@ -152,7 +152,7 @@ mod tests {
 
     #[test]
     fn stats_sort_by_bytes_then_extension_and_honour_the_limit() {
-        let index = index(vec![
+        let index = make_index(vec![
             entry(r"C:\x\a.bin", 100),
             entry(r"C:\x\b.dat", 100),
             entry(r"C:\x\c.zip", 300),
@@ -162,19 +162,19 @@ mod tests {
         assert_eq!(stats[0].extension, "zip");
         assert_eq!(stats[1].extension, "bin", "byte tie breaks by extension");
         assert!(extension_stats(&index, 0).is_empty());
-        assert!(extension_stats(&index(vec![]), 100).is_empty());
+        assert!(extension_stats(&make_index(vec![]), 100).is_empty());
     }
 
     #[test]
     fn largest_files_filters_sorts_and_limits() {
-        let index = index(vec![
+        let idx = make_index(vec![
             entry(r"C:\Vids\small.mp4", 10),
             entry(r"C:\Vids\big.mp4", 900),
             entry(r"C:\Vids\mid.MP4", 500),
             entry(r"C:\Vids\other.mkv", 5_000),
             entry(r"C:\Vids\also-big.mp4", 900),
         ]);
-        let found = largest_files_with_extension(&index, "mp4", 10);
+        let found = largest_files_with_extension(&idx, "mp4", 10);
         let paths: Vec<&str> = found.iter().map(|f| f.path.as_str()).collect();
         assert_eq!(
             paths,
@@ -186,14 +186,14 @@ mod tests {
             ]
         );
         // The query normalizes case and a leading dot.
-        assert_eq!(largest_files_with_extension(&index, ".MP4", 2).len(), 2);
+        assert_eq!(largest_files_with_extension(&idx, ".MP4", 2).len(), 2);
         assert_eq!(
-            largest_files_with_extension(&index, "MP4", 1)[0].path,
+            largest_files_with_extension(&idx, "MP4", 1)[0].path,
             r"C:\Vids\also-big.mp4"
         );
         // Extensionless lookup returns the extensionless files.
-        let bare = index(vec![entry(r"C:\x\LICENSE", 7), entry(r"C:\x\a.txt", 9)]);
+        let bare = make_index(vec![entry(r"C:\x\LICENSE", 7), entry(r"C:\x\a.txt", 9)]);
         assert_eq!(largest_files_with_extension(&bare, "", 10).len(), 1);
-        assert!(largest_files_with_extension(&index, "nope", 10).is_empty());
+        assert!(largest_files_with_extension(&idx, "nope", 10).is_empty());
     }
 }

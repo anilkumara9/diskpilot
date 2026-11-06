@@ -158,7 +158,6 @@ fn compression_candidates_at(index: &DirIndex, now: i64) -> Vec<CompressionCandi
 mod tests {
     use super::*;
     use crate::model::FileEntry;
-    use std::collections::HashMap;
 
     const NOW: i64 = 1_800_000_000_000;
     const OLD: i64 = NOW - 120 * DAY_MS; // comfortably past 90 days
