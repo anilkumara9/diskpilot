@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState, type KeyboardEvent } from "react";
 import { Check, FolderOpen, KeyRound, ShieldAlert, Trash2, X } from "lucide-react";
 import * as api from "@/lib/api";
 import { useAppStore } from "@/lib/store";
@@ -356,11 +356,17 @@ export function WatchSettings() {
   );
 }
 
+const FREQUENCY_OPTIONS = [
+  { id: "daily", label: "Daily" },
+  { id: "weekly", label: "Weekly" },
+] as const;
+
 export function MaintenanceSettings() {
   const settings = useAppStore((s) => s.settings);
   const updateSettings = useAppStore((s) => s.updateSettings);
   const maintenance = settings.autoMaintenance;
   const [ageDraft, setAgeDraft] = useState(() => String(maintenance.minAgeDays));
+  const frequencyRefs = useRef<(HTMLButtonElement | null)[]>([]);
 
   // Keep the draft in step with the stored value until edited.
   useEffect(() => {
@@ -375,6 +381,25 @@ export function MaintenanceSettings() {
     const clamped = clampMinAgeDays(Number(ageDraft));
     setAgeDraft(String(clamped));
     if (clamped !== maintenance.minAgeDays) apply({ minAgeDays: clamped });
+  };
+
+  /* APG radio pattern: arrow keys move the selection (wrapping)
+     and commit it through the same apply path as a click; focus
+     follows the newly selected option. */
+  const onFrequencyKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
+    const current = FREQUENCY_OPTIONS.findIndex((o) => o.id === maintenance.frequency);
+    let next: number;
+    if (event.key === "ArrowRight" || event.key === "ArrowDown") {
+      next = (current + 1) % FREQUENCY_OPTIONS.length;
+    } else if (event.key === "ArrowLeft" || event.key === "ArrowUp") {
+      next = (current - 1 + FREQUENCY_OPTIONS.length) % FREQUENCY_OPTIONS.length;
+    } else {
+      return;
+    }
+    event.preventDefault();
+    const option = FREQUENCY_OPTIONS[next];
+    if (option.id !== maintenance.frequency) apply({ frequency: option.id });
+    frequencyRefs.current[next]?.focus();
   };
 
   return (
@@ -401,18 +426,18 @@ export function MaintenanceSettings() {
               role="radiogroup"
               aria-label="Maintenance frequency"
               className="flex gap-1 rounded-md bg-panel-raised p-1"
+              onKeyDown={onFrequencyKeyDown}
             >
-              {(
-                [
-                  { id: "daily", label: "Daily" },
-                  { id: "weekly", label: "Weekly" },
-                ] as const
-              ).map((option) => (
+              {FREQUENCY_OPTIONS.map((option, index) => (
                 <button
                   key={option.id}
+                  ref={(el) => {
+                    frequencyRefs.current[index] = el;
+                  }}
                   type="button"
                   role="radio"
                   aria-checked={maintenance.frequency === option.id}
+                  tabIndex={maintenance.frequency === option.id ? 0 : -1}
                   onClick={() => apply({ frequency: option.id })}
                   className={cn(
                     "h-6 rounded-[5px] px-3 text-[12px] font-medium transition-colors duration-120",
@@ -506,7 +531,13 @@ export function ExplorerIntegrationSettings() {
     setActionError(null);
     try {
       await api.setExplorerIntegration(checked);
-      setEnabled(checked);
+      /* The switch shows the registration actually in effect,
+         so re-read it (the autostart pattern) rather than
+         trusting the requested value landed. If the re-read
+         fails, the error shows and the switch keeps its last
+         confirmed state. */
+      const applied = await api.getExplorerIntegration();
+      setEnabled(applied);
     } catch (err) {
       setActionError(
         err instanceof Error ? err.message : "The Explorer integration could not be changed.",

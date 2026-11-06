@@ -346,15 +346,99 @@ fn quicksearch_shortcut() -> tauri_plugin_global_shortcut::Shortcut {
 
 /// Extract a `--scan <path>` launch argument (the Explorer
 /// context-menu entry starts DiskPilot this way), if one is present
-/// and names a non-empty path.
+/// and names a non-empty path. The path is passed through
+/// `normalize_scan_path` first: Explorer's `%1` substitution can
+/// mangle it on the way in.
 fn scan_path_from_args(args: &[String]) -> Option<String> {
     let mut iter = args.iter();
     while let Some(arg) = iter.next() {
         if arg == "--scan" {
-            return iter.next().cloned().filter(|path| !path.is_empty());
+            return iter
+                .next()
+                .cloned()
+                .filter(|path| !path.is_empty())
+                .map(|path| normalize_scan_path(&path));
         }
     }
     None
+}
+
+/// Repair the manglings a shell-supplied path can arrive with.
+///
+/// The important one is the drive root: the context menu runs
+/// `DiskPilot --scan "%1"`, and for a drive root `%1` is `C:\` —
+/// the trailing backslash escapes the closing quote under the
+/// standard command-line parsing rules, so the argument that
+/// actually arrives is the three characters `C:"`. That exact
+/// shape (drive letter, colon, quote) is converted back to the
+/// root path `C:\`.
+///
+/// More generally, a single stray trailing quote is stripped when
+/// the path as spelled does not exist but the stripped spelling
+/// does. Anything else is returned untouched.
+fn normalize_scan_path(raw: &str) -> String {
+    let bytes = raw.as_bytes();
+    if bytes.len() == 3
+        && bytes[0].is_ascii_alphabetic()
+        && bytes[1] == b':'
+        && bytes[2] == b'"'
+    {
+        return format!("{}:\\", &raw[..2]);
+    }
+    if let Some(stripped) = raw.strip_suffix('"') {
+        if !stripped.is_empty() && !Path::new(raw).exists() && Path::new(stripped).exists() {
+            return stripped.to_string();
+        }
+    }
+    raw.to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn normalize_repairs_mangled_drive_root() {
+        assert_eq!(normalize_scan_path("C:\""), "C:\\");
+        assert_eq!(normalize_scan_path("d:\""), "d:\\");
+        assert_eq!(normalize_scan_path("Z:\""), "Z:\\");
+    }
+
+    #[test]
+    fn normalize_strips_stray_trailing_quote_when_clean_path_exists() {
+        let dir = std::env::temp_dir();
+        let mangled = format!("{}\"", dir.display());
+        assert_eq!(normalize_scan_path(&mangled), dir.to_string_lossy());
+    }
+
+    #[test]
+    fn normalize_keeps_stray_quote_when_clean_path_does_not_exist() {
+        let raw = "definitely-not-a-real-place\"";
+        assert_eq!(normalize_scan_path(raw), raw);
+    }
+
+    #[test]
+    fn normalize_leaves_ordinary_paths_alone() {
+        assert_eq!(normalize_scan_path("C:\\Games"), "C:\\Games");
+        assert_eq!(normalize_scan_path("D:\\"), "D:\\");
+        assert_eq!(normalize_scan_path(""), "");
+    }
+
+    #[test]
+    fn scan_path_from_args_extracts_and_normalizes() {
+        let args: Vec<String> = ["diskpilot", "--scan", "C:\""]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+        assert_eq!(scan_path_from_args(&args).as_deref(), Some("C:\\"));
+        let bare: Vec<String> = ["diskpilot"].iter().map(|s| s.to_string()).collect();
+        assert_eq!(scan_path_from_args(&bare), None);
+        let empty: Vec<String> = ["diskpilot", "--scan", ""]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+        assert_eq!(scan_path_from_args(&empty), None);
+    }
 }
 
 /// Build and run the application.

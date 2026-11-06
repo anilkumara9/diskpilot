@@ -93,6 +93,12 @@ fn run(state: &ShellState) {
     }
 }
 
+/// One day in milliseconds — the core policy's own unit
+/// (`maintenance::select_bin_purge` computes its cutoff with it),
+/// recomputed here so the delete-time re-verification below uses
+/// exactly the cutoff the selection used.
+const DAY_MS: i64 = 86_400_000;
+
 /// Permanently delete the Recycle Bin items the core's policy
 /// selects (deleted strictly longer ago than the retention age).
 /// Returns how many items were purged.
@@ -102,7 +108,9 @@ fn purge_recycle_bin(min_age_days: u32, reclaimed: &mut u64, errors: &mut Vec<St
         .iter()
         .map(|item| (item.id.clone(), item.deleted_at_ms))
         .collect();
-    let selected = policy::select_bin_purge(&aged, now_ms(), min_age_days);
+    let now = now_ms();
+    let selected = policy::select_bin_purge(&aged, now, min_age_days);
+    let cutoff = now.saturating_sub(i64::from(min_age_days.max(1)).saturating_mul(DAY_MS));
     let mut purged = 0usize;
     for id in &selected {
         // Re-validate and re-read the server-side metadata, like
@@ -110,9 +118,21 @@ fn purge_recycle_bin(min_age_days: u32, reclaimed: &mut u64, errors: &mut Vec<St
         // the `$I…` file, never from the earlier listing.
         match crate::recycle_bin::validate_item_id(id) {
             Some((payload, info)) => {
-                let bytes = crate::recycle_bin::read_item(&payload, &info)
-                    .map(|item| item.bytes)
-                    .unwrap_or(0);
+                // Re-verify at delete time against the FRESH `$I`
+                // record: the listing this run started from may be
+                // stale by the time the delete happens. An item
+                // whose fresh deletion time no longer falls before
+                // the cutoff is skipped (and not counted), and an
+                // item whose record can no longer be parsed is
+                // never deleted at all — no purge ever acts on a
+                // stale listing alone.
+                let Some(item) = crate::recycle_bin::read_item(&payload, &info) else {
+                    continue;
+                };
+                if item.deleted_at_ms >= cutoff {
+                    continue;
+                }
+                let bytes = item.bytes;
                 let outcome = RealFileOps
                     .permanent_delete(&payload)
                     .and_then(|_| std::fs::remove_file(&info).map_err(|e| e.to_string()));

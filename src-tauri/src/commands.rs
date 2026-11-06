@@ -1211,7 +1211,24 @@ pub async fn clean_app_junk(
 /// then fails alone instead of vetoing the whole cache — and the
 /// directory itself is left in place, since its owner expects it
 /// to exist and only ever recreates its contents.
+///
+/// Enumeration is link-disciplined, enforced here in code rather
+/// than left to the OS: children are listed ONLY for directories
+/// verified (by `symlink_metadata`, at that moment) to be real
+/// directories. A symlink child — like any file — is trashed as a
+/// single link item; it is never opened, listed, or followed, so
+/// a cache that links outward cannot drag outside content into
+/// the clean.
 fn clean_junk_path(path: &Path, out: &mut JunkCleanResult) {
+    clean_junk_path_depth(path, out, 0);
+}
+
+/// The deepest level a junk clean enumerates into. Real cache
+/// trees are a few levels deep; a directory at the cap is trashed
+/// as a single item instead of being enumerated further.
+const MAX_JUNK_ENUM_DEPTH: usize = 32;
+
+fn clean_junk_path_depth(path: &Path, out: &mut JunkCleanResult, depth: usize) {
     let md = match std::fs::symlink_metadata(path) {
         Ok(md) => md,
         Err(e) => {
@@ -1222,7 +1239,7 @@ fn clean_junk_path(path: &Path, out: &mut JunkCleanResult) {
             return;
         }
     };
-    if md.is_dir() && !md.file_type().is_symlink() {
+    if md.is_dir() && !md.file_type().is_symlink() && depth < MAX_JUNK_ENUM_DEPTH {
         let children: Vec<PathBuf> = match std::fs::read_dir(path) {
             Ok(read) => read.flatten().map(|entry| entry.path()).collect(),
             Err(e) => {
@@ -1234,10 +1251,27 @@ fn clean_junk_path(path: &Path, out: &mut JunkCleanResult) {
             }
         };
         for child in &children {
-            trash_junk_item(child, out);
+            clean_junk_child(child, out, depth + 1);
         }
     } else {
         trash_junk_item(path, out);
+    }
+}
+
+/// One child of a junk directory: a real child directory is
+/// emptied by the same routine (which re-verifies it before
+/// listing it); every other child — file or link — goes straight
+/// to the trash as a single item, never enumerated.
+fn clean_junk_child(path: &Path, out: &mut JunkCleanResult, depth: usize) {
+    match std::fs::symlink_metadata(path) {
+        Ok(md) if md.is_dir() && !md.file_type().is_symlink() => {
+            clean_junk_path_depth(path, out, depth)
+        }
+        Ok(_) => trash_junk_item(path, out),
+        Err(e) => out.failed.push(JunkCleanFailure {
+            path: path.to_string_lossy().into_owned(),
+            error: e.to_string(),
+        }),
     }
 }
 

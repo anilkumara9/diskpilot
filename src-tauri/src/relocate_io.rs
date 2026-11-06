@@ -263,9 +263,9 @@ fn resolved_spelling(path: &std::path::Path) -> Option<PathBuf> {
 
 /// Measure a tree the way the verification compares it: files only
 /// (directory-entry slack never counts), allocated bytes via the
-/// crate's rule, symlinks neither followed nor counted — robocopy
-/// does not reproduce links as links, so a tree containing them
-/// fails verification and aborts safely rather than lying.
+/// crate's rule, symlinks neither followed nor counted. Robocopy
+/// runs with `/XJ`, so the copy skips links in exactly the same
+/// way and the two sides of the comparison agree.
 #[cfg(windows)]
 fn walk_tree(root: &std::path::Path) -> (u64, u64) {
     fn inner(path: &std::path::Path, depth: usize, bytes: &mut u64, files: &mut u64) {
@@ -516,55 +516,104 @@ fn undo_impl(source: &str, target: &str) -> Result<RelocateResult, String> {
     let source_path = PathBuf::from(source);
     let target_path = PathBuf::from(target);
 
-    // The original location must still be a junction, and it must
-    // still point at the recorded destination — a link the user
-    // has since repointed is theirs, not ours to remove.
-    if !win::is_reparse_point(&source_path) {
-        return Err(format!("{source} is no longer a link — nothing to undo"));
-    }
-    let points_at = win::junction_target(&source_path)
-        .ok_or_else(|| format!("could not read where the link at {source} points"))?;
-    if !same_location(&points_at, target) {
-        return Err(format!(
-            "the link at {source} points at {points_at}, not the recorded destination {target} — refusing to touch it"
-        ));
-    }
-    if !target_path.is_dir() {
-        return Err(format!("the moved folder no longer exists at {target}"));
-    }
-    let (bytes, files) = walk_tree(&target_path);
+    if win::is_reparse_point(&source_path) {
+        // The normal case: the original location is still the
+        // junction the relocation left, and it must still point at
+        // the recorded destination — a link the user has since
+        // repointed is theirs, not ours to remove.
+        let points_at = win::junction_target(&source_path)
+            .ok_or_else(|| format!("could not read where the link at {source} points"))?;
+        if !same_location(&points_at, target) {
+            return Err(format!(
+                "the link at {source} points at {points_at}, not the recorded destination {target} — refusing to touch it"
+            ));
+        }
+        if !target_path.is_dir() {
+            return Err(format!("the moved folder no longer exists at {target}"));
+        }
+        let (bytes, files) = walk_tree(&target_path);
 
-    // Re-run the core rule (protection + headroom) against the way
-    // back BEFORE the junction is touched: destination parent is
-    // the original folder's parent, and the destination it derives
-    // is the original path itself.
-    let parent = source_path
-        .parent()
-        .ok_or_else(|| "the original location has no parent folder".to_string())?;
-    let free = win::free_space(parent)
-        .ok_or_else(|| "could not read the original drive's free space".to_string())?;
-    diskpilot_core::relocate::validate_relocation(&target_path, parent, bytes, free)?;
+        // Re-run the core rule (protection + headroom) against the
+        // way back BEFORE the junction is touched — on canonical
+        // spellings, like the relocation itself. Destination
+        // parent is the original folder's parent, and the
+        // destination it derives is the original path itself.
+        let parent = source_path
+            .parent()
+            .ok_or_else(|| "the original location has no parent folder".to_string())?;
+        let free = win::free_space(parent)
+            .ok_or_else(|| "could not read the original drive's free space".to_string())?;
+        let validated_target =
+            resolved_spelling(&target_path).unwrap_or_else(|| target_path.clone());
+        let validated_parent = resolved_spelling(parent).unwrap_or_else(|| parent.to_path_buf());
+        diskpilot_core::relocate::validate_relocation(
+            &validated_target,
+            &validated_parent,
+            bytes,
+            free,
+        )?;
 
-    // Remove the junction itself. RemoveDirectoryW on a junction
-    // removes the (empty) link directory entry only — it never
-    // follows the link, so the destination's contents are safe.
-    win::remove_junction(&source_path)
-        .map_err(|e| format!("could not remove the junction at {source}: {e}"))?;
+        // Remove the junction itself. RemoveDirectoryW on a
+        // junction removes the (empty) link directory entry only —
+        // it never follows the link, so the destination's contents
+        // are safe.
+        win::remove_junction(&source_path)
+            .map_err(|e| format!("could not remove the junction at {source}: {e}"))?;
 
-    let copy = win::run_robocopy(&target_path, &source_path)?;
+        return copy_back(&source_path, &target_path, bytes, files, source, target);
+    }
+
+    // Interrupted undo: a previous undo removed the junction and
+    // began copying back, then stopped — the source is a real
+    // directory again (holding a partial copy) and the recorded
+    // target still holds the complete tree. The History entry's
+    // exact path match is the authorization to finish the job:
+    // copy back over the partial copy, verify against a fresh
+    // measure of the target, and remove the target tree. Any
+    // other non-junction state is refused, as before.
+    let source_is_real_dir = std::fs::symlink_metadata(&source_path)
+        .map(|md| md.is_dir() && !md.file_type().is_symlink())
+        .unwrap_or(false);
+    if source_is_real_dir && target_path.is_dir() {
+        let (bytes, files) = walk_tree(&target_path);
+        return copy_back(&source_path, &target_path, bytes, files, source, target);
+    }
+
+    match std::fs::symlink_metadata(&source_path) {
+        Ok(_) => Err(format!("{source} is no longer a link — nothing to undo")),
+        Err(_) => Err(format!("{source} no longer exists — nothing to undo")),
+    }
+}
+
+/// The shared undo tail: copy the recorded destination tree back
+/// to the original location, verify file count AND allocated
+/// bytes against the fresh measure of the destination, and only
+/// then remove the destination copy. A failed copy or a failed
+/// verification removes nothing — the complete copy stays at the
+/// destination.
+#[cfg(windows)]
+fn copy_back(
+    source_path: &std::path::Path,
+    target_path: &std::path::Path,
+    bytes: u64,
+    files: u64,
+    source: &str,
+    target: &str,
+) -> Result<RelocateResult, String> {
+    let copy = win::run_robocopy(target_path, source_path)?;
     if copy.code < 0 || copy.code >= 8 {
         return Err(format!(
             "the copy back failed partway (robocopy exit {}): {}. The folder is partially restored at {source}; the complete copy is still at {target}",
             copy.code, copy.tail
         ));
     }
-    let (restored_bytes, restored_files) = walk_tree(&source_path);
+    let (restored_bytes, restored_files) = walk_tree(source_path);
     if restored_files != files || restored_bytes != bytes {
         return Err(format!(
             "verification of the restored copy failed, so nothing was removed: the complete copy is still at {target}"
         ));
     }
-    diskpilot_core::cleanup::executor::symlink_safe_delete(&target_path).map_err(|e| {
+    diskpilot_core::cleanup::executor::symlink_safe_delete(target_path).map_err(|e| {
         format!(
             "the folder is restored at {source}, but the copy at {target} could not be removed: {e}"
         )
@@ -573,6 +622,7 @@ fn undo_impl(source: &str, target: &str) -> Result<RelocateResult, String> {
         source: source.to_string(),
         target: target.to_string(),
         bytes,
+        warning: None,
     })
 }
 
@@ -802,6 +852,15 @@ mod win {
         if ok == 0 || (returned as usize) < 16 {
             return None;
         }
+        // The name slice is bounded twice over: by what the driver
+        // actually returned (and the buffer), and by the
+        // ReparseDataLength extent (bytes 4..6, counting everything
+        // after the 8-byte header). A name that would run past
+        // either is malformed — never read, never clamped into a
+        // plausible-looking wrong answer.
+        let limit = (returned as usize).min(buffer.len());
+        let data_length = u16::from_le_bytes(buffer[4..6].try_into().ok()?) as usize;
+        let extent = (8 + data_length).min(limit);
         let tag = u32::from_le_bytes(buffer[0..4].try_into().ok()?);
         if tag != IO_REPARSE_TAG_MOUNT_POINT {
             return None;
@@ -811,7 +870,11 @@ mod win {
         let name_offset = u16::from_le_bytes(buffer[8..10].try_into().ok()?) as usize;
         let name_length = u16::from_le_bytes(buffer[10..12].try_into().ok()?) as usize;
         let start = 16 + name_offset;
-        let bytes = buffer.get(start..start + name_length)?;
+        let end = start + name_length;
+        if end > extent {
+            return None;
+        }
+        let bytes = buffer.get(start..end)?;
         let units: Vec<u16> = bytes
             .chunks_exact(2)
             .map(|c| u16::from_le_bytes([c[0], c[1]]))
@@ -849,6 +912,12 @@ mod win {
     /// There is deliberately no timeout: a copy's duration is
     /// bounded by its size, and killing one midway would strand a
     /// partial copy (the caller cleans that up on failure codes).
+    ///
+    /// `/XJ` excludes junctions (and symlinks to directories) from
+    /// the copy: the verification measure (`walk_tree`) skips links
+    /// the same way, so copy and measure agree — links inside the
+    /// tree are not moved; they stay behind with the original
+    /// tree's removal semantics applying to the link itself.
     pub fn run_robocopy(source: &Path, dest: &Path) -> Result<RobocopyOutcome, String> {
         let mut command = Command::new("robocopy");
         command
@@ -858,6 +927,7 @@ mod win {
                 "/E".as_ref(),
                 "/COPY:DAT".as_ref(),
                 "/DCOPY:DAT".as_ref(),
+                "/XJ".as_ref(),
                 "/R:1".as_ref(),
                 "/W:1".as_ref(),
                 "/NP".as_ref(),
