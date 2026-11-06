@@ -6,12 +6,12 @@ deletion gets extra scrutiny by design.
 
 ## Getting set up
 
-Requirements: Rust 1.82+ (rustup), Node.js 22, pnpm 10, and on Windows
-the Visual Studio Build Tools (Desktop development with C++ workload).
+Requirements: Rust 1.82+ (rustup), Node.js 20+, and on Windows the
+Visual Studio Build Tools (Desktop development with C++ workload).
 
 ```powershell
-pnpm install
-pnpm tauri dev      # full app
+npm ci
+npm run tauri dev   # full app
 cargo test --workspace
 ```
 
@@ -37,16 +37,23 @@ cargo test --workspace
 6. **Keep the numbers honest.** Byte formatting is decimal
    (1 GB = 10^9), sizes are allocated sizes, and estimates are labelled
    as estimates.
+7. **No demo content in the product.** Fixtures, sample data and
+   screenshot stubs live in tests and tooling, never in the shipped
+   app. If a feature cannot run, it says so honestly instead of
+   presenting canned data.
+8. **Deletion takes IDs, never paths.** The webview refers to cleanup
+   work only by recommendation/plan IDs minted in the core; the core
+   resolves and re-validates the paths itself. A PR that lets the
+   frontend hand the executor a path will be closed.
 
 ## Checks before a pull request
 
 ```powershell
-pnpm format:check
-pnpm lint
-pnpm typecheck
-pnpm test
-cargo fmt --check
-cargo clippy --workspace -- -D warnings
+npm run build       # tsc + vite
+npm run lint
+npm run test        # vitest
+cargo fmt --all -- --check
+cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
 ```
 
