@@ -48,6 +48,15 @@ based on Keep a Changelog, and the project follows semantic versioning.
   "{reclaimable} can be cleaned" readout from the last scan.
 - **Report export** — a standalone HTML storage report can be saved
   through the native save dialog.
+- **Media summary** — photos, videos and screenshots are totalled
+  from the scan index (allocated bytes and file counts, classified
+  with the same kind rules as file search; screenshots are a subset
+  of photos), with the 15 biggest photos and videos listed.
+- **Games** — installed Steam and Epic Games libraries are read from
+  the launchers' own manifest files (Steam `libraryfolders.vdf` +
+  `appmanifest_*.acf` sizes, Epic `.item` manifests), reporting every
+  game's on-disk size per library; games whose Steam manifest has no
+  recorded size are measured directly.
 
 ## [0.5.1] — 2026-11-06 — Windows release
 

@@ -183,6 +183,22 @@ History.
   snapshots' stored directory sizes (or, when a snapshot carries
   none, prefix aggregation over its file list). All bytes are the
   scanner's allocated bytes.
+- **Media (`media`)** — photos / videos / screenshots totals over a
+  scan index, classified with the search module's kind rules so the
+  Media page and file search always agree; screenshots are images
+  that also match the screenshot rule, so the screenshots bucket is
+  a subset of photos. Carries the 15 biggest photos and videos.
+- **Games (`games`)** — installed-game inventory read from the
+  launchers' own manifests, no scan involved. Steam: the install
+  root found under the Program Files candidates, every library from
+  `steamapps/libraryfolders.vdf` (parsed by a tolerant KeyValues
+  mini-parser), each game's name and `SizeOnDisk` from its
+  `appmanifest_*.acf` — a manifest without a recorded size falls
+  back to measuring the install folder (allocated sizes, entry
+  budget capped). Epic: the JSON `.item` manifests under
+  `%ProgramData%\Epic\EpicGamesLauncher\Data\Manifests`, grouped by
+  the folder containing each install location. Malformed manifests
+  are skipped; no launcher installed means an empty report.
 
 ## Assistant (`assistant`)
 
