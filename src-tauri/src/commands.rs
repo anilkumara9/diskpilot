@@ -27,11 +27,11 @@
 //!   core has no Recycle Bin *inventory* API (its safety gate protects
 //!   `$Recycle.Bin` from plan-based cleanup). The shell parses the
 //!   `$I…` metadata read-only and, on empty, removes exactly the listed
-//!   `$R…` payloads after re-validating each ID. The same module
-//!   restores single items from their metadata and empties the whole
-//!   bin through the shell API (`SHEmptyRecycleBinW`).
-//!   `restore_cleanup_run` composes that single-item restore over a
-//!   recorded cleanup run's Trash-mode items.
+//!   `$R…` payloads one by one after re-validating each ID — and the
+//!   recorded result uses the server-side metadata values, never the
+//!   webview's copy. The same module restores single items from their
+//!   metadata. `restore_cleanup_run` composes that single-item restore
+//!   over a recorded cleanup run's Trash-mode items.
 //! - The post-scan OCR pass lives in `crate::ocr`: background
 //!   recognition over the fresh index's images, cached on disk and
 //!   written back into the index entries the search commands read.
@@ -245,6 +245,12 @@ pub(crate) async fn run_scan(
         .lock()
         .map(|settings| settings.exclusions.clone())
         .unwrap_or_default();
+    // These patterns are what this scan means by its index: the live
+    // index applies journal changes against this scan-time snapshot
+    // even if the user edits the settings afterwards.
+    if let Ok(mut slot) = state.scan_exclusions.lock() {
+        *slot = exclusions.clone();
+    }
 
     let cancel = {
         let mut engine = state
@@ -299,6 +305,10 @@ pub(crate) async fn run_scan(
     if let Ok(mut engine) = state.engine.lock() {
         engine.store_scan(summary.clone(), index);
     }
+    // The in-memory index was wholesale replaced: any live-index
+    // batch still applying against the previous index must not
+    // install over this scan (see `crate::live`).
+    state.index_generation.fetch_add(1, Ordering::SeqCst);
 
     // Rotate the outgoing snapshot to the previous-scan slot before the
     // new one replaces it, and mirror the rotation in shell state.
@@ -361,10 +371,13 @@ fn send_scheduled_scan_alerts(app: &AppHandle, state: &ShellState, summary: &Sca
 
     if let Some(free) = summary.drive_free_bytes {
         if (free as f64) < settings.low_space_alert_gb * 1e9 {
+            // The free figure is drive-wide (`drive_free_bytes` is
+            // the volume's), so the alert names the DRIVE — naming
+            // the scanned folder would blame the wrong place.
             let body = format!(
                 "Only {:.1} GB free on {}. DiskPilot's Overview shows what is using the space.",
                 free as f64 / 1e9,
-                summary.root
+                drive_label(&summary.root)
             );
             let _ = app
                 .notification()
@@ -597,6 +610,19 @@ pub fn set_autostart(enabled: bool) -> CmdResult<bool> {
 /// are ignored, and the comparison is case-insensitive on Windows
 /// (mirroring how Windows treats paths). Shared with the scheduler
 /// and the forecast/history commands.
+/// The drive a path lives on, as a user names it: `C:` for any
+/// `C:\…` root. Verbatim prefixes (`\\?\C:\…`) collapse to the plain
+/// drive. Off Windows there is no drive letter; the root itself is
+/// the label.
+fn drive_label(root: &str) -> String {
+    use std::path::Component;
+    if let Some(Component::Prefix(prefix)) = Path::new(root).components().next() {
+        let label = prefix.as_os_str().to_string_lossy().into_owned();
+        return label.trim_start_matches(r"\\?\").to_string();
+    }
+    root.to_string()
+}
+
 pub(crate) fn same_scan_root(a: &str, b: &str) -> bool {
     let normalise = |s: &str| {
         let trimmed = s.trim_end_matches(['\\', '/']);
@@ -797,7 +823,9 @@ pub fn get_history(
             entry.restorable_count = crate::recycle_bin::count_restorable(
                 &trash_paths,
                 &bin_items,
-                &|path| Path::new(path).symlink_metadata().is_err(),
+                // The same predicate `restore_item` refuses by, so a
+                // counted item is exactly a restorable one.
+                &crate::recycle_bin::destination_is_free,
             ) as u64;
         }
         Ok(entries)
@@ -912,7 +940,9 @@ pub async fn restore_cleanup_run(
 // ---------------------------------------------------------------------------
 
 /// Find duplicate files under `root` (defaults to the scan root):
-/// grouped by size, then partial hash, then full SHA-256.
+/// grouped by size, then partial hash, then full SHA-256. The groups
+/// are retained in shell state: they are the ONLY groups
+/// `remove_duplicate_copies` will act on (see there).
 #[tauri::command]
 pub async fn find_duplicates(
     state: State<'_, ShellState>,
@@ -922,14 +952,25 @@ pub async fn find_duplicates(
         Some(r) if !r.is_empty() => r,
         _ => state.scan_root(),
     };
-    blocking_value(move || duplicates::find_duplicates(Path::new(&root_path))).await
+    let groups =
+        blocking_value(move || duplicates::find_duplicates(Path::new(&root_path))).await?;
+    if let Ok(mut slot) = state.duplicates_report.lock() {
+        *slot = Some(groups.clone());
+    }
+    Ok(groups)
 }
 
 /// Move the non-keeper copies of one duplicate group to the Recycle
-/// Bin. Each copy is re-verified byte-for-byte against the keeper
-/// immediately before the move (`duplicates::verify_identical`), must
-/// pass the safety gate, and the keeper itself is refused. The outcome
-/// is recorded to History.
+/// Bin. The group is authorized against the report this shell last
+/// served from `find_duplicates` — never against freehand paths:
+/// `group_hash` must name a served group, the keeper and every copy
+/// must be members of that same group, and zero-byte groups are
+/// refused (every empty file is "identical" to every other, so there
+/// is no keeper relationship to verify against). Each accepted copy
+/// is then re-verified byte-for-byte against the keeper immediately
+/// before the move (`duplicates::verify_identical`), must pass the
+/// safety gate, and the keeper itself is refused. The outcome is
+/// recorded to History.
 #[tauri::command]
 pub async fn remove_duplicate_copies(
     state: State<'_, ShellState>,
@@ -937,6 +978,38 @@ pub async fn remove_duplicate_copies(
     keeper_path: String,
     remove_paths: Vec<String>,
 ) -> CmdResult<CleanupResult> {
+    {
+        let report = state
+            .duplicates_report
+            .lock()
+            .map_err(|_| "duplicates state lock poisoned".to_string())?;
+        let Some(report) = report.as_ref() else {
+            return Err(
+                "No duplicate results to act on — run Find duplicates first.".to_string(),
+            );
+        };
+        let Some(group) = report.iter().find(|g| g.hash == group_hash) else {
+            return Err(
+                "That duplicate group is not in the latest results — run Find duplicates again."
+                    .to_string(),
+            );
+        };
+        if group.size == 0 {
+            return Err(
+                "Zero-byte duplicate groups can't be cleaned up: with no contents there is no keeper copy to verify against."
+                    .to_string(),
+            );
+        }
+        let is_member = |path: &str| group.files.iter().any(|f| f.path == path);
+        if !is_member(&keeper_path) {
+            return Err("The keeper copy is not part of that duplicate group.".to_string());
+        }
+        if let Some(intruder) = remove_paths.iter().find(|p| !is_member(p)) {
+            return Err(format!(
+                "{intruder} is not part of that duplicate group."
+            ));
+        }
+    }
     let ctx = SafetyContext::new(state.scan_root());
     let keeper = keeper_path.clone();
     let group_hash_for_history = group_hash.clone();
@@ -1196,8 +1269,10 @@ pub async fn get_recycle_bin_items() -> CmdResult<Vec<RecycleBinItem>> {
 
 /// Remove exactly `items` (as returned by `get_recycle_bin_items`), one
 /// by one, emitting `recycle-bin://progress`. Each item ID is
-/// re-validated against the `$Recycle.Bin` layout before its payload is
-/// removed; the paired `$I…` metadata is removed with it. Stop with
+/// re-validated against the real `$Recycle.Bin` roots before its payload
+/// is removed; the paired `$I…` metadata is removed with it. The
+/// recorded paths and bytes come from that server-side metadata, not
+/// from the item fields the webview sent. Stop with
 /// `cancel_empty_recycle_bin`. The result is recorded to History.
 #[tauri::command]
 pub async fn empty_recycle_bin(
@@ -1226,17 +1301,34 @@ pub async fn empty_recycle_bin(
                 path: item.original_path.clone(),
                 message,
             };
+            // What gets recorded comes from the SERVER-SIDE `$I…`
+            // metadata parsed here — never from the item fields the
+            // webview sent, which are display data it could have
+            // edited. An item whose metadata no longer parses fails
+            // rather than being recorded on the webview's say-so.
+            let mut current_name = item.name.clone();
             match crate::recycle_bin::validate_item_id(&item.id) {
                 Some((payload, info)) => {
-                    let outcome = RealFileOps
-                        .permanent_delete(&payload)
-                        .and_then(|_| std::fs::remove_file(&info).map_err(|e| e.to_string()));
-                    match outcome {
-                        Ok(()) => {
-                            succeeded.push(item.original_path.clone());
-                            freed += item.bytes;
+                    match crate::recycle_bin::read_item(&payload, &info) {
+                        Some(parsed) => {
+                            current_name = parsed.name.clone();
+                            let outcome = RealFileOps.permanent_delete(&payload).and_then(|_| {
+                                std::fs::remove_file(&info).map_err(|e| e.to_string())
+                            });
+                            match outcome {
+                                Ok(()) => {
+                                    succeeded.push(parsed.original_path.clone());
+                                    freed += parsed.bytes;
+                                }
+                                Err(message) => failed.push(CleanupFailure {
+                                    path: parsed.original_path.clone(),
+                                    message,
+                                }),
+                            }
                         }
-                        Err(message) => failed.push(fail(message)),
+                        None => failed.push(fail(
+                            "item metadata is unreadable — skipped".to_string(),
+                        )),
                     }
                 }
                 None => failed.push(fail(
@@ -1248,7 +1340,7 @@ pub async fn empty_recycle_bin(
                 RecycleBinProgressPayload {
                     completed: i + 1,
                     total,
-                    current_name: item.name.clone(),
+                    current_name,
                     freed_bytes: freed,
                 },
             );

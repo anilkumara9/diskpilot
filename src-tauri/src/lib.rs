@@ -165,6 +165,25 @@ pub struct ShellState {
     /// the durable journal checkpoints live on disk (see
     /// `crate::live`).
     pub live: Mutex<live::LiveStatus>,
+    /// The duplicate groups most recently served by
+    /// `find_duplicates`. `remove_duplicate_copies` authorizes
+    /// against THIS report — keeper and copies must be members of
+    /// the named group — never against paths the webview supplies
+    /// freehand.
+    pub duplicates_report: Mutex<Option<Vec<diskpilot_core::model::DuplicateGroup>>>,
+    /// The exclusion patterns the last completed scan actually ran
+    /// with, captured at scan start. The live index applies journal
+    /// changes against this snapshot, not the current settings:
+    /// patterns edited after the scan must not retroactively change
+    /// what the existing index means (see `crate::live`).
+    pub scan_exclusions: Mutex<Vec<String>>,
+    /// Bumped every time the in-memory index is wholesale replaced
+    /// (a scan stores its result; a live batch installs its
+    /// rebuild). The live applier snapshots the index under the
+    /// engine lock tagged with this generation and installs its
+    /// result only when the generation is unchanged, so a scan that
+    /// completes mid-apply is never overwritten by stale work.
+    pub index_generation: Arc<AtomicU64>,
 }
 
 impl ShellState {
@@ -315,6 +334,9 @@ pub fn run() {
                 history: Mutex::new(None),
                 ocr_generation: Arc::new(AtomicU64::new(0)),
                 live: Mutex::new(live::LiveStatus::default()),
+                duplicates_report: Mutex::new(None),
+                scan_exclusions: Mutex::new(Vec::new()),
+                index_generation: Arc::new(AtomicU64::new(0)),
             });
 
             tray::build_tray(app.handle())?;
