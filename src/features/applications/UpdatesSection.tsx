@@ -136,12 +136,23 @@ export function UpdatesSection() {
             </div>
           ) : null}
           {updates.length === 0 ? (
-            <p className="flex items-center gap-2 text-[12px] leading-4 text-foreground">
-              <CheckCircle2 className="size-4 shrink-0 text-tier-safe" aria-hidden="true" />
-              Everything is up to date.
-            </p>
+            /* "Up to date" is only earned by a clean check: when
+               winget also reported an error, the error banner
+               above stands alone. */
+            report?.error ? null : (
+              <p className="flex items-center gap-2 text-[12px] leading-4 text-foreground">
+                <CheckCircle2 className="size-4 shrink-0 text-tier-safe" aria-hidden="true" />
+                Everything is up to date.
+              </p>
+            )
           ) : (
-            <ul className="divide-y divide-border rounded-[10px] border border-border px-3">
+            <>
+              {updates.length > 3 ? (
+                <p className="pb-2 text-right text-[12px] text-muted">
+                  Updating many apps can take a while — each app updates one at a time.
+                </p>
+              ) : null}
+              <ul className="divide-y divide-border rounded-[10px] border border-border px-3">
               {updates.map((update) => {
                 const state = rowStates[update.id] ?? PENDING;
                 return (
@@ -181,7 +192,8 @@ export function UpdatesSection() {
                   </li>
                 );
               })}
-            </ul>
+              </ul>
+            </>
           )}
         </>
       )}

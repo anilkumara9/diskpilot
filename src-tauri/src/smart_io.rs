@@ -294,17 +294,23 @@ mod win {
     fn device_descriptor(handle: Handle) -> Option<(String, i32)> {
         // STORAGE_PROPERTY_QUERY: PropertyId 0
         // (StorageDeviceProperty), QueryType 0 (PropertyStandardQuery).
-        let mut buffer = [0u8; 1024];
-        if !ioctl(handle, IOCTL_STORAGE_QUERY_PROPERTY, &mut buffer) {
+        // The buffer is generous (descriptors with long string sets
+        // overrun a 1 KB buffer) and every read is bounded by what
+        // the driver actually returned, not the capacity.
+        let mut buffer = vec![0u8; 4096];
+        let returned = ioctl(handle, IOCTL_STORAGE_QUERY_PROPERTY, &mut buffer)? as usize;
+        // The fields read here end at the bus type (bytes 28..32).
+        if returned < 32 {
             return None;
         }
+        let limit = returned.min(buffer.len());
         let read_u32 = |off: usize| -> u32 {
             u32::from_le_bytes(buffer[off..off + 4].try_into().unwrap_or([0; 4]))
         };
         let product_offset = read_u32(16) as usize;
         let bus_type = i32::from_le_bytes(buffer[28..32].try_into().unwrap_or([0; 4]));
-        let model = if product_offset > 0 && product_offset < buffer.len() {
-            let tail = &buffer[product_offset..];
+        let model = if product_offset > 0 && product_offset < limit {
+            let tail = &buffer[product_offset..limit];
             let end = tail.iter().position(|b| *b == 0).unwrap_or(tail.len());
             String::from_utf8_lossy(&tail[..end]).trim().to_string()
         } else {
@@ -331,7 +337,7 @@ mod win {
 
     fn disk_capacity(handle: Handle) -> Option<u64> {
         let mut buffer = [0u8; 8];
-        if ioctl(handle, IOCTL_DISK_GET_LENGTH_INFO, &mut buffer) {
+        if ioctl(handle, IOCTL_DISK_GET_LENGTH_INFO, &mut buffer).is_some() {
             Some(u64::from_le_bytes(buffer))
         } else {
             None
@@ -340,49 +346,39 @@ mod win {
 
     /// The drive's own SMART verdict (`STORAGE_PREDICT_FAILURE`:
     /// a nonzero first DWORD means failure is predicted). A failed
-    /// call reads as "no prediction", never as a prediction.
+    /// call — or one that returned fewer than the 4 bytes of the
+    /// flag — reads as "no prediction", never as a prediction.
     fn predicted_failure(handle: Handle) -> bool {
         let mut buffer = [0u8; 516];
-        if !ioctl(handle, IOCTL_STORAGE_PREDICT_FAILURE, &mut buffer) {
-            return false;
+        match ioctl(handle, IOCTL_STORAGE_PREDICT_FAILURE, &mut buffer) {
+            Some(returned) if returned >= 4 => {
+                u32::from_le_bytes(buffer[0..4].try_into().unwrap_or([0; 4])) != 0
+            }
+            _ => false,
         }
-        u32::from_le_bytes(buffer[0..4].try_into().unwrap_or([0; 4])) != 0
     }
 
     /// NVMe SMART/Health log page (LID 02h, 512 bytes) via a
-    /// protocol command. Buffer layout: the 60-byte
-    /// `STORAGE_PROTOCOL_COMMAND` header, the 64-byte NVMe admin
-    /// command at offset 60, and the log page at offset 128.
-    fn nvme_health_log(handle: Handle) -> Option<[u8; 512]> {
-        const HEADER_LEN: usize = 60;
-        const COMMAND_LEN: usize = 64;
-        const DATA_OFFSET: usize = 128;
-        let mut buffer = vec![0u8; DATA_OFFSET + 512];
-        let put_u32 = |buffer: &mut [u8], off: usize, value: u32| {
-            buffer[off..off + 4].copy_from_slice(&value.to_le_bytes());
+    /// protocol command. The request layout is built (and
+    /// unit-tested) by `build_nvme_health_request`; the driver
+    /// answers in ReturnStatus @16 and ErrorCode @20, with the log
+    /// page itself at `NVME_DATA_OFFSET`.
+    fn nvme_health_log(handle: Handle) -> Option<[u8; NVME_LOG_PAGE_LEN]> {
+        let mut buffer = build_nvme_health_request();
+        ioctl(handle, IOCTL_STORAGE_PROTOCOL_COMMAND, &mut buffer)?;
+        let read_u32 = |off: usize| -> u32 {
+            u32::from_le_bytes(buffer[off..off + 4].try_into().unwrap_or([0; 4]))
         };
-        put_u32(&mut buffer, 0, 1); // Version
-        put_u32(&mut buffer, 4, HEADER_LEN as u32); // Length (header only)
-        put_u32(&mut buffer, 8, 3); // ProtocolType = ProtocolTypeNvme
-        put_u32(&mut buffer, 16, COMMAND_LEN as u32); // CommandLength
-        put_u32(&mut buffer, 28, DATA_OFFSET as u32); // DataFromDeviceBufferOffset
-        put_u32(&mut buffer, 36, 512); // DataFromDeviceTransferLength
-        put_u32(&mut buffer, 40, 10); // TimeOutValue (seconds)
-                                      // NVMe admin command (Get Log Page) at offset 60:
-        put_u32(&mut buffer, 60, 0x02); // CDW0: opcode 02h
-        put_u32(&mut buffer, 64, 0xFFFF_FFFF); // NSID: controller-wide log
-                                               // CDW10: LID 02h in the low byte, NUMD (dwords - 1 = 127)
-                                               // in bits 16..=31 — 512 bytes total.
-        put_u32(&mut buffer, 100, 0x02 | (127 << 16));
-        if !ioctl(handle, IOCTL_STORAGE_PROTOCOL_COMMAND, &mut buffer) {
+        let status = read_u32(16);
+        if status != STORAGE_PROTOCOL_STATUS_SUCCESS {
+            eprintln!(
+                "diskpilot: NVMe health read failed (ReturnStatus {status}, ErrorCode {})",
+                read_u32(20)
+            );
             return None;
         }
-        // ReturnStatus (offset 52): 0 = success.
-        if u32::from_le_bytes(buffer[52..56].try_into().unwrap_or([0; 4])) != 0 {
-            return None;
-        }
-        let mut log = [0u8; 512];
-        log.copy_from_slice(&buffer[DATA_OFFSET..DATA_OFFSET + 512]);
+        let mut log = [0u8; NVME_LOG_PAGE_LEN];
+        log.copy_from_slice(&buffer[NVME_DATA_OFFSET..NVME_DATA_OFFSET + NVME_LOG_PAGE_LEN]);
         Some(log)
     }
 
