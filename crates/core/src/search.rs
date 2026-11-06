@@ -148,7 +148,9 @@ fn kind_label(id: &str) -> &'static str {
 /// The kinds one file belongs to, from its extension plus two name rules:
 /// anything named *screenshot* (or filed under a `Screenshots` folder) is
 /// a screenshot, and `setup*`/`install*` executables are installers.
-fn kind_ids_for(name: &str, path: &str) -> Vec<&'static str> {
+/// Shared with [`crate::media`] so the Media page classifies files
+/// exactly the way search does.
+pub(crate) fn kind_ids_for(name: &str, path: &str) -> Vec<&'static str> {
     let lower_name = name.to_lowercase();
     let ext = lower_name.rsplit_once('.').map(|(_, e)| e).unwrap_or("");
     let mut ids: Vec<&'static str> = match ext {
