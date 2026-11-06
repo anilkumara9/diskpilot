@@ -34,6 +34,11 @@ pub fn spawn_scheduler(app: AppHandle) {
         std::thread::sleep(STARTUP_DELAY);
         loop {
             tauri::async_runtime::block_on(check_and_run(&app));
+            // Automatic maintenance rides this same tick (its
+            // first check is the startup catch-up above); it is
+            // due-checked and fully self-contained, and it never
+            // propagates an error into the loop.
+            crate::maintenance::run_if_due(&app);
             std::thread::sleep(CHECK_INTERVAL);
         }
     });
