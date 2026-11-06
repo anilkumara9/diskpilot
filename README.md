@@ -31,7 +31,34 @@ hatched — plus Used / Available / Likely recoverable / Scanned figures,
 the recommendations most worth reviewing, and where space goes by
 category. The previous scan is kept as a snapshot, so every new scan is
 also a comparison: a **Since last scan** view shows what grew, what
-shrank, and what you got back.
+shrank, and what you got back — down to the folders responsible, in
+**Biggest changes** lists of what grew most and what freed space.
+
+On a multi-drive PC, every volume gets its own card on the Overview —
+total and free space per drive, with a one-click scan for any drive
+that isn't the current scan root. And when you need the picture as a
+document, **Export report** saves a standalone HTML storage report
+through the native save dialog.
+
+### Space forecast
+
+Every completed scan appends to a persisted scan-history time series.
+A least-squares fit over the last 30 days of that history turns the
+series into a forecast on the Overview: how many bytes per day the
+drive is gaining, and — while it is growing — the projected date it
+fills up. A flat or shrinking disk simply says so; the trend is shown,
+never dressed up as a promise.
+
+### Watch & alerts
+
+DiskPilot can watch the disk for you. Set scheduled scans to daily or
+weekly and, while the app sits in the tray, it rescans the configured
+root on that schedule. After a *scheduled* scan it can notify you when
+free space drops below a threshold you set (10 GB by default) or when
+usage grows by more than your limit between checks (5 GB by default).
+Scans you start yourself never raise alerts. An optional **launch at
+sign-in** setting starts DiskPilot in the tray automatically, so the
+watch is on whenever you are signed in.
 
 ### Storage explorer & natural-language search
 
@@ -48,6 +75,21 @@ removable chips (kind, size, date, source) before running a
 closed-grammar search over the scan index. Searches you run often can
 be **saved** and re-run against the latest scan in one click.
 
+A **Map** tab renders the current folder as a treemap — every folder
+and large file a block sized by its bytes, colored by category — for
+the "where did it all go?" answer at a glance; click a folder block to
+drill in. Selecting any file opens an **inspector**: its facts, its
+classification, image dimensions and camera EXIF where the file
+carries them, and its download source where one is recorded.
+
+### Quick Search
+
+Press **Ctrl+Shift+Space** anywhere in Windows and a compact search
+popup appears over whatever you are doing — the same plain-language
+search and understood-as chips, run against the latest scan's index.
+Arrow keys move through the results, Enter reveals the file in
+Explorer, and Escape (or clicking away) puts the popup away.
+
 ### Downloads & provenance
 
 Every browser download on Windows carries a Mark of the Web
@@ -57,6 +99,16 @@ Drive, ChatGPT, GitHub, Slack, any website — and lists your most recent
 downloads with their origin attached, so you can find the invoice by
 remembering the email instead of the filename. Provenance is never
 guessed: no stream, no source.
+
+### OneDrive — free up space
+
+When a OneDrive folder is present, DiskPilot detects it and reads its
+on-disk footprint from the scan — how much of what syncs is actually
+stored locally. From the Overview card (or the file inspector) you can
+**free up space**: the selected files and folders are marked to be
+kept online-only, asking OneDrive to evict the local copies. Nothing
+is deleted; the files stay in OneDrive and re-download when opened,
+and the local space frees as OneDrive syncs the change.
 
 ### Duplicates — exact and look-alike
 
@@ -78,9 +130,9 @@ hygiene command (`pnpm store prune`, a Docker prune preview), DiskPilot
 shows you that command instead of deleting behind the tool's back.
 
 On top of the tiers sit **Clean Up cards** — Old installers, Forgotten
-downloads, Old screenshots, Big old videos — file-level candidates
-picked by age and size evidence, each opening a review list before
-anything is planned.
+downloads, Old screenshots, Big old videos, and Big files, long
+forgotten — file-level candidates picked by age and size evidence,
+each opening a review list before anything is planned.
 
 Selecting anything builds a **cleanup plan**: exact paths, exact bytes,
 warnings, and any items the safety gate rejected. Plans are single-use
@@ -127,6 +179,14 @@ redirects disabled, and file contents are never read or sent.
 Every cleanup action and every scan is appended to a local SQLite log:
 timestamp, operation, paths, bytes reclaimed, errors. If DiskPilot did
 it, it is in History — the audit trail for "what did this ever do?".
+
+### Recycle Bin — restore, then empty
+
+The Recycle Bin dialog lists the bin's current contents before
+anything happens. Each item can be **restored** to its original
+location — refused when something already sits there — and emptying
+the bin is a two-step confirm over exactly the listed items, with live
+progress and a Stop button.
 
 ### Settings & exclusions
 
