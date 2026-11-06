@@ -245,6 +245,37 @@ pub fn health_from_nvme(
     } else {
         None
     };
+    // A log whose evidence fields are ALL zero — no life used, no
+    // power-on hours, no power cycles, no temperature — is a zeroed
+    // or short read, not a brand-new healthy drive: deriving "100%
+    // life left" from percentage_used == 0 would dress a failed
+    // read up as a perfect bill of health. Report nothing and let
+    // the verdict be Unknown (media errors, if any were somehow
+    // recorded, still classify on their own).
+    if health.percentage_used == 0
+        && health.power_on_hours == 0
+        && health.power_cycles == 0
+        && temperature_c.is_none()
+    {
+        return DriveHealth {
+            model: model.to_string(),
+            interface: interface.to_string(),
+            capacity_bytes,
+            temperature_c: None,
+            life_left_percent: None,
+            power_on_hours: None,
+            power_cycles: None,
+            reallocated_sectors: None,
+            predicted_failure: false,
+            status: classify(
+                None,
+                None,
+                None,
+                Some(health.media_errors).filter(|m| *m > 0),
+                false,
+            ),
+        };
+    }
     // Percentage used may exceed 100 on an over-run drive; life left
     // saturates at 0 rather than going negative.
     let life_left_percent = Some(100u32.saturating_sub(u32::from(health.percentage_used)));
@@ -444,6 +475,28 @@ mod tests {
             health_from_nvme("Old", "NVMe", 0, &errs).status,
             HealthStatus::Critical
         );
+    }
+
+    #[test]
+    fn nvme_all_zero_log_is_unknown_not_healthy() {
+        // Panel repro: a zeroed 512-byte log (and, equivalently, an
+        // empty read) carries no evidence at all. percentage_used
+        // == 0 must not become "100% life left, Healthy".
+        for log in [vec![0u8; 512], Vec::new()] {
+            let h = health_from_nvme("Ghost", "NVMe", 0, &parse_nvme_health(&log));
+            assert_eq!(h.life_left_percent, None);
+            assert_eq!(h.power_on_hours, None);
+            assert_eq!(h.power_cycles, None);
+            assert_eq!(h.temperature_c, None);
+            assert_eq!(h.status, HealthStatus::Unknown);
+        }
+        // Media errors recorded on an otherwise-zero log are real
+        // evidence and still classify Critical on their own.
+        let mut log = vec![0u8; 512];
+        log[160..168].copy_from_slice(&2u64.to_le_bytes());
+        let h = health_from_nvme("Ghost", "NVMe", 0, &parse_nvme_health(&log));
+        assert_eq!(h.status, HealthStatus::Critical);
+        assert_eq!(h.life_left_percent, None);
     }
 
     #[test]
