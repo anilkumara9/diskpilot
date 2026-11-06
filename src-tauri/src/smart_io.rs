@@ -264,11 +264,11 @@ mod win {
         put_u32(&mut buffer, 28, DATA_OFFSET as u32); // DataFromDeviceBufferOffset
         put_u32(&mut buffer, 36, 512); // DataFromDeviceTransferLength
         put_u32(&mut buffer, 40, 10); // TimeOutValue (seconds)
-        // NVMe admin command (Get Log Page) at offset 60:
+                                      // NVMe admin command (Get Log Page) at offset 60:
         put_u32(&mut buffer, 60, 0x02); // CDW0: opcode 02h
         put_u32(&mut buffer, 64, 0xFFFF_FFFF); // NSID: controller-wide log
-        // CDW10: LID 02h in the low byte, NUMD (dwords - 1 = 127)
-        // in bits 16..=31 — 512 bytes total.
+                                               // CDW10: LID 02h in the low byte, NUMD (dwords - 1 = 127)
+                                               // in bits 16..=31 — 512 bytes total.
         put_u32(&mut buffer, 100, 0x02 | (127 << 16));
         if !ioctl(handle, IOCTL_STORAGE_PROTOCOL_COMMAND, &mut buffer) {
             return None;
@@ -375,8 +375,8 @@ mod win {
         // enumerates and usually answers the descriptor/capacity
         // queries, so the drive degrades to Unknown vitals instead
         // of vanishing when access is limited.
-        let guard = open_drive(&path, GENERIC_READ | GENERIC_WRITE)
-            .or_else(|| open_drive(&path, 0))?;
+        let guard =
+            open_drive(&path, GENERIC_READ | GENERIC_WRITE).or_else(|| open_drive(&path, 0))?;
         let handle = guard.0;
         let (model, bus_type) = device_descriptor(handle)?;
         let interface = interface_name(bus_type);

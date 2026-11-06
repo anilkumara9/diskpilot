@@ -75,7 +75,11 @@ enum RunFailure {
 /// Run a program with captured output and a hard timeout. Reader
 /// threads drain both pipes while the caller polls, so a verbose
 /// child can never block on a full pipe.
-fn run_capture(program: &PathBuf, args: &[&str], timeout: Duration) -> Result<ProcOutput, RunFailure> {
+fn run_capture(
+    program: &PathBuf,
+    args: &[&str],
+    timeout: Duration,
+) -> Result<ProcOutput, RunFailure> {
     let mut command = Command::new(program);
     command
         .args(args)
@@ -184,10 +188,9 @@ fn fetch_updates(winget: &PathBuf) -> Result<Vec<AvailableUpdate>, String> {
             Err(excerpt(&combined, 300))
         }
         Err(RunFailure::Spawn(message)) => Err(message),
-        Err(RunFailure::Timeout(limit)) => Err(format!(
-            "winget did not answer within {}s",
-            limit.as_secs()
-        )),
+        Err(RunFailure::Timeout(limit)) => {
+            Err(format!("winget did not answer within {}s", limit.as_secs()))
+        }
         Err(RunFailure::Wait(message)) => Err(message),
     }
 }
@@ -333,13 +336,11 @@ pub async fn update_software(
                     success: false,
                     message: format!("update timed out after {}s", limit.as_secs()),
                 },
-                Err(RunFailure::Spawn(message)) | Err(RunFailure::Wait(message)) => {
-                    UpdateOutcome {
-                        id: id.clone(),
-                        success: false,
-                        message,
-                    }
-                }
+                Err(RunFailure::Spawn(message)) | Err(RunFailure::Wait(message)) => UpdateOutcome {
+                    id: id.clone(),
+                    success: false,
+                    message,
+                },
             };
             results.push(outcome);
         }
@@ -357,11 +358,7 @@ pub async fn update_software(
         .filter(|o| !o.success)
         .map(|o| format!("{}: {}", o.id, o.message))
         .collect();
-    let detail = format!(
-        "Updated {} of {} packages",
-        succeeded.len(),
-        outcomes.len()
-    );
+    let detail = format!("Updated {} of {} packages", succeeded.len(), outcomes.len());
     let _ = with_history(&state, |history| {
         history
             .record_action(
