@@ -315,6 +315,64 @@ fn recommendations_and_planner_single_use_and_expiry() {
 }
 
 #[test]
+fn windows_old_at_root_is_a_guided_only_recommendation() {
+    let dir = tempfile::tempdir().unwrap();
+    let old = dir.path().join("Windows.old");
+    write_file(&old.join("Windows/System32/kernel.dll"), 5000);
+    write_file(&old.join("Users/meda/old.txt"), 3000);
+    let (summary, index) = Scanner::new(dir.path()).scan();
+    let recs = recommend::build_recommendations(&summary, &index);
+
+    let rec = recs
+        .iter()
+        .find(|r| r.id == "windows-old")
+        .expect("a root-level Windows.old must produce the guided recommendation");
+    assert_eq!(rec.title, "Previous Windows installation (Windows.old)");
+    assert_eq!(rec.tier, Tier::ReviewFirst);
+    assert!(rec.guided_only);
+    assert_eq!(
+        rec.guidance.as_deref(),
+        Some("Remove it through Windows Settings → System → Storage → Temporary files → Previous Windows installation, or Disk Cleanup (cleanmgr) → Clean up system files. DiskPilot does not delete this folder directly.")
+    );
+    assert_eq!(rec.paths, vec![old.to_string_lossy().to_string()]);
+    assert_eq!(rec.bytes, index.size_of(&rec.paths[0]));
+    assert!(rec.bytes > 0);
+    // Exactly one recommendation speaks for the folder: no generic or
+    // Keep item may also claim the path.
+    assert_eq!(
+        recs.iter()
+            .filter(|r| r.paths.iter().any(|p| p == &rec.paths[0]))
+            .count(),
+        1
+    );
+
+    // The planner rejects it explicitly: no items, one rejection
+    // naming the guidance, and permanent deletion stays off.
+    let c = ctx(dir.path());
+    let mut planner = Planner::new();
+    let plan = planner.build_plan(&["windows-old".to_string()], &recs, &c, 7_000_000);
+    assert!(plan.items.is_empty());
+    assert!(!plan.allow_permanent);
+    assert_eq!(plan.rejected.len(), 1);
+    assert!(plan.rejected[0].contains("guided only"));
+}
+
+#[test]
+fn nested_windows_old_gets_no_guided_recommendation() {
+    let dir = tempfile::tempdir().unwrap();
+    write_file(
+        &dir.path().join("backup/Windows.old/Windows/file.dll"),
+        5000,
+    );
+    let (summary, index) = Scanner::new(dir.path()).scan();
+    let recs = recommend::build_recommendations(&summary, &index);
+    assert!(
+        recs.iter().all(|r| r.id != "windows-old" && !r.guided_only),
+        "only a root-level Windows.old is the previous installation"
+    );
+}
+
+#[test]
 fn executor_uses_mock_and_records() {
     let dir = tempfile::tempdir().unwrap();
     let (recs, _cache_dir) = sample_recommendation(dir.path());

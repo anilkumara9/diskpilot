@@ -2,20 +2,24 @@ import type {
   AppEntry,
   AppSettings,
   AssistantReply,
+  BiggestChanges,
   CandidateGroup,
   ChatMessage,
   CleanupMode,
   CleanupPlan,
   CleanupResult,
+  CloudStatus,
   DirectoryEntry,
   DiskInfo,
   DockerActionRequest,
   DockerActionPreview,
   DockerActionResult,
   DockerOverview,
+  DriveInfo,
   DuplicateGroup,
   EmptyRecycleBinProgress,
   EnvironmentInfo,
+  FreeUpResult,
   HistoryEntry,
   MediaInfo,
   PageId,
@@ -24,6 +28,7 @@ import type {
   Recommendation,
   RecycleBinItem,
   ScanComparison,
+  ScanHistoryEntry,
   ScanProgress,
   ScanSummary,
   SearchFilters,
@@ -31,6 +36,7 @@ import type {
   SearchResponse,
   SecretFinding,
   SimilarGroup,
+  SpaceForecast,
   ToolReport,
 } from "./types";
 
@@ -103,6 +109,48 @@ export async function getScanComparison(): Promise<ScanComparison | null> {
   if (!inDesktopApp()) return null;
   try {
     return await invoke<ScanComparison | null>("get_scan_comparison");
+  } catch {
+    return null;
+  }
+}
+
+/** Every drive on this PC with its capacity and free space. */
+export async function getDrives(): Promise<DriveInfo[]> {
+  if (!inDesktopApp()) return [];
+  try {
+    return await invoke<DriveInfo[]>("get_drives");
+  } catch {
+    return [];
+  }
+}
+
+/* ---------- Watch: history, forecast, biggest changes ---------- */
+
+/** The persisted scan time series, oldest first. */
+export async function getScanHistory(): Promise<ScanHistoryEntry[]> {
+  if (!inDesktopApp()) return [];
+  try {
+    return await invoke<ScanHistoryEntry[]>("get_scan_history");
+  } catch {
+    return [];
+  }
+}
+
+/** Space forecast for the configured scan root; null off-desktop. */
+export async function getSpaceForecast(): Promise<SpaceForecast | null> {
+  if (!inDesktopApp()) return null;
+  try {
+    return await invoke<SpaceForecast>("get_space_forecast");
+  } catch {
+    return null;
+  }
+}
+
+/** Biggest directory changes between the current and previous scan. */
+export async function getBiggestChanges(limit: number): Promise<BiggestChanges | null> {
+  if (!inDesktopApp()) return null;
+  try {
+    return await invoke<BiggestChanges>("get_biggest_changes", { limit });
   } catch {
     return null;
   }
@@ -320,6 +368,12 @@ export async function emptyRecycleBin(items: RecycleBinItem[]): Promise<CleanupR
   return invoke<CleanupResult>("empty_recycle_bin", { items });
 }
 
+/** Put one Recycle Bin item back at its original location. */
+export async function restoreRecycleItem(id: string): Promise<void> {
+  requireDesktop();
+  await invoke<void>("restore_recycle_item", { id });
+}
+
 export async function cancelEmptyRecycleBin(): Promise<void> {
   if (!inDesktopApp()) return;
   try {
@@ -394,6 +448,66 @@ export async function getSettings(): Promise<AppSettings | null> {
 export async function saveSettings(settings: AppSettings): Promise<void> {
   if (!inDesktopApp()) return;
   await invoke<void>("save_settings", { settings });
+}
+
+/** Whether launch-at-sign-in is currently registered. */
+export async function getAutostart(): Promise<boolean> {
+  if (!inDesktopApp()) return false;
+  try {
+    return await invoke<boolean>("get_autostart");
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Register or unregister launch-at-sign-in. Resolves with the state
+ * now in effect — off Windows there is no registration to write, so
+ * it resolves `false` there and the toggle stays off.
+ */
+export async function setAutostart(enabled: boolean): Promise<boolean> {
+  if (!inDesktopApp()) return false;
+  try {
+    return await invoke<boolean>("set_autostart", { enabled });
+  } catch {
+    return false;
+  }
+}
+
+/* ---------- Cloud storage & reports ---------- */
+
+/** The cloud sync folder found on this PC (e.g. OneDrive) and how
+    much of it is stored locally; null when none is present. */
+export async function getCloudStatus(): Promise<CloudStatus | null> {
+  if (!inDesktopApp()) return null;
+  try {
+    return await invoke<CloudStatus | null>("get_cloud_status");
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Mark files or folders online-only with the cloud provider. The
+ * files stay in the cloud and re-download when opened — nothing is
+ * deleted.
+ */
+export async function freeUpSpace(paths: string[]): Promise<FreeUpResult> {
+  requireDesktop();
+  return invoke<FreeUpResult>("free_up_space", { paths });
+}
+
+/**
+ * Save a standalone HTML report through the shell's save dialog.
+ * Resolves with the saved path, or null when the user cancelled.
+ */
+export async function exportReport(html: string): Promise<string | null> {
+  if (!inDesktopApp()) return null;
+  try {
+    return await invoke<string | null>("export_report", { html });
+  } catch {
+    return null;
+  }
 }
 
 /* ---------- Shell integration ---------- */

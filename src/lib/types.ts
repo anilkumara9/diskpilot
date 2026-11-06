@@ -116,6 +116,13 @@ export interface Recommendation {
   confidence: Confidence;
   alternativeCommand?: string | null;
   source: string;
+  /** True when DiskPilot cannot act on this item itself and can only
+      guide the user to the tool that can (e.g. Windows.old, which
+      belongs to Disk Cleanup / Storage Sense). Guided items render
+      without a selection checkbox and never enter a cleanup plan. */
+  guidedOnly?: boolean;
+  /** The step-by-step guidance shown for a `guidedOnly` item. */
+  guidance?: string;
 }
 
 export interface CleanupPlanItem {
@@ -319,6 +326,7 @@ export interface EnvironmentInfo {
 
 export type ThemePreference = "system" | "light" | "dark";
 export type AssistantProvider = "anthropic" | "openai" | "openrouter";
+export type AutoScanSchedule = "off" | "daily" | "weekly";
 
 export interface AppSettings {
   scanRoot: string;
@@ -332,6 +340,88 @@ export interface AppSettings {
   /** Natural-language searches bookmarked from the Storage page.
       Older settings files without the field load with an empty list. */
   savedSearches: string[];
+  /** Scheduled background scans while the app sits in the tray.
+      Older settings files without the field load as "off". */
+  autoScan: AutoScanSchedule;
+  /** After a scheduled scan, notify when the scanned drive's free
+      space drops below this many GB (decimal). */
+  lowSpaceAlertGb: number;
+  /** After a scheduled scan, notify when total usage grew by more
+      than this many GB (decimal) since the previous scan. */
+  growthAlertGb: number;
+  /** Launch DiskPilot when the user signs in to Windows. */
+  autoStart: boolean;
+}
+
+/* ---------- Watch: scan history, forecast, biggest changes ---------- */
+
+/** One completed scan in the persisted time series (oldest first).
+    `categories` keys are the categories' serde names, exactly as a
+    snapshot's `categoryTotals` map uses them. */
+export interface ScanHistoryEntry {
+  scannedAtMs: number;
+  rootPath: string;
+  totalBytes: number;
+  fileCount: number;
+  driveFreeBytes: number | null;
+  categories: Record<string, number>;
+}
+
+/** Least-squares space forecast over the scan history for the
+    current root. `daysUntilFull`/`projectedFullAtMs` are null when
+    usage is flat or shrinking, or too few points exist. */
+export interface SpaceForecast {
+  dailyGrowthBytes: number;
+  daysUntilFull: number | null;
+  projectedFullAtMs: number | null;
+  pointsUsed: number;
+}
+
+/** One directory's change between the previous and current scan. */
+export interface DirChange {
+  path: string;
+  name: string;
+  previousBytes: number;
+  currentBytes: number;
+  deltaBytes: number;
+}
+
+/** Directory-level diff of the current snapshot vs. the previous one. */
+export interface BiggestChanges {
+  grown: DirChange[];
+  shrunk: DirChange[];
+  added: DirChange[];
+  removed: DirChange[];
+}
+
+/* ---------- Drives & cloud storage ---------- */
+
+/** One drive (volume root) on this PC, from `get_drives`. */
+export interface DriveInfo {
+  rootPath: string;
+  totalBytes: number;
+  freeBytes: number;
+}
+
+/** A cloud sync folder (e.g. OneDrive) found on this PC and how much
+    of it is currently stored locally. Null when none is present. */
+export interface CloudStatus {
+  provider: string;
+  rootPath: string;
+  localBytes: number;
+  fileCount: number;
+}
+
+export interface FreeUpFailure {
+  path: string;
+  error: string;
+}
+
+/** Result of marking files online-only: they stay in the cloud and
+    re-download when opened — nothing is deleted. */
+export interface FreeUpResult {
+  succeeded: string[];
+  failed: FreeUpFailure[];
 }
 
 /* ---------- Downloads & provenance (core `provenance` module) ---------- */

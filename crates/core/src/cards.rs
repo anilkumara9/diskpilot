@@ -1,6 +1,6 @@
 //! File-level Clean Up cards: old installers, forgotten downloads, old
-//! screenshots and big old videos, detected from the scan index with
-//! last-modified time as the evidence.
+//! screenshots, big old videos and big forgotten files, detected from
+//! the scan index with last-modified time as the evidence.
 //!
 //! The directory-level recommendation engine cannot express these: they
 //! are about individual files and how long they have sat untouched. A
@@ -27,6 +27,11 @@
 //!   `avi`, `wmv`, `webm`, `m4v`); at least 100 MB (decimal,
 //!   100,000,000 bytes, the same convention as the search grammar);
 //!   older than 180 days.
+//! - **big-forgotten-files** — any extension or kind; at least
+//!   500 MB (decimal, 500,000,000 bytes); older than 180 days. The
+//!   catch-all for the giant disk image or archive nothing has
+//!   touched in half a year, which is why it runs last: a big old
+//!   video is a big old video, not just a big file.
 //!
 //! A file belongs to at most one card: the rules are evaluated in the
 //! order above and the first match wins, so an old installer sitting in
@@ -53,6 +58,8 @@ const DOWNLOADS_AGE_MS: i64 = 90 * DAY_MS;
 const SCREENSHOT_AGE_MS: i64 = 90 * DAY_MS;
 const VIDEO_AGE_MS: i64 = 180 * DAY_MS;
 const VIDEO_MIN_BYTES: u64 = 100_000_000;
+const BIG_FORGOTTEN_AGE_MS: i64 = 180 * DAY_MS;
+const BIG_FORGOTTEN_MIN_BYTES: u64 = 500_000_000;
 
 /// One file offered by a Clean Up card.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -72,19 +79,20 @@ pub struct CandidateFile {
 #[serde(rename_all = "camelCase")]
 pub struct CandidateGroup {
     /// Card id: `old-installers`, `forgotten-downloads`,
-    /// `old-screenshots` or `big-old-videos`.
+    /// `old-screenshots`, `big-old-videos` or `big-forgotten-files`.
     pub card: String,
     pub title: String,
     pub files: Vec<CandidateFile>,
     pub total_bytes: u64,
 }
 
-/// The four cards, in display order: (id, title).
-const CARDS: [(&str, &str); 4] = [
+/// The five cards, in display order: (id, title).
+const CARDS: [(&str, &str); 5] = [
     ("old-installers", "Old installers"),
     ("forgotten-downloads", "Forgotten downloads"),
     ("old-screenshots", "Old screenshots"),
     ("big-old-videos", "Big old videos"),
+    ("big-forgotten-files", "Big files, long forgotten"),
 ];
 
 fn candidate_id(path: &str) -> String {
@@ -156,6 +164,9 @@ fn classify(file: &FileEntry, now_ms: i64) -> Option<usize> {
     {
         return Some(3);
     }
+    if age_ms > BIG_FORGOTTEN_AGE_MS && file.bytes >= BIG_FORGOTTEN_MIN_BYTES {
+        return Some(4);
+    }
     None
 }
 
@@ -163,7 +174,7 @@ fn classify(file: &FileEntry, now_ms: i64) -> Option<usize> {
 /// groups are returned, in the fixed card order; each group's files are
 /// sorted largest first (path order breaks ties, deterministically).
 pub fn cleanup_cards(index: &DirIndex, now_ms: i64) -> Vec<CandidateGroup> {
-    let mut buckets: [Vec<CandidateFile>; 4] = Default::default();
+    let mut buckets: [Vec<CandidateFile>; 5] = Default::default();
     for file in &index.files {
         if let Some(card) = classify(file, now_ms) {
             buckets[card].push(CandidateFile {
@@ -194,3 +205,86 @@ pub fn cleanup_cards(index: &DirIndex, now_ms: i64) -> Vec<CandidateGroup> {
         })
         .collect()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const NOW: i64 = 1_700_000_000_000;
+
+    fn entry(name: &str, bytes: u64, age_days: i64, category: Category) -> FileEntry {
+        FileEntry {
+            path: format!("/root/{name}"),
+            name: name.to_string(),
+            bytes,
+            category,
+            modified_ms: NOW - age_days * DAY_MS,
+        }
+    }
+
+    fn index(files: Vec<FileEntry>) -> DirIndex {
+        DirIndex {
+            files,
+            ..Default::default()
+        }
+    }
+
+    fn group<'a>(groups: &'a [CandidateGroup], card: &str) -> Option<&'a CandidateGroup> {
+        groups.iter().find(|g| g.card == card)
+    }
+
+    #[test]
+    fn big_forgotten_files_catches_any_kind() {
+        let groups = cleanup_cards(
+            &index(vec![entry(
+                "backup-2023.iso",
+                600_000_000,
+                200,
+                Category::UserData,
+            )]),
+            NOW,
+        );
+        let big = group(&groups, "big-forgotten-files").expect("iso lands in card five");
+        assert_eq!(big.title, "Big files, long forgotten");
+        assert_eq!(big.files.len(), 1);
+        assert_eq!(big.files[0].name, "backup-2023.iso");
+        assert_eq!(big.total_bytes, 600_000_000);
+    }
+
+    #[test]
+    fn big_old_video_stays_a_video_not_a_big_file() {
+        let groups = cleanup_cards(
+            &index(vec![entry(
+                "holiday.mp4",
+                600_000_000,
+                200,
+                Category::UserData,
+            )]),
+            NOW,
+        );
+        assert!(group(&groups, "big-old-videos").is_some());
+        assert!(group(&groups, "big-forgotten-files").is_none());
+    }
+
+    #[test]
+    fn big_but_recent_or_small_or_system_files_land_nowhere() {
+        let groups = cleanup_cards(
+            &index(vec![
+                // Big but touched ten days ago.
+                entry("fresh.iso", 600_000_000, 10, Category::UserData),
+                // Old but under the 500 MB floor.
+                entry("small-old.iso", 499_999_999, 200, Category::UserData),
+                // Big and old but a system file.
+                entry("system.iso", 600_000_000, 200, Category::SystemFiles),
+                // Big and old but zero recorded mtime: no age evidence.
+                FileEntry {
+                    modified_ms: 0,
+                    ..entry("ageless.iso", 600_000_000, 200, Category::UserData)
+                },
+            ]),
+            NOW,
+        );
+        assert!(groups.is_empty(), "no card fires, got: {groups:?}");
+    }
+}
+

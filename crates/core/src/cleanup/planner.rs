@@ -51,6 +51,21 @@ impl Planner {
                 all_regenerable = false;
                 continue;
             }
+            if rec.guided_only {
+                // Guided-only recommendations (e.g. Windows.old) are
+                // advice, never actions: no plan may contain them.
+                // The safety gate would reject their paths anyway;
+                // rejecting here names the reason and the route.
+                rejected.push(format!(
+                    "{} is guided only and is never cleaned by DiskPilot: {}",
+                    rec.title,
+                    rec.guidance.clone().unwrap_or_else(|| {
+                        "follow the operating system's own removal route".to_string()
+                    })
+                ));
+                all_regenerable = false;
+                continue;
+            }
             if rec
                 .methods
                 .iter()

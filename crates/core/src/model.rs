@@ -218,6 +218,17 @@ pub struct Recommendation {
     pub confidence: Confidence,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub alternative_command: Option<String>,
+    /// Guided-only recommendations are never cleaned by DiskPilot
+    /// itself: the planner rejects them outright, and the UI shows
+    /// `guidance` (the operating system's own removal route) instead of
+    /// a cleanup action. `serde(default)` keeps recommendations
+    /// serialised before this field existed loadable.
+    #[serde(default)]
+    pub guided_only: bool,
+    /// The operating-system route for removing a guided-only item,
+    /// shown verbatim to the user.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub guidance: Option<String>,
     pub source: String,
 }
 

@@ -253,4 +253,18 @@ mod tests {
         let c = ctx(dir.path());
         assert!(validate(Path::new("/etc/passwd"), &c).is_err());
     }
+
+    #[test]
+    fn rejects_windows_old_and_everything_under_it() {
+        // Defense in depth for the guided-only Windows.old
+        // recommendation: even a path that somehow reached the gate
+        // is refused, the folder itself and any child alike.
+        let dir = tempfile::tempdir().unwrap();
+        let c = ctx(dir.path());
+        let old = dir.path().join("Windows.old");
+        assert!(validate(&old, &c).is_err());
+        assert!(validate(&old.join("Windows/System32/kernel.dll"), &c).is_err());
+        assert!(is_report_only(&old));
+        assert!(is_report_only(&old.join("Users/meda/file.txt")));
+    }
 }

@@ -22,6 +22,41 @@ fn slug(path: &str) -> String {
         .to_string()
 }
 
+/// Path segments split on either separator, matching how the cards
+/// module reads paths (index paths use the host separator, but the
+/// comparison below is separator-agnostic).
+fn path_segments(path: &str) -> Vec<&str> {
+    path.split(['/', '\\']).filter(|s| !s.is_empty()).collect()
+}
+
+/// The scan's top-level `Windows.old` directory, if any: a direct
+/// child of the scan root whose name matches `windows.old`
+/// case-insensitively. Returns the stored path string and its
+/// allocated size. A `Windows.old` nested deeper is not the previous
+/// installation root and does not qualify.
+fn root_windows_old(summary: &ScanSummary, index: &DirIndex) -> Option<(String, u64)> {
+    let root_segs = path_segments(&summary.root);
+    let mut found: Option<(String, u64)> = None;
+    for (path, bytes) in &index.dir_sizes {
+        let segs = path_segments(path);
+        if segs.len() == root_segs.len() + 1
+            && segs[..root_segs.len()] == root_segs[..]
+            && segs[root_segs.len()].eq_ignore_ascii_case("windows.old")
+        {
+            // Prefer the largest if a case-variant duplicate exists.
+            if found.as_ref().map(|(_, b)| *bytes > *b).unwrap_or(true) {
+                found = Some((path.clone(), *bytes));
+            }
+        }
+    }
+    found
+}
+
+/// The removal route shown for the previous Windows installation:
+/// Windows' own storage tooling is the supported way to remove
+/// `Windows.old`, so the recommendation is guidance, not an action.
+const WINDOWS_OLD_GUIDANCE: &str = "Remove it through Windows Settings → System → Storage → Temporary files → Previous Windows installation, or Disk Cleanup (cleanmgr) → Clean up system files. DiskPilot does not delete this folder directly.";
+
 fn is_session_orphan_dir(path: &str) -> bool {
     let norm = path.replace('\\', "/").to_lowercase();
     (norm.contains("/.claude/projects")
@@ -37,9 +72,19 @@ pub fn build_recommendations(summary: &ScanSummary, index: &DirIndex) -> Vec<Rec
     let mut dir_paths: Vec<&String> = index.dir_sizes.keys().collect();
     dir_paths.sort();
 
+    // A previous Windows installation at the scan root gets a
+    // dedicated guided-only recommendation below; the generic passes
+    // must not also speak for the folder (or, in the Keep pass, for
+    // its size as personal data).
+    let windows_old = root_windows_old(summary, index);
+    let windows_old_path: Option<&str> = windows_old.as_ref().map(|(p, _)| p.as_str());
+
     for dir_path in &dir_paths {
         if *dir_path == &summary.root {
             continue; // the scan root itself is never a cleanup candidate
+        }
+        if Some(dir_path.as_str()) == windows_old_path {
+            continue;
         }
         let bytes = index.dir_sizes[*dir_path];
         if bytes < MIN_RECOMMEND_BYTES {
@@ -66,6 +111,8 @@ pub fn build_recommendations(summary: &ScanSummary, index: &DirIndex) -> Vec<Rec
                 risks: policy.risks.to_string(),
                 confidence: policy.confidence,
                 alternative_command: policy.alternative_command.map(|s| s.to_string()),
+                guided_only: false,
+                guidance: None,
                 source: "recommend.sessions".to_string(),
             });
             continue;
@@ -94,7 +141,41 @@ pub fn build_recommendations(summary: &ScanSummary, index: &DirIndex) -> Vec<Rec
             risks: policy.risks.to_string(),
             confidence: policy.confidence,
             alternative_command: policy.alternative_command.map(|s| s.to_string()),
+            guided_only: false,
+            guidance: None,
             source: format!("classifier:{}", class.rule_id),
+        });
+    }
+
+    // Previous Windows installation: guided only. DiskPilot never
+    // deletes `Windows.old` — the planner rejects guided-only items
+    // and the safety gate treats the location as report-only — so the
+    // recommendation carries the operating system's removal route.
+    // Pushed before the nested-actionable dedup below, which then
+    // also suppresses any generic candidate inside the folder.
+    if let Some((path, bytes)) = &windows_old {
+        candidates.push(Recommendation {
+            id: "windows-old".to_string(),
+            title: "Previous Windows installation (Windows.old)".to_string(),
+            paths: vec![path.clone()],
+            bytes: *bytes,
+            tier: Tier::ReviewFirst,
+            methods: vec![CleanupMethod::ManualReview],
+            why_detected: format!(
+                "A previous Windows installation folder was found at {} totalling {} bytes. Windows keeps it after an upgrade so the earlier installation can be restored.",
+                path, bytes
+            ),
+            why_safe:
+                "Once the current Windows installation is working well, the previous one is no longer needed day to day."
+                    .to_string(),
+            risks:
+                "Removing it deletes the option to roll back to the previous Windows installation."
+                    .to_string(),
+            confidence: Confidence::High,
+            alternative_command: None,
+            guided_only: true,
+            guidance: Some(WINDOWS_OLD_GUIDANCE.to_string()),
+            source: "recommend.windows-old".to_string(),
         });
     }
 
@@ -125,6 +206,7 @@ pub fn build_recommendations(summary: &ScanSummary, index: &DirIndex) -> Vec<Rec
         .iter()
         .filter(|(p, b)| {
             **b >= MIN_RECOMMEND_BYTES
+                && Some(p.as_str()) != windows_old_path
                 && index
                     .dir_classification
                     .get(*p)
@@ -149,6 +231,8 @@ pub fn build_recommendations(summary: &ScanSummary, index: &DirIndex) -> Vec<Rec
             risks: policy.risks.to_string(),
             confidence: policy.confidence,
             alternative_command: None,
+            guided_only: false,
+            guidance: None,
             source: "recommend.keep".to_string(),
         });
     }

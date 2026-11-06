@@ -1,6 +1,7 @@
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import App from "./App";
+import QuickSearchApp from "./pages/QuickSearch";
 import { applyTheme } from "./lib/theme";
 import "./styles/globals.css";
 
@@ -8,11 +9,16 @@ import "./styles/globals.css";
 // refines this once saved settings load.
 applyTheme("system");
 
+// The Quick Search popup window loads this same bundle with
+// `?window=quicksearch`; it renders its own surface instead of the
+// main app (no sidebar, no store init).
+const isQuickSearch =
+  typeof window !== "undefined" &&
+  new URLSearchParams(window.location.search).get("window") === "quicksearch";
+
 const rootElement = document.getElementById("root");
 if (!rootElement) throw new Error("Root element #root was not found.");
 
 createRoot(rootElement).render(
-  <StrictMode>
-    <App />
-  </StrictMode>,
+  <StrictMode>{isQuickSearch ? <QuickSearchApp /> : <App />}</StrictMode>,
 );

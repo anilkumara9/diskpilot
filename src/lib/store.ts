@@ -20,6 +20,10 @@ const DEFAULT_SETTINGS: AppSettings = {
   assistantProvider: "anthropic",
   exclusions: [],
   savedSearches: [],
+  autoScan: "off",
+  lowSpaceAlertGb: 10,
+  growthAlertGb: 5,
+  autoStart: false,
 };
 
 export type StatusBannerState = { kind: "error" | "info" | "success"; message: string } | null;

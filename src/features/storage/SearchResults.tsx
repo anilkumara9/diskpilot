@@ -26,7 +26,9 @@ export interface ActiveSearch {
   totalMatches: number;
 }
 
-function Chip({
+/** One "understood as" chip. Shared with Quick Search, which renders
+    the same interpretation row over the same filters object. */
+export function Chip({
   chip,
   removable,
   disabled,
