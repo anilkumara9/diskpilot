@@ -96,6 +96,28 @@ based on Keep a Changelog, and the project follows semantic versioning.
   permanently deleted items are counted as skipped, and the restore
   itself is recorded in History. Runs recorded before this version
   explain that they predate restore support.
+- **Startup manager** — a System page lists every program that runs
+  at sign-in: the per-user and machine-wide registry `Run` / `RunOnce`
+  entries and the Startup-folder items, each with its target file,
+  whether that file still exists, and its size. Entries can be
+  disabled and re-enabled reversibly — nothing is deleted: registry
+  values move to a `…-DisabledByDiskPilot` sibling key with their
+  data preserved exactly, folder items move to a `Disabled by
+  DiskPilot` subfolder, and disabled entries stay listed. Changing
+  machine-wide entries asks for DiskPilot to run as administrator;
+  every change is recorded in History.
+- **Compress & save** — the Cleanup page offers big folders nothing
+  has touched in at least 90 days (256 MB and up) for NTFS
+  compression: Windows compresses the folder in place with
+  `compact.exe`, nothing is deleted, the folder keeps working, and
+  the action is reversible the same way. System-classified and
+  report-only folders are never offered, already-compressed folders
+  are filtered out, and the folder is re-validated through the
+  safety gate at action time.
+- **Storage by type** — the Storage page gains a Types view: the
+  scan's allocated bytes and file counts per file extension
+  (extensionless files grouped together), with the largest files of
+  any type one click away.
 
 ### Changed
 
