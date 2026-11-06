@@ -50,19 +50,24 @@ fn collect_drive_health() -> Vec<DriveHealth> {
 
 /// `STORAGE_PROTOCOL_COMMAND_FLAG_ADAPTER_REQUEST` (winioctl.h):
 /// the command is addressed to the adapter/controller, not a LUN.
+#[cfg(any(windows, test))]
 const STORAGE_PROTOCOL_COMMAND_FLAG_ADAPTER_REQUEST: u32 = 0x8000_0000;
 
 /// `STORAGE_PROTOCOL_STATUS_SUCCESS` (winioctl.h): the value the
 /// driver writes to the request's ReturnStatus field when the
 /// protocol command completes successfully.
+#[cfg(any(windows, test))]
 const STORAGE_PROTOCOL_STATUS_SUCCESS: u32 = 0x1;
 
 /// Offset of the NVMe admin command inside the request buffer,
 /// and of the data region behind it. The command is 64 bytes, so
 /// the data starts at 80 + 64 = 144 and the buffer totals
 /// 144 + 512 = 656 bytes.
+#[cfg(any(windows, test))]
 const NVME_COMMAND_OFFSET: usize = 80;
+#[cfg(any(windows, test))]
 const NVME_DATA_OFFSET: usize = 144;
+#[cfg(any(windows, test))]
 const NVME_LOG_PAGE_LEN: usize = 512;
 
 /// Build the `IOCTL_STORAGE_PROTOCOL_COMMAND` request for an NVMe
@@ -81,6 +86,7 @@ const NVME_LOG_PAGE_LEN: usize = 512;
 /// NSID 0xFFFFFFFF @84 (the log is controller-wide),
 /// CDW10 = LID 02h with NUMD (127 dwords − 1) in bits 16..=31
 /// @120, CDW11 = 0 @124.
+#[cfg(any(windows, test))]
 fn build_nvme_health_request() -> Vec<u8> {
     let mut buffer = vec![0u8; NVME_DATA_OFFSET + NVME_LOG_PAGE_LEN];
     let put_u32 = |buffer: &mut [u8], off: usize, value: u32| {

@@ -43,10 +43,30 @@ export function destinationDrives(drives: DriveInfo[], sourcePath: string): Driv
   return drives.filter((drive) => !sameLocation(drive.rootPath, sourceRoot));
 }
 
+/**
+ * Normalize a destination directory so the previewed target and
+ * the value sent to the shell are the same string. A bare drive
+ * root — "D:" or "D:\" — becomes the canonical "D:\": a bare
+ * "D:" is a drive-RELATIVE path (whatever folder that drive last
+ * used), a different location entirely. Other directories lose
+ * their trailing separators.
+ */
+export function normalizeDestDir(destDir: string): string {
+  const slashed = destDir.trim().replace(/\//g, "\\");
+  const root = /^([A-Za-z]:)\\*$/.exec(slashed);
+  if (root) return `${root[1].toUpperCase()}\\`;
+  return slashed.replace(/\\+$/, "");
+}
+
 /** Where a folder lands when moved into `destDir`: the
     destination directory plus the folder's own name. */
 export function relocationTarget(sourcePath: string, destDir: string): string {
+  const dir = normalizeDestDir(destDir);
   const name = basename(sourcePath);
-  const dir = destDir.replace(/[\\/]+$/, "");
-  return `${dir}\\${name}`;
+  /* A drive root has no folder name of its own — basename("C:\")
+     is "C:" — so there is nothing to append: the preview must
+     never invent "D:\C:". The destination itself is the honest
+     preview (the shell refuses a root source regardless). */
+  if (!name || /^[A-Za-z]:$/.test(name)) return dir;
+  return /^[A-Za-z]:\\$/.test(dir) ? `${dir}${name}` : `${dir}\\${name}`;
 }

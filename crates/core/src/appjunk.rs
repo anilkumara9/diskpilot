@@ -221,13 +221,18 @@ pub struct AppJunkGroup {
     pub bytes: u64,
     /// Total files across `paths` (a file path counts once).
     pub file_count: u64,
+    /// True when any of the group's paths hit the walk depth or
+    /// entry caps, so `bytes`/`file_count` are a lower bound rather
+    /// than the full size of the location.
+    pub truncated: bool,
 }
 
 /// Deepest directory level a junk measurement descends.
 const MAX_WALK_DEPTH: usize = 32;
-/// Hard cap on entries visited per location, so a pathological tree
-/// can never turn a measurement into a scan.
-const MAX_ENTRIES_PER_LOCATION: u64 = 500_000;
+/// Hard cap on entries visited per measured path, so a
+/// pathological tree can never turn a measurement into a scan.
+/// Hitting either cap marks the group `truncated`.
+const MAX_ENTRIES_PER_PATH: u64 = 500_000;
 
 /// Resolve a rule location template to the concrete paths that
 /// exist. Missing branches die silently at every step.
@@ -353,28 +358,31 @@ fn wildcard_match(pattern: &str, name: &str) -> bool {
     p == pat.len()
 }
 
-/// Measure one junk path: (allocated bytes, file count). Files
-/// measure themselves; directories are walked bounded, never
-/// following symlinks.
-fn measure_path(path: &Path) -> (u64, u64) {
+/// Measure one junk path: (allocated bytes, file count, whether
+/// the walk hit a cap and the figures are therefore a lower
+/// bound). Files measure themselves; directories are walked
+/// bounded, never following symlinks.
+fn measure_path(path: &Path) -> (u64, u64, bool) {
     let Ok(md) = std::fs::symlink_metadata(path) else {
-        return (0, 0);
+        return (0, 0, false);
     };
     if md.file_type().is_symlink() {
-        return (0, 0);
+        return (0, 0, false);
     }
     if md.is_file() {
-        return (allocated_size_for_path(path), 1);
+        return (allocated_size_for_path(path), 1, false);
     }
     if !md.is_dir() {
-        return (0, 0);
+        return (0, 0, false);
     }
     let mut bytes = 0u64;
     let mut files = 0u64;
     let mut visited = 0u64;
+    let mut truncated = false;
     let mut stack: Vec<(PathBuf, usize)> = vec![(path.to_path_buf(), 0)];
     while let Some((dir, depth)) = stack.pop() {
         if depth > MAX_WALK_DEPTH {
+            truncated = true;
             continue;
         }
         let Ok(rd) = std::fs::read_dir(&dir) else {
@@ -382,8 +390,8 @@ fn measure_path(path: &Path) -> (u64, u64) {
         };
         for entry in rd.flatten() {
             visited += 1;
-            if visited > MAX_ENTRIES_PER_LOCATION {
-                return (bytes, files);
+            if visited > MAX_ENTRIES_PER_PATH {
+                return (bytes, files, true);
             }
             let ft = match entry.file_type() {
                 Ok(ft) => ft,
@@ -401,29 +409,95 @@ fn measure_path(path: &Path) -> (u64, u64) {
             }
         }
     }
-    (bytes, files)
+    (bytes, files, truncated)
 }
 
-/// Measure every rule against `roots`. Groups with no existing
-/// locations or zero measured bytes are dropped. The result is
+/// Component-normalized, lowercased key for ancestor comparisons:
+/// components joined by `/`, case folded, so claims spelled in
+/// different cases still recognize each other on a
+/// case-insensitive filesystem.
+fn claim_key(path: &Path) -> String {
+    let mut key = String::new();
+    for comp in path.components() {
+        if !key.is_empty() {
+            key.push('/');
+        }
+        key.push_str(&comp.as_os_str().to_string_lossy().to_lowercase());
+    }
+    key
+}
+
+/// Drop claimed paths that another claim already covers. A
+/// directory claim's measurement includes everything under it, so
+/// a second claim on a descendant (or an exact duplicate claimed
+/// by another group) would count those bytes twice; the
+/// descendant claim is dropped and the bytes stay counted exactly
+/// once, in the ancestor's group. Claims are processed in table
+/// order; for exact duplicates the first group keeps the path.
+fn collapse_claims(claims: &mut [BTreeSet<PathBuf>]) {
+    // Flatten in group order with each claim's key.
+    let mut flat: Vec<(usize, PathBuf, String)> = Vec::new();
+    for (gi, set) in claims.iter().enumerate() {
+        for p in set {
+            flat.push((gi, p.clone(), claim_key(p)));
+        }
+    }
+    let mut kept = vec![true; flat.len()];
+    for i in 0..flat.len() {
+        for j in 0..flat.len() {
+            if i == j || !kept[j] {
+                continue;
+            }
+            let (ki, kj) = (&flat[i].2, &flat[j].2);
+            // Strict descendant of another claim, or an exact
+            // duplicate of an earlier one.
+            if ki.starts_with(&format!("{kj}/")) || (ki == kj && j < i) {
+                kept[i] = false;
+                break;
+            }
+        }
+    }
+    for set in claims.iter_mut() {
+        set.clear();
+    }
+    for (entry, keep) in flat.into_iter().zip(kept) {
+        if keep {
+            claims[entry.0].insert(entry.1);
+        }
+    }
+}
+
+/// Measure every rule against `roots`. Claims are resolved for
+/// all rules first and ancestor-collapsed (see [`collapse_claims`])
+/// so nested claims are never double-counted. Groups left with
+/// no paths or zero measured bytes are dropped. The result is
 /// sorted by bytes descending (ties by rule id) and each group's
 /// paths are sorted and deduplicated, so two runs over the same
 /// tree return identical results.
 pub fn measure_app_junk(roots: &JunkRoots) -> Vec<AppJunkGroup> {
-    let mut groups = Vec::new();
-    for rule in junk_rules() {
-        let mut paths: BTreeSet<PathBuf> = BTreeSet::new();
-        for loc in rule.locations {
-            for p in resolve_location(loc, roots) {
-                paths.insert(p);
+    let mut claims: Vec<BTreeSet<PathBuf>> = junk_rules()
+        .iter()
+        .map(|rule| {
+            let mut paths: BTreeSet<PathBuf> = BTreeSet::new();
+            for loc in rule.locations {
+                for p in resolve_location(loc, roots) {
+                    paths.insert(p);
+                }
             }
-        }
+            paths
+        })
+        .collect();
+    collapse_claims(&mut claims);
+    let mut groups = Vec::new();
+    for (rule, paths) in junk_rules().iter().zip(claims) {
         let mut bytes = 0u64;
         let mut file_count = 0u64;
+        let mut truncated = false;
         for p in &paths {
-            let (b, f) = measure_path(p);
+            let (b, f, t) = measure_path(p);
             bytes = bytes.saturating_add(b);
             file_count = file_count.saturating_add(f);
+            truncated |= t;
         }
         if bytes == 0 || paths.is_empty() {
             continue;
@@ -436,6 +510,7 @@ pub fn measure_app_junk(roots: &JunkRoots) -> Vec<AppJunkGroup> {
             paths: paths.into_iter().collect(),
             bytes,
             file_count,
+            truncated,
         });
     }
     groups.sort_by(|a, b| b.bytes.cmp(&a.bytes).then_with(|| a.id.cmp(&b.id)));
@@ -581,6 +656,70 @@ mod tests {
         std::os::unix::fs::symlink(dir.path(), &dir_link).unwrap();
         let groups2 = measure_app_junk(&roots);
         assert_eq!(group(&groups2, "discord").unwrap().paths.len(), 2);
+    }
+
+    #[test]
+    fn ancestor_claims_collapse_so_nested_junk_counts_once() {
+        // A descendant claim (even spelled in a different case)
+        // drops out of its group: its bytes live in the ancestor's
+        // measurement. Unrelated claims survive untouched.
+        let mut claims = vec![
+            BTreeSet::from([PathBuf::from("/x/Cache")]),
+            BTreeSet::from([PathBuf::from("/X/cache/Sub"), PathBuf::from("/y/Other")]),
+        ];
+        collapse_claims(&mut claims);
+        assert_eq!(claims[0], BTreeSet::from([PathBuf::from("/x/Cache")]));
+        assert_eq!(claims[1], BTreeSet::from([PathBuf::from("/y/Other")]));
+        // Within one group the same collapse applies.
+        let mut claims = vec![BTreeSet::from([
+            PathBuf::from("/a/base"),
+            PathBuf::from("/a/base/inner"),
+            PathBuf::from("/a/base2"),
+        ])];
+        collapse_claims(&mut claims);
+        assert_eq!(
+            claims[0],
+            BTreeSet::from([PathBuf::from("/a/base"), PathBuf::from("/a/base2")])
+        );
+        // A sibling that merely shares a name prefix is NOT a
+        // descendant and must survive.
+        let mut claims = vec![
+            BTreeSet::from([PathBuf::from("/x/Cache")]),
+            BTreeSet::from([PathBuf::from("/x/Cache2")]),
+        ];
+        collapse_claims(&mut claims);
+        assert_eq!(claims[1].len(), 1);
+        // An exact duplicate claimed by two groups stays with the
+        // first; the second group is left empty (and so drops out
+        // of measure_app_junk's output entirely).
+        let mut claims = vec![
+            BTreeSet::from([PathBuf::from("/same/Dir")]),
+            BTreeSet::from([PathBuf::from("/SAME/dir")]),
+        ];
+        collapse_claims(&mut claims);
+        assert_eq!(claims[0].len(), 1);
+        assert!(claims[1].is_empty());
+    }
+
+    #[test]
+    fn deep_trees_set_truncated_and_stop_at_the_cap() {
+        let (_dir, roots) = fixture();
+        // A 40-level chain inside Discord's Cache, with a file at
+        // the very bottom: deeper than the 32-level walk cap.
+        let mut deep = roots.roaming_app_data.join("Discord/Cache");
+        for i in 0..40 {
+            deep = deep.join(format!("d{i}"));
+        }
+        write_file(&deep.join("bottom.bin"), &[1u8; 128]);
+        let groups = measure_app_junk(&roots);
+        let discord = group(&groups, "discord").expect("discord group");
+        assert!(discord.truncated);
+        // The bottom file is beyond the cap and not counted; the
+        // count is exactly the fixture's two shallow cache files.
+        assert_eq!(discord.file_count, 2);
+        // A shallow group measured in the same run is not flagged.
+        let explorer = group(&groups, "explorer-thumbs").expect("explorer group");
+        assert!(!explorer.truncated);
     }
 
     #[test]

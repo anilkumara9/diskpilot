@@ -839,11 +839,15 @@ export interface SoftwareUpdateOutcome {
 }
 
 /** `relocate_folder` / `undo_relocation` result: the folder's
-    original location, where it lives now, and its measured size. */
+    original location, where it lives now, and its measured size.
+    `warning` carries a caveat the shell reports alongside a
+    completed move (null when there is nothing to add) — the
+    move succeeded, but the user should still see it. */
 export interface RelocateResult {
   source: string;
   target: string;
   bytes: number;
+  warning: string | null;
 }
 
 export type PageId =

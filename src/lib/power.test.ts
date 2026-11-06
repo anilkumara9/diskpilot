@@ -1,6 +1,12 @@
 import { describe, expect, it } from "vitest";
 import { appJunkBanner } from "./junk";
-import { destinationDrives, driveRootOf, relocationTarget, sameLocation } from "./moves";
+import {
+  destinationDrives,
+  driveRootOf,
+  normalizeDestDir,
+  relocationTarget,
+  sameLocation,
+} from "./moves";
 import { actionableIds, anyRunning, markRunning, mergeOutcomes, PENDING } from "./updates";
 import { clampMinAgeDays } from "./maintenance";
 import { driveHealthFacts, driveHealthStatusLabel, lifeBarColorVar } from "./driveHealth";
@@ -77,6 +83,24 @@ describe("moves", () => {
     expect(relocationTarget("C:\\Games\\Big Game", "D:\\")).toBe("D:\\Big Game");
     expect(relocationTarget("C:\\Games\\Big Game", "D:\\Moved")).toBe("D:\\Moved\\Big Game");
     expect(relocationTarget("C:\\Games\\Big Game", "D:/")).toBe("D:\\Big Game");
+  });
+
+  it("normalizeDestDir makes a bare drive root canonical, never drive-relative", () => {
+    expect(normalizeDestDir("D:")).toBe("D:\\");
+    expect(normalizeDestDir("d:\\")).toBe("D:\\");
+    expect(normalizeDestDir("d:/")).toBe("D:\\");
+    expect(normalizeDestDir("D:\\Moved\\")).toBe("D:\\Moved");
+    expect(normalizeDestDir("  D:/Moved/  ")).toBe("D:\\Moved");
+  });
+
+  it("relocationTarget previews a bare-root destination the way it will be sent", () => {
+    expect(relocationTarget("C:\\Games\\Big Game", "D:")).toBe("D:\\Big Game");
+    expect(relocationTarget("C:\\Games\\Big Game", "D:\\Moved\\")).toBe("D:\\Moved\\Big Game");
+  });
+
+  it("relocationTarget never invents a name for a drive-root source", () => {
+    expect(relocationTarget("C:\\", "D:\\")).toBe("D:\\");
+    expect(relocationTarget("C:", "D:\\Moved")).toBe("D:\\Moved");
   });
 });
 
