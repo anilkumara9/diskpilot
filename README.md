@@ -1,18 +1,28 @@
 # DiskPilot for Windows
 
-**Understand your storage. Know what is safe. Clean it confidently.**
+**The storage manager for Windows that shows you everything, deletes
+nothing without your approval, and can undo what it does.**
 
+[![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 [![Platform](https://img.shields.io/badge/platform-Windows%2010%20%2F%2011-0078D4)](https://www.microsoft.com/windows)
 [![Tauri](https://img.shields.io/badge/Tauri-2-FFC131)](https://tauri.app)
-[![Rust](https://img.shields.io/badge/Rust-1.82%2B-DE3423)](https://www.rust-lang.org)
+[![Rust](https://img.shields.io/badge/Rust-stable-DE3423)](https://www.rust-lang.org)
 [![React](https://img.shields.io/badge/React-19-61DAFB)](https://react.dev)
-[![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
-DiskPilot is open-source storage intelligence for Windows. It scans your
-drives read-only, explains — in plain language — what is using space and
-why it is there, and only ever removes files through a reviewed cleanup
-plan that passes a strict safety gate. Nothing is deleted silently, and
-the default for everything is the Recycle Bin.
+DiskPilot is open-source storage intelligence for Windows. It scans
+your drives read-only, explains — in plain language — what is using
+space and why it is there, and only ever removes files through a
+reviewed cleanup plan that passes a strict safety gate. Nothing is
+deleted silently, the default for everything is the Recycle Bin, and
+every action it takes is written to a local history you can audit —
+and, for cleanups, undo.
+
+[![DiskPilot walkthrough poster](assets/poster.png)](assets/DiskPilot-Walkthrough.mp4)
+
+**▶ Watch the full walkthrough** — a tour of the scan, the safety
+pipeline, and a complete cleanup, end to end.
+
+![DiskPilot Overview — the whole disk at a glance](docs/assets/hero-overview.png)
 
 ## Install
 
@@ -41,434 +51,200 @@ Update packages are cryptographically signed and verified in the app
 before anything installs — an update that fails verification is
 refused, never applied.
 
-## Walkthrough
-
-[![DiskPilot walkthrough poster](assets/poster.png)](assets/DiskPilot-Walkthrough.mp4)
-
-**▶ Watch the full walkthrough** — a tour of the scan, the safety
-pipeline, and a complete cleanup, end to end.
-
-## What it does
-
-### Overview & Since last scan
-
-The first screen answers the question directly: one strip shows the
-whole disk — a segment per category with the recoverable portion
-hatched — plus Used / Available / Likely recoverable / Scanned figures,
-the recommendations most worth reviewing, and where space goes by
-category. The previous scan is kept as a snapshot, so every new scan is
-also a comparison: a **Since last scan** view shows what grew, what
-shrank, and what you got back — down to the folders responsible, in
-**Biggest changes** lists of what grew most and what freed space.
-
-On a multi-drive PC, every volume gets its own card on the Overview —
-total and free space per drive, with a one-click scan for any drive
-that isn't the current scan root. And when you need the picture as a
-document, **Export report** saves a standalone HTML storage report
-through the native save dialog.
-
-### Space forecast
-
-Every completed scan appends to a persisted scan-history time series.
-A least-squares fit over the last 30 days of that history turns the
-series into a forecast on the Overview: how many bytes per day the
-drive is gaining, and — while it is growing — the projected date it
-fills up. A flat or shrinking disk simply says so; the trend is shown,
-never dressed up as a promise.
-
-### Watch & alerts
-
-DiskPilot can watch the disk for you. Set scheduled scans to daily or
-weekly and, while the app sits in the tray, it rescans the configured
-root on that schedule. After a *scheduled* scan it can notify you when
-free space drops below a threshold you set (10 GB by default) or when
-usage grows by more than your limit between checks (5 GB by default).
-Scans you start yourself never raise alerts. An optional **launch at
-sign-in** setting starts DiskPilot in the tray automatically, so the
-watch is on whenever you are signed in.
-
-**Automatic maintenance** is the set-and-forget companion: on the
-watch's schedule it permanently clears only what is already safe to
-lose — Recycle Bin items older than the age you set, and temporary
-files older than that age from the last scan — through the same
-safety gate as a manual cleanup. Nothing else is ever touched, an
-item exactly at the age limit is kept, and every run is recorded in
-History with what it removed.
-
-### Fast scans & a live index (NTFS)
-
-When DiskPilot runs with administrator rights and the scan target is a
-whole NTFS drive, the scanner reads the drive's Master File Table
-directly instead of walking the directory tree, so a full-drive scan
-finishes in a small fraction of the time. In every other situation —
-a standard launch, a folder target, a non-NTFS volume, or any read
-problem — the standard scanner is used, automatically and invisibly;
-the results are identical either way, and every scan records which
-engine produced it.
-
-Between scans, a **live index** follows the volume's USN change
-journal and applies creations, changes, renames, and deletions to the
-index, so search and the size views stay current within about a
-minute — while DiskPilot is running (sitting in the tray counts). It
-needs the same administrator volume access as the fast scan; without
-it, it quietly stays off and the index refreshes on each scan. If the
-journal has wrapped or a change cannot be applied exactly, the index
-is marked stale rather than approximated, and the next scan
-reconciles it. The Overview shows a quiet *Live index* marker while
-it is active, and the feature can be turned off in Settings.
-
-### Health
-
-One page that answers "is this PC okay?": every drive with a plain
-status — *Healthy*, *Getting low*, *Low space* — judged by the room it
-has left, the fill-up forecast with the growth chart behind it
-(scanned size and free space across your scan history), and the watch
-as configured: schedule, alert thresholds, and how many scans of
-history the trend rests on.
-
-The same page reads each physical drive's own **SMART health**:
-SSD life left, temperature, power-on hours, power cycles and
-reallocated sectors, rolled into a *Healthy* / *Caution* / *Critical*
-verdict from the drive's self-monitoring data (ATA attributes or the
-NVMe health log, whichever the drive speaks). A drive that reports
-it is likely to fail says so in plain words — back up now. Values a
-drive does not report are shown as *Not reported*, never guessed.
-
-### Storage explorer & natural-language search
-
-Drill into the scanned tree with breadcrumbs, sorting, and a details
-panel for any folder: live metadata plus its classification card (the
-category, the rule that matched, a confidence level) and *Reveal in
-Explorer*. A **Largest items** tab lists the 500 largest files and the
-heaviest folders — with the standing reminder that size alone is never
-a reason to delete.
-
-Search skips the tree entirely. Type what you mean — `pdfs from last
-week over 5 MB` — and DiskPilot shows how it understood you as a row of
-removable chips (kind, size, date, source) before running a
-closed-grammar search over the scan index. Searches you run often can
-be **saved** and re-run against the latest scan in one click.
-
-Search also reads *inside* your images: after a scan, Windows'
-built-in OCR — on-device, nothing sent anywhere — reads the text in
-screenshots and images, and a hit that matched only through that text
-carries a **Text match** marker, so the invoice screenshot is findable
-by the words in it. The reading can be turned off in Settings.
-
-A **Map** tab renders the current folder as a treemap — every folder
-and large file a block sized by its bytes, colored by category — for
-the "where did it all go?" answer at a glance; click a folder block to
-drill in. Selecting any file opens an **inspector**: its facts, its
-classification, image dimensions and camera EXIF where the file
-carries them, and its download source where one is recorded.
-
-A **Types** tab ranks the whole scan by file extension — allocated
-bytes and file counts per type, extensionless files grouped together —
-and expands any type in place to its largest files, so "what kind of
-data is eating the disk?" and "show me those files" are one gesture
-apart. The figures are aggregated from the same scan index as every
-other view, so they can never disagree with them.
-
-### Quick Search
-
-Press **Ctrl+Shift+Space** anywhere in Windows and a compact search
-popup appears over whatever you are doing — the same plain-language
-search and understood-as chips, run against the latest scan's index.
-Arrow keys move through the results, Enter reveals the file in
-Explorer, and Escape (or clicking away) puts the popup away.
-
-### Downloads & provenance
-
-Every browser download on Windows carries a Mark of the Web
-(`Zone.Identifier`) stream recording where it came from. DiskPilot
-reads it: the Downloads page groups files by source — Gmail, Google
-Drive, ChatGPT, GitHub, Slack, any website — and lists your most recent
-downloads with their origin attached, so you can find the invoice by
-remembering the email instead of the filename. Provenance is never
-guessed: no stream, no source.
-
-### OneDrive — free up space
-
-When a OneDrive folder is present, DiskPilot detects it and reads its
-on-disk footprint from the scan — how much of what syncs is actually
-stored locally. From the Overview card (or the file inspector) you can
-**free up space**: the selected files and folders are marked to be
-kept online-only, asking OneDrive to evict the local copies. Nothing
-is deleted; the files stay in OneDrive and re-download when opened,
-and the local space frees as OneDrive syncs the change.
-
-### Duplicates — exact and look-alike
-
-Exact copies are found in two phases — group by identical size, then
-confirm with SHA-256 — and every copy is re-verified byte-for-byte
-immediately before it moves. Hard links are counted once, and NTFS
-clones are flagged as "removing frees little". A second tab finds
-**look-alike photos** (bursts, edits, resized copies) with perceptual
-hashing. Look-alikes can't be byte-verified by definition, so that tab
-is review-only — one copy always stays, and deletion stays with the
-byte-verified flow.
-
-Reviewing groups one by one is optional: a **smart-select** bar picks
-the keeper in every group at once — keep the newest copy, the oldest,
-or the shortest path — and selects every other copy, with the
-reclaimable total updating live. The rule only saves the clicking:
-the selection still goes through the review dialog and the same
-byte-for-byte re-verification before anything moves.
-
-### Media
-
-Photos and videos usually hold the space that matters, so they get
-their own page: totals for photos, videos, and screenshots (a subset
-of photos, labelled as such), and the 15 biggest files of each kind
-with their dates. The counts use exactly the same kind rules as
-search, so the two never disagree. A look-alike strip counts the
-near-duplicate photos the perceptual scan found and takes you
-straight to them in Duplicates.
-
-### Clean Up — tiers, cards, plans
-
-Classification becomes recommendations in three risk tiers: *Likely
-safe*, *Review first*, *Keep*. Each one explains why it was detected,
-why it may be safe, and what could go wrong; where a tool has its own
-hygiene command (`pnpm store prune`, a Docker prune preview), DiskPilot
-shows you that command instead of deleting behind the tool's back.
-
-On top of the tiers sit **Clean Up cards** — Old installers, Forgotten
-downloads, Old screenshots, Big old videos, and Big files, long
-forgotten — file-level candidates picked by age and size evidence,
-each opening a review list before anything is planned.
-
-Selecting anything builds a **cleanup plan**: exact paths, exact bytes,
-warnings, and any items the safety gate rejected. Plans are single-use
-and expire after 10 minutes. The default action is *Move to Recycle
-Bin*; *Permanently delete* is offered only when every item in the plan
-is regenerable, and card plans are Recycle-Bin-only by construction.
-And the result tells the whole truth: if part of a cleanup fails, the
-outcome says what succeeded, what failed and why — a partial cleanup
-is never reported as a success, and History records the failure.
-
-Deleting is not the only way to win space back. **Compress & save**
-offers big folders nothing has touched in at least 90 days for NTFS
-compression: Windows compresses the folder in place with
-`compact.exe`, nothing is deleted, the folder keeps working, and the
-action is reversible from the same section. System-classified and
-report-only folders are never offered, already-compressed folders are
-filtered out, and the folder is re-validated through the safety gate
-at action time.
-
-**App caches** names the junk that generic temp rules cannot see: a
-curated rule set measures the known, regenerable cache locations of
-the apps people actually run — Discord, Slack, Teams, Chrome, Edge,
-Firefox, VS Code, NVIDIA's shader and driver-download caches, the
-DirectX shader cache, Windows Update downloads, and Explorer's
-thumbnail and icon caches. Only cache locations are ever listed —
-never profiles, history, cookies or offline data — each app shows
-its measured allocated size, and cleaning re-validates the exact
-rule set on the machine side and moves the files to the Recycle Bin,
-so a group can always be brought back.
-
-### Games
-
-Games are read from the launchers' own records — Steam's
-`libraryfolders.vdf` and app manifests, Epic's `.item` manifests —
-and listed per library with the size each game takes: the size the
-launcher recorded, or a direct measurement where it recorded none.
-The page is report-only: uninstalling stays with Steam or Epic, and
-DiskPilot never removes game files.
-
-### Move to another drive
-
-When one drive is full and another has room, a big folder — a game,
-a media library, a project tree — can be **moved to another drive**
-from Storage or Games. DiskPilot copies the folder, verifies the
-copy file-for-file (count and allocated bytes must match), and only
-then replaces the original with a directory junction, so every app
-keeps finding it at the old path. Protected and system folders are
-refused, the destination must have the folder's size plus headroom,
-and a failed copy or verification leaves the original untouched.
-Every move is recorded in History with an **Undo move** that brings
-the folder back the same verified way.
-
-### Developer Tools
-
-Per-tool analyzers read other applications' data **read-only** —
-editors (Cursor, VS Code), AI agents (Claude Code, Codex, Gemini CLI,
-Copilot), Node.js, Rust, Python, .NET, Visual Studio / JetBrains, and
-local model stores (Ollama, LM Studio) — and report each item with a
-state: current, stale, orphaned, superseded, or informational. A
-transcript secrets check scans AI-assistant transcripts locally for
-known credential formats and shows findings masked; nothing is
-uploaded, and nothing is changed.
-
-### Docker
-
-DiskPilot locates the `docker` CLI (GUI apps don't inherit a shell
-PATH), parses `docker system df -v`, and shows images, containers,
-volumes, and build cache with reclaimable amounts. Actions are a closed
-set — remove a stopped container, remove an unused image, prune unused
-build cache — each previewed with the exact command and re-validated
-before it runs. Volumes are never removed. A WSL2 diagnostic compares
-the Docker virtual disk's file size with Docker's own reclaimable
-figure and shows the manual compaction steps; it never runs them for
-you.
-
-### Applications & software updates
-
-Installed applications with their install locations and the size of
-the data each one keeps in AppData — including leftover folders from
-apps that were uninstalled, reported for review and never removed
-automatically. **Check for updates** asks `winget` which installed
-apps have a newer version available and lists each with its current
-and available versions; updating one app (or all of them) runs
-winget's own upgrade for exactly the listed package ids, and each
-result is reported as it actually came back — an app whose update
-fails says so. If winget is not available on the machine, the
-section says that instead of pretending to check.
-
-### Startup
-
-Everything that opens when you sign in to Windows, in one list: the
-per-user and machine-wide registry `Run` / `RunOnce` entries and the
-Startup-folder items, each with its target file, whether that file
-still exists, and its size. Entries can be disabled and re-enabled
-reversibly — nothing is deleted: registry values move to a
-`…-DisabledByDiskPilot` sibling key with their data preserved
-exactly, folder items move to a `Disabled by DiskPilot` subfolder,
-and disabled entries stay listed. Changing machine-wide entries asks
-for DiskPilot to run as administrator, and every change is recorded
-in History.
-
-### Assistant (optional, off by default)
-
-An in-app chat over your scan data, with Anthropic, OpenAI, or
-OpenRouter — bring your own key, stored in Windows Credential Manager
-and never readable back through the UI. The assistant has a fixed,
-read-only tool set (category totals, top items, recommendations,
-Docker, developer-tool summaries). It cannot delete, move, or run
-anything; its only effect is highlighting recommendations for your
-review. Requests go directly to the provider's host over HTTPS with
-redirects disabled, and file contents are never read or sent.
-
-### History
-
-Every cleanup action and every scan is appended to a local SQLite log:
-timestamp, operation, paths, bytes reclaimed, errors. If DiskPilot did
-it, it is in History — the audit trail for "what did this ever do?".
-
-A cleanup run can also be **undone** from its History entry: while its
-items are still in the Recycle Bin, one Restore action puts the whole
-run back in a single step and reports exactly what came back, what
-could not be restored, and what was permanently deleted and is gone
-for good.
-
-### Recycle Bin — restore, then empty
-
-The Recycle Bin dialog lists the bin's current contents before
-anything happens. Each item can be **restored** to its original
-location — refused when something already sits there — and emptying
-the bin is a two-step confirm over exactly the listed items, with live
-progress and a Stop button.
-
-### First run
-
-The first launch opens a short guided setup instead of the empty app:
-what DiskPilot does, the folder it should watch, and the Watch
-schedule and alert thresholds — all held as drafts until **Start
-first scan** applies them, or skipped in one click.
-
-### Settings & exclusions
-
-The scan root defaults to your profile folder and can be pointed
-anywhere. **Exclusions** — folder names or wildcard patterns, one per
-line — keep paths out of scans entirely. Settings, the last scan
-snapshot, and the history database all live in
-`%APPDATA%\dev.diskpilot.windows`.
-
-**Explorer integration** (off by default) adds an *Analyze with
-DiskPilot* entry to the right-click menu for folders and drives:
-choosing it opens DiskPilot already scanning that location. It is a
-per-user registration — no administrator rights, and turning the
-setting off removes it.
+> **Early release.** 0.6.0 is DiskPilot's first public release. The
+> engine is heavily tested — the safety pipeline, parsers and
+> policies are covered by an extensive test suite exercised on every
+> commit — and verification of the Windows-machine paths (installer,
+> device reads, folder moves) is ongoing. See
+> [docs/RELEASING.md](docs/RELEASING.md) for how releases are built
+> and checked.
+
+## One app for the whole disk
+
+Most PCs end up with a folder full of single-purpose tools — one to
+see the disk, one to clean it, one to watch the drive, one to update
+apps. DiskPilot is the whole loop in one place:
+
+### Find
+
+- **Fast scans** — a parallel walker for everyday scans, and a direct
+  Master File Table reader for whole NTFS drives when DiskPilot runs
+  as administrator: a full-drive scan in a fraction of the time, with
+  identical results either way.
+- **Live index** — between scans, the volume's USN change journal
+  keeps search and size views current within about a minute.
+- **Quick Search** — press **Ctrl+Shift+Space** anywhere in Windows
+  for the search popup over whatever you are doing.
+- **Search that reads pictures** — Windows' built-in OCR (on-device,
+  nothing sent anywhere) reads the text inside screenshots and
+  images, so a file is findable by the words in it; hits found that
+  way are marked *Text match*.
+- **Plain-language search** — type `pdfs from last week over 5 MB`
+  and DiskPilot shows how it understood you as removable chips
+  before it runs; searches you reuse can be **saved**.
+
+### Understand
+
+- **Treemap + drill-down explorer** — every folder and large file a
+  block sized by its bytes, colored by category, with a details
+  inspector for any item: facts, classification, download source.
+- **Storage by type** — the whole scan ranked by file extension,
+  each type expandable to its largest files.
+- **Media, games, applications views** — photos / videos /
+  screenshots totals, Steam and Epic libraries read from the
+  launchers' own manifests, installed apps with their AppData
+  footprints (including leftovers from uninstalled apps).
+- **Forecast + biggest changes** — a growth trend over your scan
+  history projects the date the drive fills, and every new scan is
+  diffed against the last: what grew, what shrank, what you got back.
+- **Reports** — a standalone HTML storage report, plus CSV exports
+  of the largest files and the category totals.
+
+### Clean
+
+- **Safety-planned cleanup** — recommendations in three risk tiers
+  (*Likely safe* / *Review first* / *Keep*), each explaining why it
+  was detected and what could go wrong. You review the exact plan —
+  paths, bytes, warnings — before anything moves.
+- **App caches** — a curated rule set measures the regenerable
+  caches generic temp rules can't see: Discord, Slack, Teams,
+  Chrome, Edge, Firefox, VS Code, NVIDIA shader and driver caches,
+  the DirectX shader cache, Windows Update downloads, Explorer's
+  thumbnail caches. Never profiles, history, cookies or offline
+  data.
+- **Compress & save** — big folders untouched for 90+ days can be
+  NTFS-compressed in place with `compact.exe`: nothing is deleted,
+  the folder keeps working, and it is reversible.
+- **Duplicates** — exact copies confirmed with SHA-256 and
+  re-verified byte-for-byte before any copy moves; a **smart-select**
+  bar picks the keeper in every group at once; a second tab finds
+  **look-alike photos** (review-only — one copy always stays).
+- **Docker + developer tools** — read-only analyzers for Docker
+  storage and the caches of editors, AI agents, Node, Rust, Python
+  and more, with each tool's own hygiene command shown where one
+  exists instead of deleting behind its back.
+
+### Protect
+
+- **Drive health (SMART)** — every physical drive's self-monitoring
+  data (ATA attributes or the NVMe health log): SSD life left,
+  temperature, power-on hours, reallocated sectors, and a *Healthy /
+  Caution / Critical* verdict. A drive that predicts its own failure
+  says so in plain words — back up now. Values a drive doesn't
+  report are shown as *Not reported*, never guessed.
+- **Software updates** — the Applications page checks `winget` for
+  newer versions of your installed apps and runs the upgrade for one
+  app or all of them, each result reported as it actually came back.
+- **Protected by construction** — `C:\Windows` (including WinSxS),
+  Program Files, ProgramData, Recovery, drive roots and the paging /
+  hibernation files are never touched; `Windows.old` is report-only,
+  with the removal route through Windows' own storage tools.
+
+### Maintain
+
+- **Automatic safe maintenance** — on a schedule, DiskPilot
+  permanently clears only what is already safe to lose: Recycle Bin
+  items and temporary files older than the age you set, through the
+  same safety gate as a manual cleanup. Every run is recorded in
+  History.
+- **Watch** — scheduled daily or weekly scans while the app sits in
+  the tray, with notifications when free space drops below your
+  threshold or usage grows past your limit. Manual scans never
+  raise alerts.
+- **Startup manager** — everything that opens when you sign in,
+  listed with its target and size; entries are disabled and
+  re-enabled reversibly — nothing is deleted.
+- **Recycle Bin, properly** — contents listed before anything
+  happens, per-item restore to the original location (refused when
+  something already sits there), and item-by-item emptying with
+  progress and a Stop button.
+
+### Reclaim
+
+- **Move to another drive** — a big folder or game, moved from
+  Storage or Games: DiskPilot copies it, verifies the copy
+  file-for-file (count and allocated bytes), and only then replaces
+  the original with a directory junction, so every app keeps finding
+  it at the old path. Any failure leaves the original untouched, and
+  every move can be **undone from History** the same verified way.
+- **OneDrive free-up** — files and folders can be marked online-only
+  from the Overview or the inspector, asking OneDrive to evict the
+  local copies. Nothing is deleted; the space frees as OneDrive
+  syncs.
+
+There is also an optional **assistant** (off by default): a chat over
+your scan data with your own Anthropic, OpenAI or OpenRouter key —
+stored in Windows Credential Manager, never readable back. Its tool
+set is fixed and read-only; it cannot delete, move or run anything.
+
+## Safety model
+
+Safety is not a settings page in DiskPilot; it is the architecture.
+
+- **Scanning is read-only.** The scanner never follows symlinks,
+  junctions or reparse points, never crosses volumes, and never
+  opens OneDrive placeholders (which would trigger a download).
+- **Every cleanup is a reviewable plan.** The UI sends recommendation
+  IDs, never paths — the planner resolves them against the engine's
+  own data, so a buggy or compromised UI cannot inject a path. A
+  plan lists exact paths and bytes, is single-use, and expires after
+  10 minutes.
+- **Trash first.** The default action is the Recycle Bin.
+  *Permanently delete* is offered only when every item in the plan
+  is regenerable, and the engine re-validates every path immediately
+  before execution — a path swapped for a link after planning is
+  caught.
+- **Cleanups can be undone.** History records where every item went;
+  while items are still in the Recycle Bin, one Restore action puts
+  a whole run back and reports exactly what came back.
+- **Moves are copy → verify → link.** A folder move verifies the
+  copy before the original is replaced, and a failed verification
+  rolls back — also verified — instead of leaving you with less
+  than you started.
+- **Results tell the whole truth.** A partial cleanup is never
+  reported as a success: what succeeded, what failed and why is what
+  the UI shows and what History records.
+- **Everything is local.** No account, no telemetry, no analytics,
+  no crash reporting. The optional assistant is the only network
+  feature, and it talks directly to your chosen provider.
+- **One measuring rule.** Every size in the product is *allocated*
+  bytes — the space a file actually occupies and a cleanup actually
+  frees — so the same file shows the same size on every page.
 
 ## Screenshots
 
 | | |
 |---|---|
-| ![Overview](assets/screenshot-overview.png) | ![Clean Up](assets/screenshot-cleanup.png) |
-| **Overview** — the disk at a glance, with the Since-last-scan comparison | **Clean Up** — cards and risk-tiered recommendations |
-| ![Natural-language search](assets/screenshot-search.png) | ![Assistant](assets/screenshot-assistant.png) |
-| **Search** — plain-English queries, shown as understood chips | **Assistant** — read-only chat over your scan data |
+| ![Overview in the light theme](docs/assets/shots/overview-light.png) | ![Health with per-drive SMART cards](docs/assets/shots/health-drive-health.png) |
+| **Overview** — the disk at a glance, light theme | **Health** — every drive's SMART verdict, wear and temperature |
+| ![Clean Up with app caches](docs/assets/shots/cleanup-app-caches.png) | ![Duplicates with smart-select](docs/assets/shots/duplicates-smart-select.png) |
+| **Clean Up** — app caches measured per app, cleaned to the Recycle Bin | **Duplicates** — smart-select picks the keeper in every group at once |
+| ![Move to another drive dialog](docs/assets/shots/move-to-another-drive.png) | ![Storage by type](docs/assets/shots/storage-types.png) |
+| **Move to another drive** — copy, verify, link; undo from History | **Storage by type** — the scan ranked by extension |
+| ![Quick Search popup](docs/assets/shots/quick-search.png) | ![Guided first run](docs/assets/shots/welcome.png) |
+| **Quick Search** — Ctrl+Shift+Space, over whatever you are doing | **First run** — a short guided setup, applied only when you start |
 
-## System design
+## Architecture
 
-![DiskPilot system design](assets/system-design.png)
+![DiskPilot system design](docs/assets/system-design.png)
 
-[Dark variant](assets/system-design-dark.png) ·
-[Interactive HTML](assets/system-design.html)
+[System design as SVG](docs/assets/system-design.svg) ·
+[Full architecture notes](docs/ARCHITECTURE.md)
 
-Three layers, one direction:
-
-```text
- Scanner ──▶ Classifier ──▶ Recommendations ──▶ Planner ──▶ Safety gate ──▶ Executor ──▶ History
- (read)      (pure)         (explain only)      (preview)   (validate)      (act)        (record)
-```
-
-- **The frontend renders and asks.** The React UI has no filesystem or
-  shell access at all — its Tauri capability set grants only window
-  dragging, the folder-picker dialog, and opening external links. Its
-  only channel to the machine is the shell's typed command set.
-- **The shell bridges.** `src-tauri` owns the window, the system tray,
-  settings persistence, and one typed command per frontend call.
-- **The core decides.** `diskpilot-core` is the Rust engine — and the
-  only code that can remove files. The scanner walks in parallel
-  (rayon), never following symlinks, junctions, or reparse points and
-  never crossing volumes; the classifier is a pure rule table that
-  sorts every path into one of eleven categories and explains itself;
-  policies turn classifications into recommendations.
-- **The planner takes IDs, never paths.** The UI sends recommendation
-  IDs; the planner resolves them against the engine's own
-  recommendation set, so a buggy or compromised UI cannot inject a
-  path. The safety gate then validates every resolved path — absolute,
-  inside your home folder and the scanned root, outside the protected
-  list, no link or reparse point in the path or any parent — once when
-  the plan is built and **again immediately before execution**, so a
-  path swapped for a link after planning is caught.
-- **Trash first.** The executor's default is the Recycle Bin via the
-  operating system. Permanent deletion exists only for plans where
-  every item is regenerable.
-- **One measuring rule.** Every size in the product is *allocated*
-  bytes — what a file occupies on disk and what a cleanup actually
-  frees — measured through a single helper (`GetCompressedFileSizeW`
-  on Windows). The scanner measures every file through its path on
-  Windows, so even the standard walk reports allocated bytes, never
-  logical lengths, and the same file shows the same size on every
-  page.
+Three layers, one direction. The **React frontend** renders and asks —
+it has no filesystem or shell access at all; its only channel to the
+machine is the shell's typed command set. The **Tauri shell** bridges:
+window, tray, settings, single-instance launches, the signed updater,
+and one typed command per frontend call. The **Rust core**
+(`diskpilot-core`) decides — it is the only code that can remove
+files, and it does so only through the safety pipeline: scanner
+(read) → classifier (pure) → recommendations (explain only) →
+planner (preview) → safety gate (validate) → executor (act) →
+History (record).
 
 See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the full data
 flow, [docs/DESIGN.md](docs/DESIGN.md) for the design system, and
 [docs/WINDOWS.md](docs/WINDOWS.md) for platform measurement details.
-
-## Safety model
-
-- **Protected locations are never removed:** `C:\Windows` (including
-  WinSxS), `C:\Program Files`, `C:\Program Files (x86)`,
-  `C:\ProgramData`, `C:\Recovery`, `C:\System Volume Information`,
-  drive roots, `hiberfil.sys` / `pagefile.sys` / `swapfile.sys`, and
-  the top-level folders of your profile themselves. Some locations —
-  `Windows.old`, the Recycle Bin's contents — are report-only or have
-  their own reviewed flow.
-- **Plans are single-use and expire in 10 minutes**, with the exact
-  paths and bytes shown before confirmation. Card plans can only move
-  files to the Recycle Bin — permanent deletion is not minted for them
-  at any layer.
-- **OneDrive placeholders are never opened** during a scan (opening one
-  would trigger a download); they are counted at their local size.
-- **The assistant is read-only** and off by default; API keys live in
-  Windows Credential Manager, never in settings files, logs, or the
-  frontend.
-- **Privacy:** no account, no telemetry, no analytics, no crash
-  reporting. Everything is computed and stored on your machine; the
-  optional Assistant is the only network feature.
 
 ## Build from source
 
@@ -478,12 +254,12 @@ Prerequisites:
 - [Node.js](https://nodejs.org) 20 or newer (npm)
 - Visual Studio Build Tools with the *Desktop development with C++*
   workload (Tauri's Windows toolchain)
-- WebView2 runtime (preinstalled on Windows 11 and current Windows 10;
-  the installer fetches the bootstrapper if it is missing)
+- WebView2 runtime (preinstalled on Windows 11 and current Windows
+  10; the installer fetches the bootstrapper if it is missing)
 
 ```powershell
 npm ci
-npm run tauri dev   # run the desktop app with hot reload
+npm run app:dev     # run the desktop app with hot reload
 npm run app:build   # MSI + NSIS installers in src-tauri/target/release/bundle
 ```
 
@@ -513,21 +289,29 @@ src/             React 19 + TypeScript frontend
   lib/           types, api bridge, store, formatting
   components/    layout, shared widgets, UI primitives
   features/      one folder per page
-docs/            ARCHITECTURE.md · DESIGN.md · WINDOWS.md
-assets/          screenshots and the system-design diagram
+docs/            ARCHITECTURE.md · DESIGN.md · WINDOWS.md · RELEASING.md
+docs/assets/     hero image, screenshot gallery, system-design diagram
+assets/          walkthrough video + poster
 ```
 
 Documentation: [Architecture](docs/ARCHITECTURE.md) ·
 [Design system](docs/DESIGN.md) · [Windows notes](docs/WINDOWS.md) ·
-[Releasing](docs/RELEASING.md) ·
-[Changelog](CHANGELOG.md) · [Security](SECURITY.md)
+[Releasing](docs/RELEASING.md) · [Changelog](CHANGELOG.md) ·
+[Security](SECURITY.md)
 
 ## Contributing
 
 Contributions are welcome — see [CONTRIBUTING.md](CONTRIBUTING.md).
-The bar is the safety model: new analyzers and rules must be read-only
-by construction, explain themselves, and ship with tests on real
-temporary folder trees.
+The bar is the safety model: new analyzers and rules must be
+read-only by construction, explain themselves, and ship with tests on
+real temporary folder trees.
+
+## Security
+
+Found a vulnerability? Please report it privately through the
+repository's security advisory feature rather than a public issue —
+see [SECURITY.md](SECURITY.md) for what to include. A way around the
+safety gate counts as a critical vulnerability here.
 
 ## License
 
