@@ -524,7 +524,7 @@ pub const ROOT_RECORD: u64 = 5;
 
 /// Namespace preference when several $FILE_NAME attributes describe
 /// one link: Win32 > Win32 & DOS > POSIX > DOS (the brief's order).
-fn namespace_rank(namespace: u8) -> u8 {
+pub(crate) fn namespace_rank(namespace: u8) -> u8 {
     match namespace {
         1 => 0,
         3 => 1,
@@ -543,7 +543,7 @@ fn namespace_rank(namespace: u8) -> u8 {
 /// name), so within one parent a DOS name is dropped whenever the
 /// record also has a non-DOS name there. A parent holding *only* a
 /// DOS name keeps it — old volumes have files with nothing else.
-fn record_links(merged_names: &[FileName]) -> Vec<(u64, FileName)> {
+pub(crate) fn record_links(merged_names: &[FileName]) -> Vec<(u64, FileName)> {
     // Best namespace per (parent, name).
     let mut best: Vec<(u64, FileName)> = Vec::new();
     for name in merged_names {

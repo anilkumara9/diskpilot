@@ -32,10 +32,12 @@ keyring = { version = "3", features = ["windows-native"], optional = true }
 # WinRT surface for the OCR module only (Windows.Media.Ocr over
 # image bytes in a memory stream), plus the small Win32 file-IO
 # surface the MFT volume reader names (CreateFileW / ReadFile /
-# SetFilePointerEx on the raw volume). Kept to the features those
-# two modules name so the crate's footprint stays confined to
-# `ocr.rs` and `mft_volume.rs`.
-windows = { version = "0.59", features = ["Foundation", "Foundation_Collections", "Globalization", "Graphics_Imaging", "Media_Ocr", "Storage_Streams", "Win32_Foundation", "Win32_Security", "Win32_Storage_FileSystem", "Win32_System_IO"] }
+# SetFilePointerEx on the raw volume) and the USN journal ioctls
+# the live index names (DeviceIoControl over the same volume
+# handle). Kept to the features those modules name so the crate's
+# footprint stays confined to `ocr.rs`, `mft_volume.rs` and
+# `usn_volume.rs`.
+windows = { version = "0.59", features = ["Foundation", "Foundation_Collections", "Globalization", "Graphics_Imaging", "Media_Ocr", "Storage_Streams", "Win32_Foundation", "Win32_Security", "Win32_Storage_FileSystem", "Win32_System_IO", "Win32_System_Ioctl"] }
 
 [target.'cfg(not(target_os = "windows"))'.dependencies]
 keyring = { version = "3", optional = true }

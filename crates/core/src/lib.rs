@@ -36,6 +36,8 @@ pub mod secrets;
 pub mod snapshot;
 pub mod snapshot_diff;
 pub mod state;
+pub mod usn;
+pub mod usn_volume;
 
 pub use error::{CoreError, CoreResult};
 pub use model::*;

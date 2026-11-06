@@ -77,6 +77,59 @@ pub fn is_volume_root(path: &Path) -> bool {
         && components.next().is_none()
 }
 
+/// A reusable reader over one NTFS volume's Master File Table,
+/// for callers that need individual records rather than a whole
+/// scan — the USN live index resolves changed files' paths by
+/// reading their parent directories' records through this.
+///
+/// Opening performs the same bootstrap as a volume scan (boot
+/// sector, record 0, the $MFT run map) and fails with the same
+/// typed [`MftUnavailable`] when the volume cannot be read, so the
+/// caller quietly falls back exactly as the scan path does.
+pub struct MftReader {
+    #[cfg(windows)]
+    inner: imp::VolumeReader,
+    #[cfg(not(windows))]
+    _unsupported: std::marker::PhantomData<()>,
+}
+
+/// Open an [`MftReader`] for the volume `root` lives on. `root`
+/// may be any path with a drive prefix (the volume device is
+/// derived from the prefix alone); a volume root is the natural
+/// call.
+pub fn open_reader(root: &Path) -> Result<MftReader, MftUnavailable> {
+    #[cfg(windows)]
+    {
+        Ok(MftReader {
+            inner: imp::VolumeReader::open(root)?,
+        })
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = root;
+        Err(MftUnavailable::Unsupported)
+    }
+}
+
+impl MftReader {
+    /// Read and parse the MFT record with the given number (the
+    /// low 48 bits of a file reference). `None` when the record
+    /// cannot be read, is not in use in a form the parser accepts,
+    /// or simply does not parse — resolution callers treat that as
+    /// "path unknown" and move on.
+    pub fn read_record(&mut self, record_number: u64) -> Option<crate::mft::RawRecord> {
+        #[cfg(windows)]
+        {
+            self.inner.read_record(record_number)
+        }
+        #[cfg(not(windows))]
+        {
+            let _ = record_number;
+            None
+        }
+    }
+}
+
 /// Read the whole volume rooted at `root` through its MFT.
 pub fn scan_volume(root: &Path) -> Result<VolumeScan, MftUnavailable> {
     if !is_volume_root(root) {
@@ -276,83 +329,133 @@ mod imp {
         }
     }
 
-    pub fn scan_volume(root: &Path) -> Result<VolumeScan, MftUnavailable> {
-        let volume = open_volume(root)?;
-        let prefix = volume_prefix(root).ok_or(MftUnavailable::NotVolumeRoot)?;
+    /// An opened volume with the $MFT bootstrap completed: the
+    /// boot sector parsed and the run map spanning the whole $MFT,
+    /// so any individual record can be read on demand. The public
+    /// [`super::MftReader`] wraps this for single-record callers
+    /// (the live index's path resolution); [`scan_volume`] streams
+    /// the whole table through it.
+    pub(super) struct VolumeReader {
+        volume: Volume,
+        boot: BootSector,
+        map: RunMap,
+        mft_real_size: u64,
+        /// Records read during the bootstrap (record 0 is always
+        /// among them), kept for the streaming caller.
+        bootstrap_records: Vec<RawRecord>,
+        /// Next record ordinal the bootstrap did not read.
+        parsed_up_to: u64,
+    }
 
-        // Boot sector.
-        let mut boot_bytes = vec![0u8; 512];
-        volume.read_at(0, &mut boot_bytes)?;
-        let boot = mft::parse_boot_sector(&boot_bytes).map_err(|e| match e {
-            mft::MftError::NotNtfs => MftUnavailable::NotNtfs,
-            other => MftUnavailable::ReadFailed(other.to_string()),
-        })?;
-        let record_size = boot.record_size as usize;
+    impl VolumeReader {
+        pub(super) fn open(root: &Path) -> Result<VolumeReader, MftUnavailable> {
+            let volume = open_volume(root)?;
 
-        // Record 0 ($MFT itself) sits at the MFT's first LCN.
-        let mut scratch = vec![0u8; record_size];
-        volume.read_at(boot.mft_lcn * boot.cluster_bytes as u64, &mut scratch)?;
-        let mft_record = mft::parse_record(&scratch, &boot)
-            .ok()
-            .flatten()
-            .ok_or_else(|| MftUnavailable::ReadFailed("record 0 ($MFT) did not parse".into()))?;
-        let mft_real_size = mft_record
-            .data
-            .as_ref()
-            .map(|d| d.real_size)
-            .ok_or_else(|| MftUnavailable::ReadFailed("$MFT has no $DATA".into()))?;
-        if mft_real_size == 0 || mft_real_size % record_size as u64 != 0 {
-            return Err(MftUnavailable::ReadFailed("implausible $MFT size".into()));
+            // Boot sector.
+            let mut boot_bytes = vec![0u8; 512];
+            volume.read_at(0, &mut boot_bytes)?;
+            let boot = mft::parse_boot_sector(&boot_bytes).map_err(|e| match e {
+                mft::MftError::NotNtfs => MftUnavailable::NotNtfs,
+                other => MftUnavailable::ReadFailed(other.to_string()),
+            })?;
+            let record_size = boot.record_size as usize;
+
+            // Record 0 ($MFT itself) sits at the MFT's first LCN.
+            let mut scratch = vec![0u8; record_size];
+            volume.read_at(boot.mft_lcn * boot.cluster_bytes as u64, &mut scratch)?;
+            let mft_record = mft::parse_record(&scratch, &boot)
+                .ok()
+                .flatten()
+                .ok_or_else(|| MftUnavailable::ReadFailed("record 0 ($MFT) did not parse".into()))?;
+            let mft_real_size = mft_record
+                .data
+                .as_ref()
+                .map(|d| d.real_size)
+                .ok_or_else(|| MftUnavailable::ReadFailed("$MFT has no $DATA".into()))?;
+            if mft_real_size == 0 || mft_real_size % record_size as u64 != 0 {
+                return Err(MftUnavailable::ReadFailed("implausible $MFT size".into()));
+            }
+
+            // Bootstrap the run map for the whole $MFT: its later $DATA
+            // instances live in extension records that are themselves
+            // inside the MFT, so grow the map — read what the current map
+            // covers, re-merge record 0's instances, repeat — until it
+            // spans the file or stops growing.
+            let mut records: Vec<RawRecord> = Vec::new();
+            let mut parsed_up_to: u64 = 0; // next record ordinal to read
+            let map = loop {
+                let instances = mft::data_instances(&records_with_mft(&records, &mft_record), 0);
+                let map = RunMap::from_instances(&instances, boot.cluster_bytes as u64);
+                let covered = map.total_bytes().min(mft_real_size);
+                if covered >= mft_real_size {
+                    break map;
+                }
+                let covered_records = covered / record_size as u64;
+                if covered_records <= parsed_up_to {
+                    return Err(MftUnavailable::ReadFailed(
+                        "could not map the whole $MFT".into(),
+                    ));
+                }
+                while parsed_up_to < covered_records {
+                    if let Some(record) =
+                        read_one_record(&volume, &map, &boot, parsed_up_to, &mut scratch)?
+                    {
+                        records.push(record);
+                    }
+                    parsed_up_to += 1;
+                }
+            };
+
+            Ok(VolumeReader {
+                volume,
+                boot,
+                map,
+                mft_real_size,
+                bootstrap_records: records,
+                parsed_up_to,
+            })
         }
 
-        // Bootstrap the run map for the whole $MFT: its later $DATA
-        // instances live in extension records that are themselves
-        // inside the MFT, so grow the map — read what the current map
-        // covers, re-merge record 0's instances, repeat — until it
-        // spans the file or stops growing.
-        let mut records: Vec<RawRecord> = Vec::new();
-        let mut parsed_up_to: u64 = 0; // next record ordinal to read
-        let map = loop {
-            let instances = mft::data_instances(&records_with_mft(&records, &mft_record), 0);
-            let map = RunMap::from_instances(&instances, boot.cluster_bytes as u64);
-            let covered = map.total_bytes().min(mft_real_size);
-            if covered >= mft_real_size {
-                break map;
-            }
-            let covered_records = covered / record_size as u64;
-            if covered_records <= parsed_up_to {
-                return Err(MftUnavailable::ReadFailed(
-                    "could not map the whole $MFT".into(),
-                ));
-            }
-            while parsed_up_to < covered_records {
-                if let Some(record) =
-                    read_one_record(&volume, &map, &boot, parsed_up_to, &mut scratch)?
-                {
-                    records.push(record);
-                }
-                parsed_up_to += 1;
-            }
-        };
+        /// Read and parse one record by number; `None` when it
+        /// cannot be read or does not parse.
+        pub(super) fn read_record(&mut self, ordinal: u64) -> Option<RawRecord> {
+            let mut scratch = vec![0u8; self.boot.record_size as usize];
+            read_one_record(&self.volume, &self.map, &self.boot, ordinal, &mut scratch)
+                .ok()
+                .flatten()
+        }
+
+        fn total_records(&self) -> u64 {
+            self.mft_real_size / self.boot.record_size as u64
+        }
+    }
+
+    pub fn scan_volume(root: &Path) -> Result<VolumeScan, MftUnavailable> {
+        let prefix = volume_prefix(root).ok_or(MftUnavailable::NotVolumeRoot)?;
+        let mut reader = VolumeReader::open(root)?;
+        let boot = reader.boot;
+        let record_size = boot.record_size as usize;
 
         // Stream the rest of the MFT in large chunks.
-        let total_records = mft_real_size / record_size as u64;
+        let mut records = std::mem::take(&mut reader.bootstrap_records);
+        let total_records = reader.total_records();
         let chunk_records = ((CHUNK / record_size) as u64).max(1);
-        let mut ordinal = parsed_up_to;
+        let mut scratch = vec![0u8; record_size];
+        let mut ordinal = reader.parsed_up_to;
         while ordinal < total_records {
             let batch = chunk_records.min(total_records - ordinal);
             // Fast path: the batch lies inside one run segment —
             // read it in bulk. Otherwise fall back to per-record.
             let start_offset = ordinal * record_size as u64;
             let batch_bytes = batch * record_size as u64;
-            let contiguous = map.translate(start_offset).and_then(|first| {
-                let last = map.translate(start_offset + batch_bytes - 1)?;
+            let contiguous = reader.map.translate(start_offset).and_then(|first| {
+                let last = reader.map.translate(start_offset + batch_bytes - 1)?;
                 (last == first + batch_bytes - 1).then_some(first)
             });
             match contiguous {
                 Some(volume_offset) => {
                     let mut buf = vec![0u8; batch_bytes as usize];
-                    volume.read_at(volume_offset, &mut buf)?;
+                    reader.volume.read_at(volume_offset, &mut buf)?;
                     for i in 0..batch {
                         let slice = &buf[i as usize * record_size..(i as usize + 1) * record_size];
                         if let Ok(Some(mut record)) = mft::parse_record(slice, &boot) {
@@ -363,9 +466,13 @@ mod imp {
                 }
                 None => {
                     for i in 0..batch {
-                        if let Some(record) =
-                            read_one_record(&volume, &map, &boot, ordinal + i, &mut scratch)?
-                        {
+                        if let Some(record) = read_one_record(
+                            &reader.volume,
+                            &reader.map,
+                            &boot,
+                            ordinal + i,
+                            &mut scratch,
+                        )? {
                             records.push(record);
                         }
                     }
