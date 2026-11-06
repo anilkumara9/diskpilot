@@ -7,6 +7,14 @@ based on Keep a Changelog, and the project follows semantic versioning.
 
 ### Added
 
+- **Fast scan (NTFS)** — when DiskPilot runs with administrator
+  rights and the scan target is a whole NTFS drive, it reads the
+  Master File Table directly instead of walking the directory tree,
+  so a full-drive scan finishes in a small fraction of the time.
+  In every other situation — a standard (non-elevated) launch, a
+  folder target, a non-NTFS volume, or any read problem — the
+  standard scanner is used, automatically and invisibly; results
+  are identical either way, and each scan records which engine ran.
 - **Scan history** — every completed scan (manual or scheduled) now
   appends to a persisted time series (`scan_history.json`, last 120
   scans): totals, file count, per-category bytes and the scanned

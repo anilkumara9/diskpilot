@@ -61,6 +61,65 @@ the same size on every page. Logical file length is used only where it
 is a correctness input (duplicate size-grouping and hash staging) and
 is never displayed.
 
+#### Fast path: reading the Master File Table (`mft`, `mft_volume`)
+
+When the scan root is a whole drive (`C:\`) and the process can open
+the raw volume — which Windows only allows for administrators — the
+scanner skips the directory walk entirely and reads the NTFS Master
+File Table directly, turning a full path-by-path enumeration into a
+single sequential read. There is no settings toggle and no elevation
+prompt: the app never asks for rights it was not started with; the
+fast path simply engages when access already exists and is otherwise
+invisible.
+
+The design is three layers with a hard fallback between each:
+
+1. **Parser (`mft`)** — pure functions over bytes, no IO: the boot
+   sector (record size from the clusters-per-file-record byte, both
+   the power-of-two and clusters branches), runlists (signed LCN
+   deltas, sparse runs), and file records (Update Sequence Array
+   fixup validated per sector — a mismatch marks the record corrupt
+   and it is skipped, never fatal), extracting `$STANDARD_INFORMATION`,
+   `$FILE_NAME` (all namespaces), the unnamed `$DATA` stream
+   (resident content or a non-resident runlist) and
+   `$ATTRIBUTE_LIST`. Attribute lists are followed into extension
+   records, so a fragmented file's data and names merge back into one
+   logical file.
+2. **Assembly (`mft`)** — records become flat entries: deleted
+   records skipped, one entry per hardlink name (Win32 namespace
+   preferred, then Win32&DOS, POSIX, DOS; 8.3 aliases never
+   double-count a file that also has a long name), full paths built
+   by walking parent references to the root record with cycle and
+   orphan guards, and reparse points — directories and files —
+   skipped exactly as the walker skips them, so junctions and
+   symlinks are never followed on either path.
+3. **Volume IO (`mft_volume`)** — Windows-only: opens `\\.\X:` for
+   reading, bootstraps the $MFT's own run map (its later extents
+   live in extension records inside the MFT itself), then streams
+   the table in ≥ 4 MB chunks. Any failure anywhere — access denied,
+   non-NTFS, an implausible boot sector, an unparseable $MFT, or the
+   sanity check (a volume read that produced zero files) — returns a
+   typed "unavailable" and the caller runs the standard walk, with
+   no user-visible error.
+
+The assembled entries feed a virtual walk in the scanner that mirrors
+the real one step for step — same classifier calls with the same
+inheritance, same exclusions, same aggregation — and both paths
+finish through the same summary code, so snapshots, recommendations,
+history and every downstream page are computed identically whichever
+engine ran. The summary records which one it was (`scanEngine`:
+`"mft"` or `"walker"`).
+
+**Allocated-size convention.** The byte rule above still holds, with
+one documented approximation: a non-resident file's allocated size
+is the sum of its data runs × the cluster size — its true on-disk
+allocation. A resident file has no runs (its content lives inside
+its MFT record), so it is counted at one record size (typically
+1 KB). The walker instead asks the OS per file
+(`GetCompressedFileSizeW`), which can differ for compressed or
+sparse files; the divergence is bounded by the compression actually
+applied and never affects logical sizes, grouping or hashing.
+
 ### Classifier (`classifier`)
 
 A pure function from paths (and tree position) to a `Classification`:
