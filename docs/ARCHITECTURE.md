@@ -221,6 +221,31 @@ action and every scan appends an entry: timestamp, operation, paths,
 bytes reclaimed, errors. History is append-only from the UI's point of
 view — it is the audit trail for "what did DiskPilot ever do?".
 
+Each removed item is also recorded with its mode — Trash or
+permanent — which powers cleanup undo: when entries are listed, the
+shell computes `restorableCount` by matching a run's Trash-mode items
+against the live Recycle Bin listing and checking each original path
+is currently free, and `restore_cleanup_run` restores the whole run
+through the same single-item restore the Recycle Bin page uses,
+reports per-item failures, counts permanent items as skipped, and
+records the undo as its own history entry. Runs recorded before item
+modes existed carry no list: they report zero restorable and decline
+the group restore with an explanation.
+
+## OCR text layer (`ocr`)
+
+After a scan completes, the shell runs a background pass over the
+fresh index's images and screenshots (when `ocrEnabled`): the core's
+`ocr` module recognizes text on-device with Windows' built-in OCR
+(WinRT; off Windows it returns a typed Unsupported error, never
+synthetic text), capped at 400 files, newest first, two images in
+flight at most, stopped cooperatively when a new scan bumps the
+generation counter. Results are cached in the app-data
+`ocr_cache.json` keyed by path + mtime + size and written into the
+index entries' `ocrText`, which the core search matches terms
+against alongside file names — a hit that matched only inside the
+picture's text is flagged `matchedInText`.
+
 ## Shell (`src-tauri`)
 
 - **Commands (`commands.rs`)** — one typed Tauri command per frontend

@@ -61,6 +61,21 @@ based on Keep a Changelog, and the project follows semantic versioning.
   `appmanifest_*.acf` sizes, Epic `.item` manifests), reporting every
   game's on-disk size per library; games whose Steam manifest has no
   recorded size are measured directly.
+- **Search reads your screenshots** — after a scan, an on-device OCR
+  pass (Windows' built-in recognizer — nothing leaves the machine)
+  reads the text inside images and screenshots, and file search matches
+  query terms against that text too. A hit found only in a picture's
+  text is flagged as such. Recognitions are cached per file (path +
+  mtime + size), so unchanged images are never re-read; the pass runs
+  in the background, at most two images at a time, and can be turned
+  off in Settings.
+- **Undo a cleanup from History** — every cleanup run now records where
+  each item went (Recycle Bin or permanent). History shows how many of
+  a run's items can still be brought back, and one action restores the
+  whole run: items already gone from the Recycle Bin are reported,
+  permanently deleted items are counted as skipped, and the restore
+  itself is recorded in History. Runs recorded before this version
+  explain that they predate restore support.
 
 ### Changed
 
