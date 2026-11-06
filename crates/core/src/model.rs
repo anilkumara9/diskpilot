@@ -280,6 +280,13 @@ pub struct HistoryEntry {
     pub errors: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub detail: Option<String>,
+    /// How many of this run's items could still be restored from
+    /// the Recycle Bin right now. Computing it needs the live bin
+    /// contents, which only the shell can read, so the history store
+    /// leaves it 0 and the shell fills it in when listing entries.
+    /// `serde(default)` keeps older payloads loadable.
+    #[serde(default)]
+    pub restorable_count: u64,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

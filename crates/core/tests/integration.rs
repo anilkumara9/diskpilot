@@ -395,7 +395,12 @@ fn executor_uses_mock_and_records() {
     // History round-trip.
     let store = diskpilot_core::history::HistoryStore::in_memory().unwrap();
     store
-        .record_cleanup("move-to-trash", &result, None)
+        .record_cleanup(
+            "move-to-trash",
+            &result,
+            None,
+            diskpilot_core::history::RemovedItemMode::Trash,
+        )
         .unwrap();
     let entries = store.list_history(10).unwrap();
     assert_eq!(entries.len(), 1);
