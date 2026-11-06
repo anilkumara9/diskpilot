@@ -317,10 +317,7 @@ mod tests {
         write_attr(1, 9, 98, 98, 12_345); // power-on hours
         write_attr(2, 12, 99, 99, 432); // power cycles
         write_attr(3, 194, 64, 40, 41); // temperature 41 C
-        // Life-left semantics: normalized 87. The raw byte is 0 (not
-        // reported): temperature comes from 194 above, never from
-        // this same attribute.
-        write_attr(4, 231, 87, 87, 0);
+        write_attr(4, 231, 87, 87, 0); // life-left: normalized 87; raw 0 = not reported (temperature is 194's, never this attribute's)
         data
     }
 
