@@ -57,7 +57,7 @@ export function Menu({
           role="menu"
           aria-label={label}
           className={cn(
-            "absolute z-40 mt-1 min-w-[180px] rounded-[10px] border border-border bg-panel p-1 shadow-[0_12px_36px_rgba(0,0,0,0.24)] animate-fade-in",
+            "absolute z-40 mt-1 min-w-[180px] rounded-[10px] border border-border-strong bg-panel-raised p-1 shadow-[0_16px_44px_-8px_rgba(0,0,0,0.42),0_3px_10px_rgba(0,0,0,0.2)] animate-fade-in",
             align === "end" ? "right-0" : "left-0",
           )}
         >

@@ -178,8 +178,8 @@ export function DuplicatesPage() {
   };
 
   return (
-    <div className="h-full overflow-y-auto px-6 py-5">
-      <div className="mx-auto max-w-[880px]">
+    <div className="h-full overflow-y-auto px-6 py-6">
+      <div className="max-w-[880px]">
         <PageHeader
           title="Duplicates"
           subtitle="Files with identical size are confirmed with SHA-256 before they are grouped. Hidden folders, AppData, dependency folders, and package caches are skipped; hard links count once."
@@ -218,6 +218,7 @@ export function DuplicatesPage() {
         ) : groups.length === 0 ? (
           <EmptyState
             icon={Copy}
+            className="min-h-[360px]"
             title="No duplicates found"
             description="Duplicate groups appear here after a scan — files verified identical by hash, with the space they waste. Run a scan if you have not yet."
           />
@@ -320,9 +321,9 @@ export function DuplicatesPage() {
                   Keeper:{" "}
                   <span className="mono-path text-foreground" title={keeper}>{displayPath(keeper, homeDir)}</span>
                 </p>
-                <ul className="space-y-1 rounded-md border border-border p-2">
+                <ul className="space-y-1 rounded-md border border-border bg-panel p-2">
                   {paths.map((path) => (
-                    <li key={path} className="flex items-center justify-between gap-3">
+                    <li key={path} className="flex items-center justify-between gap-3 rounded px-1.5 py-1">
                       <span className="mono-path min-w-0 truncate text-foreground" title={path}>{displayPath(path, homeDir)}</span>
                       <span className="shrink-0 text-[12px] tabular text-muted">{formatBytes(group.size)}</span>
                     </li>

@@ -21,12 +21,14 @@ export function EmptyState({
         className,
       )}
     >
-      <Icon className="size-8 text-subtle" strokeWidth={1.5} aria-hidden="true" />
-      <h3 className="mt-3 text-[13px] font-semibold text-foreground">{title}</h3>
+      <span className="flex size-12 items-center justify-center rounded-full bg-panel-raised ring-1 ring-border">
+        <Icon className="size-6 text-subtle" strokeWidth={1.5} aria-hidden="true" />
+      </span>
+      <h3 className="mt-4 text-[13px] font-semibold text-foreground">{title}</h3>
       {description ? (
-        <p className="mt-1 max-w-[420px] text-[12px] leading-4 text-muted">{description}</p>
+        <p className="mt-1 max-w-[420px] text-[12px] leading-[17px] text-muted">{description}</p>
       ) : null}
-      {action ? <div className="mt-4">{action}</div> : null}
+      {action ? <div className="mt-5">{action}</div> : null}
     </div>
   );
 }

@@ -12,6 +12,7 @@ import { SkeletonRows } from "@/components/ui/skeleton";
 import { AppIcon } from "@/components/shared/AppIcon";
 import { EmptyState } from "@/components/shared/EmptyState";
 import { MarkerTag } from "@/components/shared/MarkerTag";
+import { SizeBar } from "@/components/shared/SizeBar";
 import { SortHeader } from "@/components/shared/SortHeader";
 import type { SortDirection } from "@/lib/analysis";
 
@@ -75,8 +76,8 @@ export function ApplicationsPage() {
   };
 
   return (
-    <div className="h-full overflow-y-auto px-6 py-5">
-      <div className="mx-auto max-w-[880px]">
+    <div className="h-full overflow-y-auto px-6 py-6">
+      <div className="max-w-[880px]">
         <PageHeader
           title="Applications"
           subtitle="Installed size plus the data each app keeps in AppData. Sort by total to find the heaviest apps."
@@ -84,9 +85,11 @@ export function ApplicationsPage() {
         {error ? <p role="alert" className="pb-3 text-[12px] text-critical">{error}</p> : null}
         {revealError ? <p role="alert" className="pb-3 text-[12px] text-critical">{revealError}</p> : null}
 
-        <div className="relative max-w-[420px] pb-3">
-          <Search className="pointer-events-none absolute left-2.5 top-[13px] size-4 -translate-y-1/2 text-subtle" aria-hidden="true" />
-          <Input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Filter applications" aria-label="Filter applications" className="pl-8" />
+        <div className="max-w-[420px] pb-3">
+          <div className="relative">
+            <Search className="pointer-events-none absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-subtle" aria-hidden="true" />
+            <Input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Filter applications" aria-label="Filter applications" className="pl-8" />
+          </div>
         </div>
 
         {apps === null ? (
@@ -94,6 +97,7 @@ export function ApplicationsPage() {
         ) : installed.length === 0 && leftovers.length === 0 ? (
           <EmptyState
             icon={AppWindow}
+            className="min-h-[360px]"
             title="No applications found"
             description="Installed applications and their AppData appear here once the inventory is available. Run a scan to measure application data."
           />
@@ -125,9 +129,7 @@ export function ApplicationsPage() {
                       <td className="px-3 py-2 text-right text-[13px] tabular text-muted">{formatBytes(app.dataBytes)}</td>
                       <td className="px-3 py-2 text-right">
                         <span className="text-[13px] font-medium tabular text-foreground">{formatBytes(appTotal(app))}</span>
-                        <span className="ml-auto mt-0.5 block h-[2px] w-[72px] overflow-hidden rounded-full bg-hover">
-                          <span className="block h-full rounded-full" style={{ width: `${(appTotal(app) / maxTotal) * 100}%`, background: "var(--accent)" }} />
-                        </span>
+                        <SizeBar fraction={appTotal(app) / maxTotal} height={2} className="ml-auto mt-0.5 w-[72px]" />
                       </td>
                     </tr>
                   ))}

@@ -311,14 +311,14 @@ export function DockerPage() {
       : null;
 
   return (
-    <div className="h-full overflow-y-auto px-6 py-5">
-      <div className="mx-auto max-w-[880px]">
+    <div className="h-full overflow-y-auto px-6 py-6">
+      <div className="max-w-[880px]">
         <PageHeader
           title="Docker"
           subtitle="Usage from docker system df, with a small closed set of safe actions. Every action is previewed with its exact command first."
           showScanControl={false}
           actions={
-            <Button variant="secondary" size="sm" onClick={() => void load()} disabled={loading}>
+            <Button variant="secondary" onClick={() => void load()} disabled={loading}>
               <RefreshCw className="size-3.5" aria-hidden="true" />
               Refresh
             </Button>
@@ -332,12 +332,14 @@ export function DockerPage() {
         ) : !overview || state === "notInstalled" ? (
           <EmptyState
             icon={Box}
+            className="min-h-[360px]"
             title="Docker is not installed"
             description="No Docker installation was found in the standard locations on this PC. If Docker Desktop is installed elsewhere, its storage still appears under Docker storage after a scan."
           />
         ) : state === "notRunning" ? (
           <EmptyState
             icon={PowerOff}
+            className="min-h-[360px]"
             title="Docker is not running"
             description="Docker Desktop is installed but the engine is not responding. Start Docker Desktop, then refresh this page. The WSL disk diagnostics below still apply."
             action={<Button variant="secondary" onClick={() => void load()}>Refresh</Button>}
@@ -358,14 +360,14 @@ export function DockerPage() {
                     <card.icon className="size-3.5" aria-hidden="true" />
                     {card.label}
                   </p>
-                  <p className="mt-1 text-[18px] font-semibold leading-6 tabular text-foreground">{formatBytes(card.value)}</p>
+                  <p className="mt-1 text-[20px] font-semibold leading-6 tabular text-foreground">{formatBytes(card.value)}</p>
                   <p className="text-[11px] text-muted">{card.sub}</p>
                 </div>
               ))}
             </div>
 
             {overview.buildCacheReclaimableBytes > 0 ? (
-              <div className="mt-3 flex items-center gap-3 rounded-[10px] border border-border bg-panel-raised px-4 py-3">
+              <div className="mt-4 flex items-center gap-3 rounded-[10px] border border-border bg-panel-raised px-4 py-3">
                 <p className="flex-1 text-[12px] leading-4 text-muted">
                   <span className="font-medium text-foreground">{formatBytes(overview.buildCacheReclaimableBytes)}</span> of
                   unused build cache can be pruned. Only unused cache is listed and pruned — active cache is left alone.

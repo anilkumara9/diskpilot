@@ -25,7 +25,7 @@ export function ScanControl({ compact = false }: { compact?: boolean }) {
             {displayPath(scanRoot, homeDir)}
           </span>
         ) : null}
-        <Button variant="secondary" size="sm" onClick={() => void cancelScan()}>
+        <Button variant="secondary" onClick={() => void cancelScan()}>
           <Square className="size-3" aria-hidden="true" />
           Cancel scan
         </Button>
@@ -46,7 +46,7 @@ export function ScanControl({ compact = false }: { compact?: boolean }) {
           <span className="truncate">{displayPath(scanRoot, homeDir) || "Choose a folder"}</span>
         </button>
       ) : null}
-      <Button variant="primary" size="sm" onClick={() => void startScan()} disabled={!scanRoot}>
+      <Button variant="primary" onClick={() => void startScan()} disabled={!scanRoot}>
         <Play className="size-3.5" aria-hidden="true" />
         Scan
       </Button>

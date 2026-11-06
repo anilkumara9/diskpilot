@@ -2,7 +2,7 @@ import { forwardRef, type InputHTMLAttributes, type SelectHTMLAttributes, type T
 import { cn } from "@/lib/utils";
 
 const fieldClass =
-  "w-full rounded-md border border-border-strong bg-panel px-2.5 text-[13px] text-foreground placeholder:text-subtle disabled:opacity-50";
+  "w-full rounded-md border border-border-strong bg-panel px-2.5 text-[13px] text-foreground shadow-[inset_0_1px_2px_rgba(0,0,0,0.05)] transition-colors duration-120 placeholder:text-subtle hover:border-subtle focus:border-accent disabled:opacity-50";
 
 export const Input = forwardRef<HTMLInputElement, InputHTMLAttributes<HTMLInputElement>>(
   ({ className, ...props }, ref) => (
@@ -32,7 +32,7 @@ export function Checkbox({
   return (
     <input
       type="checkbox"
-      className={cn("size-4 shrink-0 accent-[#5856d6]", className)}
+      className={cn("size-4 shrink-0 accent-[var(--accent-fill)]", className)}
       {...props}
     />
   );

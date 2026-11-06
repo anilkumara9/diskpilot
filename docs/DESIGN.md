@@ -16,8 +16,10 @@ tokens, components and principles. Tokens live in
 3. **One accent, one job.** Indigo means "interactive / selected /
    primary". It is never decoration.
 4. **Lines before boxes.** Hairline separators structure pages; panels
-   are flat. No shadows on content — one soft float shadow exists, for
-   menus, dialogs and tooltips only.
+   are flat. No shadows on content — elevation is reserved for
+   floating surfaces (menus, dialogs, tooltips), which step up to
+   `panel-raised` with a `border-strong` outline and a deep soft
+   shadow.
 5. **Motion answers actions.** Animation explains what just happened
    (expand, sheet, hover), never decorates. All motion respects
    `prefers-reduced-motion`.
@@ -37,9 +39,9 @@ tokens, components and principles. Tokens live in
 | background      | `#FFFFFF` | Window background                     |
 | sidebar         | `#F5F5F7` | Sidebar background                    |
 | panel           | `#FFFFFF` | Content panels                        |
-| panel-raised    | `#F5F5F7` | Raised/inset surfaces                 |
+| panel-raised    | `#F5F5F7` | Raised/inset surfaces, floating UI    |
 | hover           | `#EDEDF0` | Row/control hover                     |
-| selected        | `#E4E4EA` | Selected row / active nav             |
+| selected        | `#DEDEE6` | Selected row / active nav             |
 | border          | `#E5E5EA` | Hairlines                             |
 | border-strong   | `#D1D1D6` | Emphasised borders, inputs            |
 | foreground      | `#1D1D1F` | Primary text                          |
@@ -121,6 +123,17 @@ right-aligned and tabular, with an optional 2 px meter under the value.
 
 - 4 px spacing grid: 4, 8, 12, 16, 24, 32. Page gutters are 24 px.
 - Window: 1280 × 820 default, minimum 980 × 640.
+- **One page shell for every page.** Pages scroll inside a shell with
+  24 px gutters and 24 px top padding, and the content column is
+  left-aligned so every page title starts on the same left edge.
+  Content pages (Overview, Cleanup, Duplicates, Applications,
+  Developer Tools, Docker, History) use an 880 px column; forms and
+  chat (Settings, Assistant) use a narrower 760 px reading column.
+  Storage is the one full-bleed page, because its tables need the
+  width. No page centres its column — a shared left edge is what
+  makes ten pages read as one system.
+- Sections are separated by 28 px, with a 13 px semibold title, an
+  optional 12 px description, and a 10 px gap before the content.
 - Sidebar: 220 px, `sidebar` background, right hairline, 38 px drag
   region at the top.
 - Radii: 4 px tags, 6 px buttons/inputs/rows, 10 px panels, sheets and
@@ -139,18 +152,60 @@ indeterminate bar and the current path in 11 px mono / scanned
 <relative time> with the root path) and the Settings nav button.
 
 Nav buttons are 28 px tall, `rounded-md`, 13 px text; the active item
-uses the `selected` background with an accent icon, inactive icons are
-`muted`, hover uses the `hover` background.
+uses the `selected` background, medium-weight text and an accent icon,
+inactive icons are `muted`, hover uses the `hover` background. Group
+labels sit 20 px below the previous group. The footer scan status is
+separated from the nav by a hairline and 12 px of air.
 
 ## Components
 
 - **Buttons** — primary (accent fill), secondary (outline), ghost, and
-  destructive (critical; only inside confirmations). Heights 24 / 28 /
-  32 px.
+  destructive (critical; only inside confirmations). Heights 24 / 32 /
+  36 px (small / default / large), icon buttons 28 px. The default
+  height matches the field height (32 px), so a button beside an
+  input always lines up. Filled buttons carry a faint top highlight;
+  a disabled primary or destructive button does not fade its colour —
+  it becomes a neutral `selected`-grey pill with `subtle` text, so a
+  disabled action reads as the same button, switched off.
+- **Fields** — inputs, selects and textareas are 32 px, `border-strong`
+  outline with a soft inset shadow; the border strengthens on hover
+  and turns accent on focus (in addition to the global focus-visible
+  outline). Checkboxes and radios take their colour from the
+  `accent-fill` token, never a hard-coded hex.
+- **Search fields** — one pattern everywhere: a 16 px search icon
+  centred in a relatively positioned wrapper, the input padded 32 px
+  on the left. Icons are never positioned with magic offsets.
 - **Storage strip** — the whole disk as one horizontal bar: category
   segments, remaining used space, free space; recoverable space is
-  hatched inside its category segment.
-- **Size bar** — proportional bar in the category colour for list rows.
+  hatched inside its category segment. Legend items never wrap
+  mid-item.
+- **Figures** — one figure style everywhere: 12 px muted label, 20 px
+  semibold tabular value. Overview stats, the since-last-scan deltas
+  and the Docker summary cards all use it.
+- **Size bar** — the single meter implementation for the whole app:
+  a proportional bar under a figure, in the row's category colour
+  (accent when the row has no category). 2 px under figures, 4 px in
+  the Overview category list.
+- **Callouts** — informational panels (notices, warnings, the
+  since-last-scan summary) share one spec: 10 px radius, hairline
+  border, `panel-raised` fill, 16 px horizontal and 12 px vertical
+  padding.
+- **Floating surfaces** — dialogs, menus and tooltips sit one step
+  above the page: `panel-raised` fill, `border-strong` outline and a
+  deep, soft shadow. Dialogs open over a 50 % black backdrop with a
+  2 px blur, so the whole window — sidebar included — recedes.
+  Dialog padding rhythm: 20 px sides; header 20 px top / 12 px
+  bottom; body 12 px; footer 14 px with a hairline above it.
+- **Choice cards** — selectable option cards (the cleanup mode
+  radios) show their state: the checked card takes an accent border
+  and a 5 % accent tint; unchecked cards strengthen their border on
+  hover.
+- **Empty states** — a 48 px medallion (icon at 24 px inside a
+  `panel-raised` circle with a hairline ring), a 13 px semibold
+  title, a description no wider than 420 px, and the action 20 px
+  below. Pages give the empty state room — a minimum height or the
+  remaining flex space — so it centres in the space it fills instead
+  of hugging the header.
 - **Classification card** — category, rule ID, explanation, confidence,
   and inherited-from, shown in the Storage details panel.
 - **Tier badge / category label** — as defined above; never
@@ -170,7 +225,7 @@ uses the `selected` background with an accent icon, inactive icons are
 | ----------------- | -------- |
 | Hover states      | 120 ms   |
 | Expanding rows    | 180 ms   |
-| Sheets / dialogs  | 220 ms   |
+| Sheets / dialogs  | 180 ms   |
 
 All durations collapse to zero under `prefers-reduced-motion`.
 

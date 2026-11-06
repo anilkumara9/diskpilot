@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { History as HistoryIcon, Sparkles } from "lucide-react";
+import { History as HistoryIcon, Search, Sparkles } from "lucide-react";
 import * as api from "@/lib/api";
 import { useAppStore } from "@/lib/store";
 import { displayPath, formatBytes, formatDate } from "@/lib/format";
@@ -91,8 +91,8 @@ export function HistoryPage() {
   }, [entries, query]);
 
   return (
-    <div className="h-full overflow-y-auto px-6 py-5">
-      <div className="mx-auto max-w-[880px]">
+    <div className="h-full overflow-y-auto px-6 py-6">
+      <div className="max-w-[880px]">
         <PageHeader
           title="History"
           subtitle="A local record of every cleanup action and scan — what ran, which paths it touched, how much space came back, and any errors."
@@ -104,14 +104,16 @@ export function HistoryPage() {
         ) : entries.length === 0 ? (
           <EmptyState
             icon={HistoryIcon}
+            className="min-h-[360px]"
             title="No history yet"
             description="Cleanup actions, Docker actions, Recycle Bin emptying, and scans are recorded here with their exact paths and results. Nothing has been recorded yet."
           />
         ) : (
           <>
             <div className="flex max-w-[560px] items-center gap-2 pb-1">
-              <div className="min-w-0 flex-1">
-                <Input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Filter history" aria-label="Filter history" />
+              <div className="relative min-w-0 flex-1">
+                <Search className="pointer-events-none absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-subtle" aria-hidden="true" />
+                <Input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Filter history" aria-label="Filter history" className="pl-8" />
               </div>
               <CopyButton
                 text={JSON.stringify(visible, null, 2)}

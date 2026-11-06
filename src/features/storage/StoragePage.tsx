@@ -31,7 +31,9 @@ export function StorageTabs({
           onClick={() => onChange(t.id)}
           className={cn(
             "h-6 rounded-[5px] px-3 text-[12px] font-medium transition-colors duration-120",
-            tab === t.id ? "bg-panel text-foreground shadow-none ring-1 ring-border" : "text-muted hover:text-foreground",
+            tab === t.id
+              ? "bg-panel text-foreground shadow-[0_1px_3px_rgba(0,0,0,0.14)] ring-1 ring-border"
+              : "text-muted hover:text-foreground",
           )}
         >
           {t.label}
@@ -47,7 +49,7 @@ export function StoragePage() {
   const [tab, setTab] = useState<StorageTab>("folders");
 
   return (
-    <div className="flex h-full flex-col px-6 py-5">
+    <div className="flex h-full flex-col px-6 py-6">
       <PageHeader
         title="Storage"
         subtitle={summary ? undefined : "Browse what the scan measured, folder by folder."}
@@ -64,6 +66,7 @@ export function StoragePage() {
       ) : !summary ? (
         <EmptyState
           icon={scanning ? Scale : FolderTree}
+          className="flex-1"
           title={scanning ? "Scan in progress" : "No scan data yet"}
           description={
             scanning

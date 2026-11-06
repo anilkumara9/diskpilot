@@ -7,7 +7,7 @@ import { exclusionsToText, parseExclusions, sameExclusions } from "@/lib/setting
 import type { AssistantProvider, ThemePreference } from "@/lib/types";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { Button } from "@/components/ui/button";
-import { Input, Select, Textarea } from "@/components/ui/input";
+import { Checkbox, Input, Select, Textarea } from "@/components/ui/input";
 import { Section } from "@/components/ui/section";
 
 const PROVIDERS: { id: AssistantProvider; label: string; note: string }[] = [
@@ -61,11 +61,9 @@ export function AssistantSettings() {
             results using the provider below. It stays read-only either way.
           </span>
         </span>
-        <input
-          type="checkbox"
+        <Checkbox
           checked={settings.assistantEnabled}
           onChange={(e) => void updateSettings({ assistantEnabled: e.target.checked })}
-          className="size-4 shrink-0 accent-[#5856d6]"
           aria-label="Enable assistant"
         />
       </label>
@@ -191,21 +189,23 @@ export function SettingsPage() {
   };
 
   return (
-    <div className="h-full overflow-y-auto px-6 py-5">
-      <div className="mx-auto max-w-[760px]">
+    <div className="h-full overflow-y-auto px-6 py-6">
+      <div className="max-w-[760px]">
         <PageHeader title="Settings" subtitle="Scanning, appearance, the optional assistant, and safety notes." showScanControl={false} />
 
         <Section title="Scanning" description="The scan root is measured read-only. The default is your user profile folder.">
           <div className="flex items-center gap-2">
-            <span className="mono-path flex-1 truncate rounded-md border border-border bg-panel-raised px-2.5 py-2 text-foreground" title={settings.scanRoot}>
-              {displayPath(settings.scanRoot, homeDir) || "No folder chosen"}
+            <span className="flex h-8 flex-1 items-center rounded-md border border-border bg-panel-raised px-2.5" title={settings.scanRoot}>
+              <span className="mono-path truncate text-foreground">
+                {displayPath(settings.scanRoot, homeDir) || "No folder chosen"}
+              </span>
             </span>
             <Button variant="secondary" onClick={() => void pickRoot()}>
               <FolderOpen className="size-4" aria-hidden="true" />
               Choose folder…
             </Button>
           </div>
-          <div className="mt-3 flex items-start gap-2 rounded-[10px] border border-border bg-panel-raised px-3.5 py-2.5">
+          <div className="mt-3 flex items-start gap-2 rounded-[10px] border border-border bg-panel-raised px-4 py-3">
             <ShieldAlert className="mt-0.5 size-4 shrink-0 text-muted" aria-hidden="true" />
             <p className="text-[12px] leading-4 text-muted">
               Protected folders are never scanned for cleanup: C:\Windows (including WinSxS), C:\Program Files,

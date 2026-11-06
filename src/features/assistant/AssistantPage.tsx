@@ -62,15 +62,15 @@ export function AssistantPage() {
   };
 
   return (
-    <div className="flex h-full flex-col px-6 py-5">
-      <div className="mx-auto flex min-h-0 w-full max-w-[760px] flex-1 flex-col">
+    <div className="flex h-full flex-col px-6 py-6">
+      <div className="flex min-h-0 w-full max-w-[760px] flex-1 flex-col">
         <PageHeader
           title="Assistant"
           subtitle="Ask about this PC's scan results. The assistant is read-only: it can explain and point at recommendations, but it cannot delete, move, or run anything."
           showScanControl={false}
         />
 
-        <div className="mb-3 flex items-start gap-2 rounded-[10px] border border-border bg-panel-raised px-3.5 py-2.5">
+        <div className="mb-3 flex items-start gap-2 rounded-[10px] border border-border bg-panel-raised px-4 py-3">
           <Eye className="mt-0.5 size-4 shrink-0 text-muted" aria-hidden="true" />
           <p className="text-[12px] leading-4 text-muted">
             Read-only by design. The assistant sees categories, largest items, recommendations, Docker usage,
@@ -105,7 +105,7 @@ export function AssistantPage() {
                       "max-w-[86%] whitespace-pre-wrap rounded-[10px] px-3.5 py-2.5 text-[13px] leading-[18px]",
                       message.role === "user"
                         ? "bg-accent-fill text-accent-foreground"
-                        : "border border-border bg-panel text-foreground",
+                        : "border border-border bg-panel-raised text-foreground",
                     )}
                   >
                     <p>{message.content}</p>
@@ -125,7 +125,7 @@ export function AssistantPage() {
               ))}
               {sending ? (
                 <li className="flex justify-start">
-                  <div className="rounded-[10px] border border-border bg-panel px-3.5 py-2.5 text-[12px] text-muted">
+                  <div className="rounded-[10px] border border-border bg-panel-raised px-3.5 py-2.5 text-[12px] text-muted">
                     Thinking…
                   </div>
                 </li>

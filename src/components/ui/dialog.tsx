@@ -62,7 +62,7 @@ export function Dialog({
   return (
     <div className="fixed inset-0 z-50" role="presentation">
       <div
-        className="absolute inset-0 bg-black/40"
+        className="absolute inset-0 bg-black/50 backdrop-blur-[2px]"
         aria-hidden="true"
         onClick={() => dismissible && onClose()}
       />
@@ -73,11 +73,11 @@ export function Dialog({
         aria-labelledby={titleId}
         tabIndex={-1}
         className={cn(
-          "dialog-in absolute left-1/2 top-1/2 flex max-h-[86vh] w-full flex-col rounded-[10px] border border-border bg-panel shadow-[0_16px_48px_rgba(0,0,0,0.28)] outline-none",
+          "dialog-in absolute left-1/2 top-1/2 flex max-h-[86vh] w-full flex-col rounded-[10px] border border-border-strong bg-panel-raised shadow-[0_24px_70px_-12px_rgba(0,0,0,0.5),0_4px_16px_rgba(0,0,0,0.24)] outline-none",
           wide ? "max-w-[720px]" : "max-w-[520px]",
         )}
       >
-        <div className="flex items-start gap-3 px-5 pb-2 pt-4">
+        <div className="flex items-start gap-3 px-5 pb-3 pt-5">
           <div className="min-w-0 flex-1">
             <h2 id={titleId} className="text-[15px] font-semibold leading-5 text-foreground">
               {title}
@@ -92,9 +92,9 @@ export function Dialog({
             </Button>
           ) : null}
         </div>
-        <div className="min-h-0 flex-1 overflow-y-auto px-5 py-2">{children}</div>
+        <div className="min-h-0 flex-1 overflow-y-auto px-5 py-3">{children}</div>
         {footer ? (
-          <div className="flex items-center justify-end gap-2 border-t border-border px-5 py-3">
+          <div className="flex items-center justify-end gap-2 border-t border-border px-5 py-3.5">
             {footer}
           </div>
         ) : null}

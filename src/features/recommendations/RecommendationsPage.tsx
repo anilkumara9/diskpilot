@@ -89,9 +89,9 @@ export function CleanupDialog({
       {error ? <p role="alert" className="mb-3 text-[12px] text-critical">{error}</p> : null}
 
       <h3 className="pb-1 text-[12px] font-semibold text-foreground">Items ({plan.items.length})</h3>
-      <ul className="max-h-[220px] space-y-1 overflow-y-auto rounded-md border border-border p-2">
+      <ul className="max-h-[220px] space-y-1 overflow-y-auto rounded-md border border-border bg-panel p-2">
         {plan.items.map((item) => (
-          <li key={item.path} className="flex items-center justify-between gap-3">
+          <li key={item.path} className="flex items-center justify-between gap-3 rounded px-1.5 py-1">
             <span className="mono-path min-w-0 truncate text-foreground" title={item.path}>{displayPath(item.path, homeDir)}</span>
             <span className="shrink-0 text-[12px] tabular text-muted">{formatBytes(item.bytes)}</span>
           </li>
@@ -126,14 +126,14 @@ export function CleanupDialog({
 
       <fieldset className="mt-4">
         <legend className="pb-1.5 text-[12px] font-semibold text-foreground">How should these be removed?</legend>
-        <label className="flex cursor-pointer items-start gap-2 rounded-md border border-border px-3 py-2">
-          <input type="radio" name="cleanup-mode" value="recycleBin" checked={mode === "recycleBin"} onChange={() => setMode("recycleBin")} className="mt-0.5 accent-[#5856d6]" />
+        <label className="flex cursor-pointer items-start gap-2.5 rounded-md border border-border px-3.5 py-2.5 transition-colors duration-120 hover:border-border-strong has-checked:border-accent has-checked:bg-accent/5">
+          <input type="radio" name="cleanup-mode" value="recycleBin" checked={mode === "recycleBin"} onChange={() => setMode("recycleBin")} className="mt-0.5 accent-[var(--accent-fill)]" />
           <span>
             <span className="block text-[13px] font-medium text-foreground">Move to Recycle Bin (recommended)</span>
             <span className="block text-[12px] text-muted">Recoverable until you empty the Recycle Bin. Space is freed when it is emptied.</span>
           </span>
         </label>
-        <label className={cn("mt-2 flex items-start gap-2 rounded-md border border-border px-3 py-2", plan.allowPermanent ? "cursor-pointer" : "cursor-not-allowed opacity-50")}>
+        <label className={cn("mt-2 flex items-start gap-2.5 rounded-md border border-border px-3.5 py-2.5 transition-colors duration-120 has-checked:border-accent has-checked:bg-accent/5", plan.allowPermanent ? "cursor-pointer hover:border-border-strong" : "cursor-not-allowed opacity-50")}>
           <input
             type="radio"
             name="cleanup-mode"
@@ -141,7 +141,7 @@ export function CleanupDialog({
             checked={mode === "permanent"}
             disabled={!plan.allowPermanent}
             onChange={() => setMode("permanent")}
-            className="mt-0.5 accent-[#5856d6]"
+            className="mt-0.5 accent-[var(--accent-fill)]"
           />
           <span>
             <span className="block text-[13px] font-medium text-foreground">Permanently delete</span>
@@ -182,7 +182,7 @@ export function RecommendationRow({
         highlighted && "bg-accent/8",
       )}
     >
-      <div className="flex items-center gap-3 px-1 py-2">
+      <div className="flex items-center gap-3 px-1 py-2 transition-colors duration-120 hover:bg-hover">
         {selectable ? (
           <Checkbox
             checked={checked}
@@ -312,8 +312,8 @@ export function RecommendationsPage() {
   };
 
   return (
-    <div className="h-full overflow-y-auto px-6 py-5">
-      <div className="mx-auto max-w-[880px]">
+    <div className="h-full overflow-y-auto px-6 py-6">
+      <div className="max-w-[880px]">
         <PageHeader
           title="Cleanup"
           subtitle="Every recommendation explains why it was detected, why it may be safe, and what could go wrong. Nothing is removed until you review an exact plan."
@@ -335,6 +335,7 @@ export function RecommendationsPage() {
         {recommendations.length === 0 ? (
           <EmptyState
             icon={Sparkles}
+            className="min-h-[360px]"
             title="No recommendations yet"
             description="Run a scan first. DiskPilot then groups cleanup candidates into Likely safe, Review first, and Keep — with the reasoning shown for each one."
           />

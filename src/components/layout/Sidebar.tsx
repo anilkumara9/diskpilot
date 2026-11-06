@@ -56,7 +56,9 @@ function NavButton({
       aria-current={active ? "page" : undefined}
       className={cn(
         "flex h-7 w-full items-center gap-2 rounded-md px-2 text-[13px] transition-colors duration-120",
-        active ? "bg-selected text-foreground" : "text-foreground hover:bg-hover",
+        active
+          ? "bg-selected font-medium text-foreground"
+          : "text-foreground hover:bg-hover",
       )}
     >
       <Icon
@@ -129,23 +131,23 @@ export function Sidebar() {
       {/* 38px drag region with the logo header */}
       <div
         data-tauri-drag-region
-        className="flex h-[38px] shrink-0 items-center gap-2 px-3 pt-1"
+        className="flex h-[38px] shrink-0 items-center gap-2 px-3"
       >
-        <img src="/logo.svg" alt="" width={20} height={20} className="rounded-[5px]" aria-hidden="true" />
+        <img src="/logo.svg" alt="" width={20} height={20} className="rounded-md" aria-hidden="true" />
         <span className="text-[13px] font-semibold tracking-[-0.01em] text-foreground">DiskPilot</span>
       </div>
 
       <div className="min-h-0 flex-1 overflow-y-auto px-2 pb-2">
         <NavButton entry={OVERVIEW} active={page === "overview"} onNavigate={navigate} />
 
-        <p className="px-2 pb-1 pt-4 text-[11px] font-medium leading-[14px] text-subtle">Analyze</p>
+        <p className="px-2 pb-1.5 pt-5 text-[11px] font-medium leading-[14px] text-subtle">Analyze</p>
         <div className="space-y-px">
           {analyzeEntries(assistantEnabled).map((entry) => (
             <NavButton key={entry.id} entry={entry} active={page === entry.id} onNavigate={navigate} />
           ))}
         </div>
 
-        <p className="px-2 pb-1 pt-4 text-[11px] font-medium leading-[14px] text-subtle">Clean up</p>
+        <p className="px-2 pb-1.5 pt-5 text-[11px] font-medium leading-[14px] text-subtle">Clean up</p>
         <div className="space-y-px">
           {cleanupEntries.map((entry) => (
             <NavButton
@@ -165,7 +167,7 @@ export function Sidebar() {
         </div>
       </div>
 
-      <div className="shrink-0 border-t border-border px-2 pb-2 pt-2">
+      <div className="shrink-0 border-t border-border px-2 pb-2 pt-3">
         <ScanStatus />
         <NavButton
           entry={{ id: "settings", label: "Settings", icon: Settings }}

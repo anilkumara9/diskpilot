@@ -136,8 +136,8 @@ export function DeveloperToolsPage() {
   };
 
   return (
-    <div className="h-full overflow-y-auto px-6 py-5">
-      <div className="mx-auto max-w-[880px]">
+    <div className="h-full overflow-y-auto px-6 py-6">
+      <div className="max-w-[880px]">
         <PageHeader
           title="Developer Tools"
           subtitle="Editors, AI coding tools, language toolchains, and local models — what each one stores, and what state it is in. Other apps' databases are read only and never modified."
@@ -145,9 +145,11 @@ export function DeveloperToolsPage() {
         {error ? <p role="alert" className="pb-3 text-[12px] text-critical">{error}</p> : null}
         {revealError ? <p role="alert" className="pb-3 text-[12px] text-critical">{revealError}</p> : null}
 
-        <div className="relative max-w-[420px] pb-1">
-          <Search className="pointer-events-none absolute left-2.5 top-[13px] size-4 -translate-y-1/2 text-subtle" aria-hidden="true" />
-          <Input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Filter tools and items" aria-label="Filter tools and items" className="pl-8" />
+        <div className="max-w-[420px] pb-1">
+          <div className="relative">
+            <Search className="pointer-events-none absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-subtle" aria-hidden="true" />
+            <Input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Filter tools and items" aria-label="Filter tools and items" className="pl-8" />
+          </div>
         </div>
 
         <Section title="Transcript secrets">
@@ -159,6 +161,7 @@ export function DeveloperToolsPage() {
         ) : visible.length === 0 ? (
           <EmptyState
             icon={Code2}
+            className="min-h-[360px]"
             title="No developer tool data found"
             description="Per-tool storage reports appear here for editors, AI coding tools, Node.js, Rust, Python, .NET, Visual Studio, JetBrains, and local model tools detected on this PC."
           />

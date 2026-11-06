@@ -15,9 +15,9 @@ export function Section({
   className?: string;
 }) {
   return (
-    <section className={cn("mt-6 first:mt-0", className)}>
+    <section className={cn("mt-7 first:mt-0", className)}>
       {(title || action) && (
-        <div className="mb-2 flex items-end justify-between gap-3">
+        <div className="mb-2.5 flex items-center justify-between gap-3">
           <div>
             {title ? (
               <h2 className="text-[13px] font-semibold leading-[18px] text-foreground">{title}</h2>

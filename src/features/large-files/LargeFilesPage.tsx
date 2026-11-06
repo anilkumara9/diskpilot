@@ -42,6 +42,7 @@ export function LargeFilesPage({ embedded = false }: { embedded?: boolean }) {
     return (
       <EmptyState
         icon={Scale}
+        className="min-h-[320px]"
         title="No largest items yet"
         description="After a scan, the 500 largest files and the heaviest folders are listed here."
       />
@@ -50,7 +51,7 @@ export function LargeFilesPage({ embedded = false }: { embedded?: boolean }) {
 
   const body = (
     <div>
-      <div className="flex items-start gap-2 rounded-[10px] border border-border bg-panel-raised px-3.5 py-2.5">
+      <div className="flex items-start gap-2 rounded-[10px] border border-border bg-panel-raised px-4 py-3">
         <FileWarning className="mt-0.5 size-4 shrink-0 text-tier-review" aria-hidden="true" />
         <p className="text-[12px] leading-4 text-muted">
           Size alone is never a reason to delete. Large files are often the ones you care about most —
@@ -123,5 +124,5 @@ export function LargeFilesPage({ embedded = false }: { embedded?: boolean }) {
   );
 
   if (embedded) return body;
-  return <div className="mx-auto max-w-[880px] overflow-y-auto px-6 py-6">{body}</div>;
+  return <div className="max-w-[880px] overflow-y-auto px-6 py-6">{body}</div>;
 }

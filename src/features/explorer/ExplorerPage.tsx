@@ -3,6 +3,7 @@ import { ChevronRight, File, Folder, FolderOpen, Search, X } from "lucide-react"
 import * as api from "@/lib/api";
 import { useAppStore } from "@/lib/store";
 import { filterByQuery, sortExplorerRows, type FileSortKey, type SortDirection } from "@/lib/analysis";
+import { categoryMeta } from "@/lib/categories";
 import { basename, displayPath, formatBytes, parentPath } from "@/lib/format";
 import { tierMeta } from "@/lib/tiers";
 import type { DirectoryEntry, Recommendation } from "@/lib/types";
@@ -13,6 +14,7 @@ import { CategorySelect, type CategoryFilter } from "@/components/shared/Categor
 import { ClassificationCard } from "@/components/shared/ClassificationCard";
 import { DetailsPanel, DetailRow } from "@/components/shared/DetailsPanel";
 import { EmptyState } from "@/components/shared/EmptyState";
+import { SizeBar } from "@/components/shared/SizeBar";
 import { SortHeader } from "@/components/shared/SortHeader";
 import { TierBadge } from "@/components/shared/TierBadge";
 import { cn } from "@/lib/utils";
@@ -276,12 +278,12 @@ export function ExplorerView({
                     </td>
                     <td className="px-3 py-1 text-right">
                       <span className="text-[13px] tabular text-foreground">{formatBytes(row.bytes)}</span>
-                      <span className="mt-0.5 block h-[2px] w-full overflow-hidden rounded-full bg-hover">
-                        <span
-                          className="block h-full rounded-full"
-                          style={{ width: `${(row.bytes / maxBytes) * 100}%`, background: "var(--accent)" }}
-                        />
-                      </span>
+                      <SizeBar
+                        fraction={row.bytes / maxBytes}
+                        colorVar={categoryMeta(row.category).colorVar}
+                        height={2}
+                        className="mt-0.5"
+                      />
                     </td>
                   </tr>
                 );
@@ -365,6 +367,7 @@ export function ExplorerPage() {
     return (
       <EmptyState
         icon={Folder}
+        className="h-full"
         title="No folder data yet"
         description="Run a scan first. The explorer then lets you drill into every measured folder with its classification."
       />

@@ -89,7 +89,7 @@ export function StorageStrip({
 
       <ul className="mt-2.5 flex flex-wrap gap-x-4 gap-y-1.5">
         {rows.map((row) => (
-          <li key={row.category} className="flex items-center gap-1.5 text-[12px] text-muted">
+          <li key={row.category} className="flex items-center gap-1.5 whitespace-nowrap text-[12px] text-muted">
             <CategoryDot category={row.category} />
             <span className="text-foreground">{categoryMeta(row.category).label}</span>
             <span className="tabular">{formatBytes(row.bytes)}</span>
@@ -99,21 +99,21 @@ export function StorageStrip({
           </li>
         ))}
         {otherUsed > 0 ? (
-          <li className="flex items-center gap-1.5 text-[12px] text-muted">
+          <li className="flex items-center gap-1.5 whitespace-nowrap text-[12px] text-muted">
             <span className="inline-block size-2 rounded-full bg-border-strong" aria-hidden="true" />
             <span className="text-foreground">Other used space</span>
             <span className="tabular">{formatBytes(otherUsed)}</span>
           </li>
         ) : null}
         {disk ? (
-          <li className="flex items-center gap-1.5 text-[12px] text-muted">
+          <li className="flex items-center gap-1.5 whitespace-nowrap text-[12px] text-muted">
             <span className="inline-block size-2 rounded-full border border-border-strong" aria-hidden="true" />
             <span className="text-foreground">Available</span>
             <span className="tabular">{formatBytes(disk.availableBytes)}</span>
           </li>
         ) : null}
         {summary ? (
-          <li className="flex items-center gap-1.5 text-[12px] text-muted">
+          <li className="flex items-center gap-1.5 whitespace-nowrap text-[12px] text-muted">
             <span className="hatched inline-block size-2.5 rounded-[3px] bg-muted" aria-hidden="true" />
             <span className="text-foreground">Likely recoverable</span>
             <span className="tabular text-tier-safe">{formatBytes(totalRecoverable(summary))}</span>
@@ -204,7 +204,7 @@ export function SinceLastScan({ comparison }: { comparison: ScanComparison }) {
         ? `${formatBytes(total)} more than the last scan`
         : "No change in total size since the last scan";
   return (
-    <div className="flex flex-wrap items-center gap-x-10 gap-y-3">
+    <div className="flex flex-wrap items-center gap-x-10 gap-y-3 rounded-[10px] border border-border bg-panel-raised px-4 py-3.5">
       <div className="min-w-[120px]">
         <p className="text-[12px] text-muted">Total measured</p>
         <p
@@ -373,7 +373,7 @@ export function AssistantPrompt() {
   const navigate = useAppStore((s) => s.navigate);
   if (!assistantEnabled) return null;
   return (
-    <div className="flex items-center gap-3 rounded-[10px] border border-border px-4 py-3">
+    <div className="flex items-center gap-3 rounded-[10px] border border-border bg-panel-raised px-4 py-3">
       <Bot className="size-4 shrink-0 text-accent" aria-hidden="true" />
       <p className="flex-1 text-[12px] leading-4 text-muted">
         Ask the assistant about this scan — what is using space, and what is safest to clean first.
@@ -399,7 +399,8 @@ export function OverviewPage() {
   const shown = summary;
 
   return (
-    <div className="mx-auto max-w-[880px] px-6 py-6">
+    <div className="h-full overflow-y-auto px-6 py-6">
+      <div className="max-w-[880px]">
       <div className="flex items-start justify-between gap-4">
         <div>
           <h1 className="text-[28px] font-semibold leading-8 tracking-[-0.01em] text-foreground">
@@ -481,6 +482,7 @@ export function OverviewPage() {
           </Section>
         </>
       ) : null}
+      </div>
     </div>
   );
 }
