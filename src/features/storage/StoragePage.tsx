@@ -11,10 +11,11 @@ import { EmptyState } from "@/components/shared/EmptyState";
 import { ResultsAge } from "@/components/shared/ResultsAge";
 import { ExplorerView } from "@/features/explorer/ExplorerPage";
 import { LargeFilesPage } from "@/features/large-files/LargeFilesPage";
+import { TypesView } from "@/features/storage/TypesView";
 import { SearchResults, type ActiveSearch } from "@/features/storage/SearchResults";
 import { cn } from "@/lib/utils";
 
-export type StorageTab = "folders" | "largest" | "map";
+export type StorageTab = "folders" | "largest" | "map" | "types";
 
 export function StorageTabs({
   tab,
@@ -27,6 +28,7 @@ export function StorageTabs({
     { id: "folders", label: "Folders" },
     { id: "largest", label: "Largest items" },
     { id: "map", label: "Map" },
+    { id: "types", label: "Types" },
   ];
   const selectedIndex = tabs.findIndex((t) => t.id === tab);
   const buttonRefs = useRef<(HTMLButtonElement | null)[]>([]);
@@ -224,6 +226,10 @@ export function StoragePage() {
                   : "Run a scan from the header. Every folder is then listed with its size, category, and cleanup guidance."
               }
             />
+          ) : tab === "types" ? (
+            <div className="min-h-0 flex-1 overflow-y-auto">
+              <TypesView />
+            </div>
           ) : (
             <div className="min-h-0 flex-1">
               <ExplorerView
