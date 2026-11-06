@@ -11,7 +11,7 @@ concurrency:
 
 jobs:
   windows:
-    name: Windows — frontend, Rust, Tauri build
+    name: Windows — frontend, Rust, installers
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
@@ -19,36 +19,31 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 22
-
-      - name: Set up pnpm
-        uses: pnpm/action-setup@v4
-        with:
-          version: 10
+          node-version: 20
+          cache: npm
 
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: "1.82"
+          targets: x86_64-pc-windows-msvc
           components: rustfmt, clippy
 
       - name: Cache Rust build
         uses: Swatinem/rust-cache@v2
 
       - name: Install frontend dependencies
-        run: pnpm install --frozen-lockfile
+        run: npm ci
 
-      - name: Format check (frontend)
-        run: pnpm format:check
+      # tsc + vite. The dist output is also what the Tauri build
+      # embeds, so this runs before every Rust step.
+      - name: Build frontend
+        run: npm run build
 
       - name: Lint (frontend)
-        run: pnpm lint
-
-      - name: Typecheck
-        run: pnpm typecheck
+        run: npm run lint
 
       - name: Test (frontend)
-        run: pnpm test
+        run: npm run test
 
       - name: Format check (Rust)
         run: cargo fmt --all -- --check
@@ -56,11 +51,17 @@ jobs:
       - name: Clippy
         run: cargo clippy --workspace --all-targets -- -D warnings
 
+      # On windows-latest the shell's test binary links against the
+      # platform WebView2/CRT stack natively and actually RUNS here —
+      # this is the gate that proves the full shell test suite, not
+      # just the core's.
       - name: Test (Rust workspace)
         run: cargo test --workspace
 
-      - name: Build installers (MSI + NSIS)
-        run: pnpm tauri build
+      # Proves the MSI + NSIS installers and the signed updater
+      # artifacts compile end to end. Nothing is published from CI.
+      - name: Build installers (MSI + NSIS, no publish)
+        run: npm run app:build
 
   core-linux:
     name: Core crate tests (Linux)
@@ -71,7 +72,6 @@ jobs:
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: "1.82"
           components: rustfmt, clippy
 
       - name: Cache Rust build

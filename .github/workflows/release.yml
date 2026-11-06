@@ -1,0 +1,86 @@
+name: Release
+
+# Tag a release (v0.6.0, v0.7.0, …) and this builds the installers,
+# signs the updater artifacts, and opens a DRAFT GitHub release with
+# everything attached. A maintainer reviews and publishes the draft
+# by hand — nothing reaches users automatically. See
+# docs/RELEASING.md for the full runbook.
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Build + draft release
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+
+      - name: Cache Rust build
+        uses: Swatinem/rust-cache@v2
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      # Builds MSI + NSIS, signs the updater artifacts with the
+      # TAURI_SIGNING_PRIVATE_KEY secret, generates latest.json (the
+      # manifest the in-app updater polls), and attaches everything
+      # to a draft release named after the tag.
+      - name: Build and stage the draft release
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        with:
+          tagName: ${{ github.ref_name }}
+          releaseName: "DiskPilot ${{ github.ref_name }}"
+          releaseBody: |
+            ## Install
+
+            Download the **NSIS installer** (`.exe`) below — it installs per-user, no administrator rights needed. The MSI is the per-machine alternative for managed deployments.
+
+            **Windows SmartScreen:** DiskPilot is not yet signed with a code-signing certificate, so SmartScreen may warn on first run. Choose *More info → Run anyway*. Verify your download against `SHA256SUMS.txt` attached below.
+
+            ## Changes
+
+            See [CHANGELOG.md](https://github.com/anilkumara9/diskpilot/blob/main/CHANGELOG.md) for what changed in this release.
+
+            ## Updates
+
+            Already running DiskPilot? It checks for updates on launch and can install this release itself (Settings → About & updates). Update packages are signed and verified in the app before they install.
+          releaseDraft: true
+          prerelease: false
+          includeUpdaterJson: true
+
+      # SHA-256 checksums for the two installers, attached to the
+      # same draft so early adopters can verify downloads while the
+      # app is unsigned.
+      - name: Checksums
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $installers = Get-ChildItem -Recurse "src-tauri/target/release/bundle" -Include *.msi, *.exe
+          if (-not $installers) { throw "No installers found under the bundle directory" }
+          $lines = foreach ($file in $installers) {
+            $hash = (Get-FileHash -Algorithm SHA256 $file.FullName).Hash.ToLower()
+            "$hash  $($file.Name)"
+          }
+          $lines | Out-File -Encoding ascii SHA256SUMS.txt
+          Get-Content SHA256SUMS.txt
+          gh release upload "${{ github.ref_name }}" SHA256SUMS.txt --clobber
