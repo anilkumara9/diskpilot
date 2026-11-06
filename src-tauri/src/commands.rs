@@ -757,33 +757,43 @@ pub fn build_cleanup_plan(
         .lock()
         .map_err(|_| "engine lock poisoned".to_string())?;
     let recs = engine.recommendations.clone();
+    // Plan items carry sizes measured from the current scan index
+    // (cloned out from under the lock, like the search commands do);
+    // before the first scan there is no index (and no recommendations
+    // to resolve), so an empty index simply rejects every path as
+    // unverifiable.
+    let index = engine.index.clone().unwrap_or_default();
     Ok(engine
         .planner
-        .build_plan(&recommendation_ids, &recs, &ctx, now_ms()))
+        .build_plan(&recommendation_ids, &recs, &index, &ctx, now_ms()))
 }
 
 /// Execute a previously built plan. Taking the plan from the core
 /// planner enforces existence, expiry and single use. Every path is
 /// re-validated by the core immediately before it is acted on, and the
 /// result is recorded to History. `mode` is `"permanent"` or anything
-/// else for the default Move to Recycle Bin; the core refuses permanent
-/// execution unless the plan allows it.
+/// else for the default Move to Recycle Bin; the mode is checked as
+/// part of the take, so asking for permanent deletion on a plan that
+/// does not allow it fails WITHOUT consuming the plan.
 #[tauri::command]
 pub async fn execute_cleanup_plan(
     state: State<'_, ShellState>,
     plan_id: String,
     mode: Option<String>,
 ) -> CmdResult<CleanupResult> {
+    let mode = match mode.as_deref() {
+        Some("permanent") => ExecuteMode::PermanentDelete,
+        _ => ExecuteMode::MoveToTrash,
+    };
     let plan = {
         let mut engine = state
             .engine
             .lock()
             .map_err(|_| "engine lock poisoned".to_string())?;
-        engine.planner.take_plan(&plan_id, now_ms()).map_err(err)?
-    };
-    let mode = match mode.as_deref() {
-        Some("permanent") => ExecuteMode::PermanentDelete,
-        _ => ExecuteMode::MoveToTrash,
+        engine
+            .planner
+            .take_plan_for_mode(&plan_id, mode, now_ms())
+            .map_err(err)?
     };
     let ctx = SafetyContext::new(state.scan_root());
     let result = blocking(move || execute_plan(&plan, mode, &ctx, &RealFileOps)).await?;
@@ -1202,22 +1212,16 @@ pub async fn docker_preview_action(action: DockerActionRequest) -> CmdResult<Doc
     Ok(preview)
 }
 
-/// Result of an executed Docker action.
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct DockerActionResult {
-    pub command: String,
-    pub output: String,
-}
-
 /// Execute one Docker action. The core re-checks it against a fresh
-/// overview and its argument-safety invariants before running anything.
+/// overview and its argument-safety invariants before running anything,
+/// and its result — the previewed command, the process output and the
+/// exit status — is returned to the frontend as-is.
 #[tauri::command]
-pub async fn docker_execute_action(action: DockerActionRequest) -> CmdResult<DockerActionResult> {
+pub async fn docker_execute_action(
+    action: DockerActionRequest,
+) -> CmdResult<docker::DockerActionResult> {
     let action = to_docker_action(&action)?;
-    let command = action.preview_command();
-    let output = blocking_value(move || docker::execute_action(&action)).await??;
-    Ok(DockerActionResult { command, output })
+    blocking_value(move || docker::execute_action(&action)).await?
 }
 
 // ---------------------------------------------------------------------------
@@ -1744,6 +1748,7 @@ pub async fn assistant_ask(
         .map(|m| CoreChatMessage {
             role: m.role,
             content: m.content,
+            ..Default::default()
         })
         .collect();
     let model = info.default_model.to_string();
@@ -1763,6 +1768,7 @@ pub async fn assistant_ask(
             provider,
             api_key,
             model,
+            system: diskpilot_core::assistant::DEFAULT_SYSTEM_PROMPT.to_string(),
         };
         let text = session.ask(&mut client, &message)?;
         Ok::<AssistantReply, String>(AssistantReply {
