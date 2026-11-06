@@ -27,6 +27,7 @@ const DEFAULT_SETTINGS: AppSettings = {
   autoStart: false,
   onboarded: false,
   ocrEnabled: true,
+  liveIndex: true,
 };
 
 export type StatusBannerState = { kind: "error" | "info" | "success"; message: string } | null;

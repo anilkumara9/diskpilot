@@ -19,6 +19,7 @@ import { categoryRows, sortLocations, totalRecoverable } from "@/lib/analysis";
 import { categoryMeta } from "@/lib/categories";
 import { displayPath, formatBytes, formatCount, formatDate, formatDuration, formatPercent, formatSignedBytes, formatSignedCount } from "@/lib/format";
 import { buildReportHtml } from "@/lib/report";
+import { liveChipState } from "@/lib/liveIndex";
 import type {
   BiggestChanges,
   Category,
@@ -37,6 +38,7 @@ import { Section } from "@/components/ui/section";
 import { Tooltip } from "@/components/ui/tooltip";
 import { Chart, type ChartSeries } from "@/components/Chart";
 import { CategoryBadge, CategoryDot } from "@/components/shared/CategoryBadge";
+import { MarkerTag } from "@/components/shared/MarkerTag";
 import { TierBadge } from "@/components/shared/TierBadge";
 import { SizeBar } from "@/components/shared/SizeBar";
 import { EmptyState } from "@/components/shared/EmptyState";
@@ -794,6 +796,7 @@ export function OverviewPage() {
   }, [finishedAtMs]);
 
   const shown = summary;
+  const liveChip = liveChipState(summary);
 
   const scanDrive = async (rootPath: string) => {
     await updateSettings({ scanRoot: rootPath });
@@ -849,6 +852,12 @@ export function OverviewPage() {
                 <span className="shrink-0">
                   <ResultsAge finishedAtMs={summary.finishedAtMs} />
                 </span>
+              ) : null}
+              {liveChip === "live" ? <MarkerTag className="shrink-0">Live index</MarkerTag> : null}
+              {liveChip === "stale" ? (
+                <MarkerTag tone="warn" className="shrink-0">
+                  Index may be out of date
+                </MarkerTag>
               ) : null}
             </>
           ) : (

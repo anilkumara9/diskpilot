@@ -386,6 +386,21 @@ export function SettingsPage() {
               aria-label="Read text in images"
             />
           </label>
+          <label className="mt-4 flex cursor-pointer items-center justify-between gap-4 border-t border-border pt-3">
+            <span>
+              <span className="block text-[13px] font-medium text-foreground">Live index</span>
+              <span className="block text-[12px] leading-4 text-muted">
+                While DiskPilot is running, changes on the scanned drive are applied to the index
+                within about a minute. Needs administrator access to the drive's change journal;
+                without it, the index simply refreshes on each scan.
+              </span>
+            </span>
+            <Checkbox
+              checked={settings.liveIndex}
+              onChange={(e) => void updateSettings({ liveIndex: e.target.checked })}
+              aria-label="Live index"
+            />
+          </label>
           <ExclusionsSettings />
         </Section>
 

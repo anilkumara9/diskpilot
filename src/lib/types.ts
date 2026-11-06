@@ -95,6 +95,14 @@ export interface ScanSummary {
   heavyFolders: LocationEntry[];
   errors: ScanError[];
   skipped: string[];
+  /** True when the live index is actively following this scan's
+      drive (decorated by the shell when the summary is served;
+      absent on summaries from older builds). */
+  liveIndexActive?: boolean;
+  /** True when the live index could not be kept exactly current
+      (journal wrapped or a change could not be applied) and the
+      next scan will reconcile it. */
+  indexStale?: boolean;
 }
 
 export interface ScanProgress {
@@ -371,6 +379,12 @@ export interface AppSettings {
       on-device) so plain-language search can match words in them.
       Older settings files without the field load as true. */
   ocrEnabled: boolean;
+  /** Follow the scanned drive's NTFS change journal while the app
+      runs, applying changes to the index between scans. Needs
+      administrator volume access; without it the index simply
+      refreshes on each scan. Older settings files without the
+      field load as true. */
+  liveIndex: boolean;
 }
 
 /* ---------- Watch: scan history, forecast, biggest changes ---------- */

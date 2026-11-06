@@ -424,6 +424,14 @@ separated from the nav by a hairline and 12 px of air.
   Settings → Scanning toggle "Read text in images", on by
   default; reading is on-device (Windows built-in OCR) and the
   text is never sent anywhere.
+- **Live index chips** — the Overview meta line, after the
+  results age: the neutral marker tag "Live index" when the
+  shell is following the scanned drive's change journal, or
+  the warn (tier-review) marker tag "Index may be out of date"
+  when it could not be kept exactly current — stale wins if
+  both were ever reported. Informational only; the remedy is
+  the ordinary Scan control beside it. The following itself is
+  the Settings → Scanning toggle "Live index", on by default.
 
 ## Charts
 
