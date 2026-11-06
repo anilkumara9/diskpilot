@@ -8,20 +8,24 @@
 
 mod commands;
 mod live;
+mod maintenance;
 mod ocr;
 mod recycle_bin;
+mod relocate_io;
 mod scan_history;
+mod smart_io;
 mod startup;
 mod tray;
 mod tray_icon;
 mod watch;
+mod winget_io;
 
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64};
 use std::sync::{Arc, Mutex};
 
 use serde::{Deserialize, Serialize};
-use tauri::Manager;
+use tauri::{Emitter, Manager};
 
 use diskpilot_core::assistant::KeyStore;
 use diskpilot_core::history::HistoryStore;
@@ -90,6 +94,54 @@ pub struct Settings {
     /// same administrator volume access as the MFT scan path).
     #[serde(default = "default_live_index")]
     pub live_index: bool,
+    /// Automatic maintenance (see `crate::maintenance`): when
+    /// enabled, the watch scheduler periodically purges Recycle Bin
+    /// items older than the retention age and clears the scan's
+    /// temporary-files recommendation through the ordinary planner
+    /// gate. `#[serde(default)]` keeps older settings files loading
+    /// with maintenance off.
+    #[serde(default)]
+    pub auto_maintenance: AutoMaintenanceSettings,
+    /// When the last automatic-maintenance run finished (epoch ms);
+    /// the due check in the core is computed against this stamp.
+    #[serde(default)]
+    pub last_maintenance_ms: Option<i64>,
+}
+
+/// Automatic-maintenance preferences, persisted inside
+/// [`Settings`]. Serialized camelCase like the rest of the settings
+/// payload: `{ enabled, frequency: "daily" | "weekly", minAgeDays }`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AutoMaintenanceSettings {
+    /// Off by default: nothing is ever removed automatically until
+    /// the user turns maintenance on.
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default = "default_maintenance_frequency")]
+    pub frequency: diskpilot_core::maintenance::MaintenanceFrequency,
+    /// Recycle Bin items deleted longer ago than this are purged;
+    /// the core floors the value at 1 day at selection time.
+    #[serde(default = "default_maintenance_min_age_days")]
+    pub min_age_days: u32,
+}
+
+fn default_maintenance_frequency() -> diskpilot_core::maintenance::MaintenanceFrequency {
+    diskpilot_core::maintenance::MaintenanceFrequency::Weekly
+}
+
+fn default_maintenance_min_age_days() -> u32 {
+    30
+}
+
+impl Default for AutoMaintenanceSettings {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            frequency: default_maintenance_frequency(),
+            min_age_days: default_maintenance_min_age_days(),
+        }
+    }
 }
 
 fn default_auto_scan() -> String {
@@ -128,6 +180,8 @@ impl Default for Settings {
             onboarded: false,
             ocr_enabled: default_ocr_enabled(),
             live_index: default_live_index(),
+            auto_maintenance: AutoMaintenanceSettings::default(),
+            last_maintenance_ms: None,
         }
     }
 }
@@ -185,6 +239,12 @@ pub struct ShellState {
     /// result only when the generation is unchanged, so a scan that
     /// completes mid-apply is never overwritten by stale work.
     pub index_generation: Arc<AtomicU64>,
+    /// A folder the user asked Windows Explorer to analyze
+    /// (`DiskPilot --scan <path>`, from the context-menu entry):
+    /// seeded from the process arguments at launch and replaced by
+    /// the single-instance handoff on later launches. The frontend
+    /// claims it once via `get_launch_intent`.
+    pub launch_intent: Mutex<Option<String>>,
 }
 
 impl ShellState {
@@ -265,7 +325,7 @@ fn load_settings(dir: &Path) -> Settings {
 
 /// Persist settings to `<dir>/settings.json` (written via a temp file so a
 /// crash mid-write cannot corrupt the previous settings).
-fn persist_settings(dir: &Path, settings: &Settings) -> std::io::Result<()> {
+pub(crate) fn persist_settings(dir: &Path, settings: &Settings) -> std::io::Result<()> {
     let text = serde_json::to_string_pretty(settings)
         .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
     let tmp = dir.join("settings.json.tmp");
@@ -284,9 +344,42 @@ fn quicksearch_shortcut() -> tauri_plugin_global_shortcut::Shortcut {
     )
 }
 
+/// Extract a `--scan <path>` launch argument (the Explorer
+/// context-menu entry starts DiskPilot this way), if one is present
+/// and names a non-empty path.
+fn scan_path_from_args(args: &[String]) -> Option<String> {
+    let mut iter = args.iter();
+    while let Some(arg) = iter.next() {
+        if arg == "--scan" {
+            return iter.next().cloned().filter(|path| !path.is_empty());
+        }
+    }
+    None
+}
+
 /// Build and run the application.
 pub fn run() {
     tauri::Builder::default()
+        // Single instance FIRST: a second launch (e.g. another
+        // Explorer "Analyze with DiskPilot") hands its `--scan`
+        // path to the running instance — stored as the launch
+        // intent and announced with a `launch-scan` event — and
+        // brings the main window forward instead of starting over.
+        .plugin(tauri_plugin_single_instance::init(|app, argv, _cwd| {
+            if let Some(path) = scan_path_from_args(&argv) {
+                if let Some(state) = app.try_state::<ShellState>() {
+                    if let Ok(mut slot) = state.launch_intent.lock() {
+                        *slot = Some(path.clone());
+                    }
+                }
+                let _ = app.emit("launch-scan", path);
+            }
+            if let Some(window) = app.get_webview_window("main") {
+                let _ = window.unminimize();
+                let _ = window.show();
+                let _ = window.set_focus();
+            }
+        }))
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_notification::init())
@@ -309,6 +402,11 @@ pub fn run() {
 
             let settings = load_settings(&data_dir);
             let scan_root = settings.scan_root.clone();
+
+            // Explorer context-menu launches arrive as
+            // `DiskPilot --scan <path>`; the frontend claims the
+            // path once via `get_launch_intent`.
+            let launch_intent = scan_path_from_args(&std::env::args().collect::<Vec<String>>());
 
             // Re-apply the autostart setting so a registration removed
             // outside the app self-heals on the next launch.
@@ -340,6 +438,7 @@ pub fn run() {
                 duplicates_report: Mutex::new(None),
                 scan_exclusions: Mutex::new(Vec::new()),
                 index_generation: Arc::new(AtomicU64::new(0)),
+                launch_intent: Mutex::new(launch_intent),
             });
 
             tray::build_tray(app.handle())?;
@@ -437,6 +536,17 @@ pub fn run() {
             commands::get_extension_files,
             commands::free_up_space,
             commands::export_report,
+            commands::export_scan_csv,
+            commands::list_app_junk,
+            commands::clean_app_junk,
+            smart_io::get_drive_health,
+            winget_io::list_available_updates,
+            winget_io::update_software,
+            relocate_io::relocate_folder,
+            relocate_io::undo_relocation,
+            commands::get_explorer_integration,
+            commands::set_explorer_integration,
+            commands::get_launch_intent,
             commands::scan_transcript_secrets,
             commands::assistant_ask,
             commands::save_api_key,
