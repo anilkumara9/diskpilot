@@ -15,6 +15,7 @@ import { MediaPage } from "@/features/media/MediaPage";
 import { DuplicatesPage } from "@/features/duplicates/DuplicatesPage";
 import { ApplicationsPage } from "@/features/applications/ApplicationsPage";
 import { GamesPage } from "@/features/games/GamesPage";
+import { StartupPage } from "@/features/startup/StartupPage";
 import { DeveloperToolsPage } from "@/features/developer/DeveloperToolsPage";
 import { DockerPage } from "@/features/docker/DockerPage";
 import { DownloadsPage } from "@/features/downloads/DownloadsPage";
@@ -41,6 +42,7 @@ const PAGE_COMPONENTS: Record<Exclude<PageId, "assistant">, () => React.JSX.Elem
   duplicates: DuplicatesPage,
   applications: ApplicationsPage,
   games: GamesPage,
+  startup: StartupPage,
   developer: DeveloperToolsPage,
   docker: DockerPage,
   downloads: DownloadsPage,

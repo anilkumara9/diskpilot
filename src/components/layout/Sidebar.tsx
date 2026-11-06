@@ -11,6 +11,7 @@ import {
   HeartPulse,
   History,
   Images,
+  Rocket,
   Settings,
   Sparkles,
   type LucideIcon,
@@ -47,6 +48,7 @@ function analyzeEntries(assistantEnabled: boolean): NavEntry[] {
 const SYSTEM_ENTRIES: NavEntry[] = [
   { id: "applications", label: "Applications", icon: AppWindow },
   { id: "games", label: "Games", icon: Gamepad2 },
+  { id: "startup", label: "Startup", icon: Rocket },
   { id: "developer", label: "Developer Tools", icon: Code2 },
   { id: "docker", label: "Docker", icon: Box },
 ];
