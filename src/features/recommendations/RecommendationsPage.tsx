@@ -27,6 +27,7 @@ import type {
   CleanupResult,
   Recommendation,
 } from "@/lib/types";
+import { CompressSaveSection } from "@/features/recommendations/CompressSaveSection";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/input";
@@ -597,6 +598,11 @@ export function RecommendationsPage() {
             ))}
           </>
         )}
+
+        {/* Below the cleanup content proper: compression is a
+            different offer (nothing is removed), and the section
+            hides itself when the scan found nothing to compress. */}
+        <CompressSaveSection />
       </div>
 
       {reviewGroup ? (
