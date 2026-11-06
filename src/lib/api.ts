@@ -29,6 +29,7 @@ import type {
   RecentFile,
   Recommendation,
   RecycleBinItem,
+  RestoreCleanupRunResult,
   ScanComparison,
   ScanHistoryEntry,
   ScanProgress,
@@ -220,6 +221,17 @@ export async function getHistory(): Promise<HistoryEntry[]> {
   } catch {
     return [];
   }
+}
+
+/**
+ * Undo one cleanup run: restore its Recycle Bin items to their
+ * original locations. The shell reports what came back, what
+ * failed (and why), and how many of the run's items were
+ * permanently deleted and so cannot be restored at all.
+ */
+export async function restoreCleanupRun(entryId: string): Promise<RestoreCleanupRunResult> {
+  requireDesktop();
+  return invoke<RestoreCleanupRunResult>("restore_cleanup_run", { entryId });
 }
 
 export async function findDuplicates(): Promise<DuplicateGroup[]> {

@@ -12,6 +12,7 @@ import type {
   ThemePreference,
 } from "@/lib/types";
 import { CategoryDot } from "@/components/shared/CategoryBadge";
+import { TextMatchChip } from "@/components/shared/TextMatchChip";
 import { Chip } from "@/features/storage/SearchResults";
 import { cn } from "@/lib/utils";
 
@@ -310,9 +311,12 @@ export default function QuickSearchApp() {
                   )}
                 >
                   <span className="min-w-0 flex-1">
-                    <span className="flex items-center gap-1.5 truncate text-[13px] text-foreground" title={hit.path}>
-                      <CategoryDot category={hit.category} />
-                      <span className="truncate">{hit.name}</span>
+                    <span className="flex items-center gap-2">
+                      <span className="flex min-w-0 items-center gap-1.5 text-[13px] text-foreground" title={hit.path}>
+                        <CategoryDot category={hit.category} />
+                        <span className="truncate">{hit.name}</span>
+                      </span>
+                      {hit.matchedInText ? <TextMatchChip /> : null}
                     </span>
                     <span className="mono-path mt-0.5 block truncate text-subtle" title={hit.path}>
                       {displayPath(parentPath(hit.path), homeDir)}

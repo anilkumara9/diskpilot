@@ -1,17 +1,29 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { History as HistoryIcon, Search, Sparkles } from "lucide-react";
 import * as api from "@/lib/api";
 import { useAppStore } from "@/lib/store";
 import { displayPath, formatBytes, formatDate } from "@/lib/format";
-import type { HistoryEntry } from "@/lib/types";
+import type { HistoryEntry, RestoreCleanupRunResult } from "@/lib/types";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { Input } from "@/components/ui/input";
 import { SkeletonRows } from "@/components/ui/skeleton";
 import { CopyButton } from "@/components/shared/CopyButton";
 import { EmptyState } from "@/components/shared/EmptyState";
 import { MarkerTag } from "@/components/shared/MarkerTag";
+import { RestoreRunAction } from "./RestoreRunAction";
 
-export function CleanupHistory({ entries, homeDir }: { entries: HistoryEntry[]; homeDir?: string }) {
+export function CleanupHistory({
+  entries,
+  homeDir,
+  onRefresh,
+}: {
+  entries: HistoryEntry[];
+  homeDir?: string;
+  onRefresh?: () => void;
+}) {
+  /* Restore outcomes live here, not in the row: refreshing the
+     entries after a restore must not unmount the result. */
+  const [restoreResults, setRestoreResults] = useState<Record<number, RestoreCleanupRunResult>>({});
   const total = entries.reduce((acc, e) => acc + e.reclaimedBytes, 0);
   return (
     <div>
@@ -54,6 +66,18 @@ export function CleanupHistory({ entries, homeDir }: { entries: HistoryEntry[]; 
                   ))}
                 </ul>
               ) : null}
+              {(entry.restorableCount ?? 0) > 0 || restoreResults[entry.id] ? (
+                <div className="mt-2 pl-[26px]">
+                  <RestoreRunAction
+                    entry={entry}
+                    result={restoreResults[entry.id] ?? null}
+                    onCompleted={(result) => {
+                      setRestoreResults((prev) => ({ ...prev, [entry.id]: result }));
+                      onRefresh?.();
+                    }}
+                  />
+                </div>
+              ) : null}
             </li>
           );
         })}
@@ -68,15 +92,18 @@ export function HistoryPage() {
   const [error, setError] = useState<string | null>(null);
   const [query, setQuery] = useState("");
 
+  const load = useCallback(async () => {
+    const rows = await api.getHistory();
+    setEntries([...rows].sort((a, b) => b.timestampMs - a.timestampMs));
+  }, []);
+
   useEffect(() => {
     let live = true;
-    api.getHistory()
-      .then((rows) => { if (live) setEntries([...rows].sort((a, b) => b.timestampMs - a.timestampMs)); })
-      .catch((err: unknown) => {
-        if (live) setError(err instanceof Error ? err.message : "History could not be loaded.");
-      });
+    load().catch((err: unknown) => {
+      if (live) setError(err instanceof Error ? err.message : "History could not be loaded.");
+    });
     return () => { live = false; };
-  }, []);
+  }, [load]);
 
   const visible = useMemo(() => {
     if (!entries) return [];
@@ -123,7 +150,7 @@ export function HistoryPage() {
             {visible.length === 0 ? (
               <p className="py-8 text-center text-[12px] text-muted">No history entries match the filter.</p>
             ) : (
-              <CleanupHistory entries={visible} homeDir={homeDir} />
+              <CleanupHistory entries={visible} homeDir={homeDir} onRefresh={() => void load()} />
             )}
           </>
         )}

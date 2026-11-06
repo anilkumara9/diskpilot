@@ -372,6 +372,20 @@ export function SettingsPage() {
               use Disk Cleanup or Storage Sense for it.
             </p>
           </div>
+          <label className="mt-4 flex cursor-pointer items-center justify-between gap-4 border-t border-border pt-3">
+            <span>
+              <span className="block text-[13px] font-medium text-foreground">Read text in images</span>
+              <span className="block text-[12px] leading-4 text-muted">
+                Find words inside screenshots and images. Reading happens on this PC (Windows
+                built-in OCR); the text is never sent anywhere.
+              </span>
+            </span>
+            <Checkbox
+              checked={settings.ocrEnabled}
+              onChange={(e) => void updateSettings({ ocrEnabled: e.target.checked })}
+              aria-label="Read text in images"
+            />
+          </label>
           <ExclusionsSettings />
         </Section>
 

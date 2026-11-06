@@ -9,6 +9,7 @@ import type { QueryChip, SearchFilters, SearchHit } from "@/lib/types";
 import { Button } from "@/components/ui/button";
 import { CategoryDot } from "@/components/shared/CategoryBadge";
 import { EmptyState } from "@/components/shared/EmptyState";
+import { TextMatchChip } from "@/components/shared/TextMatchChip";
 
 /**
  * Results of a natural-language search. The chip row is the app's
@@ -142,10 +143,13 @@ export function SearchResults({
             {search.hits.map((hit) => (
               <li key={hit.path} className="flex items-center gap-3 py-2">
                 <div className="min-w-0 flex-1">
-                  <p className="flex items-center gap-1.5 truncate text-[13px] text-foreground" title={hit.path}>
-                    <CategoryDot category={hit.category} />
-                    <span className="truncate">{hit.name}</span>
-                  </p>
+                  <div className="flex items-center gap-2">
+                    <p className="flex min-w-0 items-center gap-1.5 text-[13px] text-foreground" title={hit.path}>
+                      <CategoryDot category={hit.category} />
+                      <span className="truncate">{hit.name}</span>
+                    </p>
+                    {hit.matchedInText ? <TextMatchChip /> : null}
+                  </div>
                   <p className="mono-path mt-0.5 truncate text-subtle" title={hit.path}>
                     {displayPath(hit.path, homeDir)}
                   </p>
