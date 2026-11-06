@@ -28,6 +28,10 @@
 //!   `$Recycle.Bin` from plan-based cleanup). The shell parses the
 //!   `$I…` metadata read-only and, on empty, removes exactly the listed
 //!   `$R…` payloads after re-validating each ID.
+//! - `search_files` / `run_search_filters` compose the core's query
+//!   parser and index search; the one filter dimension the index
+//!   cannot carry — the download source — is applied in the shell by
+//!   probing each hit's recorded provenance (capped at 500 hits).
 //! - `remove_duplicate_copies` composes core pieces:
 //!   `duplicates::verify_identical` re-verification per copy,
 //!   `safety::authorize_destructive`, and
@@ -58,8 +62,8 @@ use diskpilot_core::model::{
 use diskpilot_core::safety::SafetyContext;
 use diskpilot_core::scanner::{ProgressCallback, ScanProgress, Scanner};
 use diskpilot_core::{
-    apps, assistant, devtools, disk, docker, duplicates, explorer, safety, scanner, secrets,
-    snapshot,
+    apps, assistant, devtools, disk, docker, duplicates, explorer, media_meta, provenance, safety,
+    scanner, search, secrets, snapshot,
 };
 
 use crate::recycle_bin::RecycleBinItem;
@@ -271,9 +275,11 @@ pub async fn start_scan(
     let _ = snapshot::save_snapshot(&summary, &snapshot_file);
     let _ = with_history(&state, |history| history.record_scan(&summary).map(|_| ()));
 
-    // Keep the tray ring honest about the scanned volume.
+    // Keep the tray ring honest about the scanned volume, and the
+    // tray's Recent downloads submenu current.
     let info = disk::disk_info_for(Path::new(&summary.root));
     crate::tray::update_tray(&app, &info);
+    crate::tray::refresh_recent_downloads(&app);
 
     let _ = app.emit("scan://finished", summary.clone());
     Ok(summary)
@@ -902,6 +908,193 @@ pub fn cancel_empty_recycle_bin(state: State<'_, ShellState>) -> CmdResult<()> {
 }
 
 // ---------------------------------------------------------------------------
+// Downloads & provenance
+// ---------------------------------------------------------------------------
+
+/// The user's Downloads folder, derived from the profile layout the
+/// same way the core derives its per-user locations from the home
+/// directory. The Downloads page and the tray's Recent downloads
+/// submenu both read from here.
+pub(crate) fn downloads_dir() -> PathBuf {
+    PathBuf::from(diskpilot_core::model::home_dir_string()).join("Downloads")
+}
+
+/// The most recent files in the Downloads folder (newest first, at
+/// most 25), each with the download source Windows recorded for it
+/// when there is one. An absent Downloads folder reads as an empty
+/// list — the page shows its empty state.
+#[tauri::command]
+pub async fn get_recent_downloads() -> CmdResult<Vec<provenance::RecentFile>> {
+    blocking_value(|| {
+        let dir = downloads_dir();
+        if !dir.is_dir() {
+            return Vec::new();
+        }
+        provenance::recent_downloads(&dir, 25)
+    })
+    .await
+}
+
+/// Downloads grouped by source: the zone data Windows writes on
+/// downloaded files (Zone.Identifier) names the host each file came
+/// from, and the core groups the folder by it. Platforms without zone
+/// data return no groups — provenance is never guessed.
+#[tauri::command]
+pub async fn get_download_provenance() -> CmdResult<Vec<provenance::ProvenanceGroup>> {
+    blocking_value(|| {
+        let dir = downloads_dir();
+        if !dir.is_dir() {
+            return Vec::new();
+        }
+        provenance::scan_provenance(&dir)
+    })
+    .await
+}
+
+/// Image metadata for one file (pixel dimensions, camera make/model,
+/// capture time) read from the file's EXIF block. `None` when the
+/// file has no readable metadata.
+#[tauri::command]
+pub async fn get_media_info(path: String) -> CmdResult<Option<media_meta::MediaInfo>> {
+    blocking_value(move || media_meta::media_info(Path::new(&path))).await
+}
+
+// ---------------------------------------------------------------------------
+// Natural-language search over the scan index
+// ---------------------------------------------------------------------------
+
+/// Hits kept in a single response; `total_matches` always reports the
+/// full count so the UI can say "the first 500 of N".
+const SEARCH_HIT_LIMIT: usize = 500;
+
+/// Response of `search_files`: how the query was understood (chips),
+/// the parsed filters echoed back as JSON (so the client can drop one
+/// dimension and re-run through `run_search_filters` without the
+/// shell re-parsing anything), and the first page of hits.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SearchResponse {
+    pub chips: Vec<search::QueryChip>,
+    pub filters: serde_json::Value,
+    pub hits: Vec<search::SearchHit>,
+    pub total_matches: usize,
+}
+
+/// Response of `run_search_filters`.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SearchHitsResponse {
+    pub hits: Vec<search::SearchHit>,
+    pub total_matches: usize,
+}
+
+/// The scan index a search runs over. Searching needs a scan in this
+/// session (the index is not persisted across restarts), like the
+/// explorer.
+fn search_index(state: &ShellState) -> CmdResult<scanner::DirIndex> {
+    let engine = state
+        .engine
+        .lock()
+        .map_err(|_| "engine lock poisoned".to_string())?;
+    engine
+        .index
+        .clone()
+        .ok_or_else(|| "No scan index yet — run a scan first.".to_string())
+}
+
+/// Apply the one dimension the index cannot know about: when the
+/// query named a source, keep only hits whose recorded download
+/// source matches it. Reading a file's zone data is one probe per
+/// hit, so this runs only when the hit set is already small; a broad
+/// result set keeps its hits unfiltered rather than probing
+/// thousands of files.
+fn apply_source_filter(hits: Vec<search::SearchHit>, source: &str) -> Vec<search::SearchHit> {
+    if hits.len() > SEARCH_HIT_LIMIT {
+        return hits;
+    }
+    let needle = source.to_lowercase();
+    hits.into_iter()
+        .filter(|hit| {
+            provenance::download_source(Path::new(&hit.path))
+                .map(|recorded| recorded.label.to_lowercase().contains(&needle))
+                .unwrap_or(false)
+        })
+        .collect()
+}
+
+/// Run parsed filters over the current index, applying the source
+/// filter in the shell and capping the transported hits.
+async fn execute_search(
+    state: &ShellState,
+    filters: search::SearchFilters,
+) -> CmdResult<SearchHitsResponse> {
+    let index = search_index(state)?;
+    let source = filters
+        .source
+        .clone()
+        .filter(|value| !value.trim().is_empty());
+    let mut hits = blocking_value(move || search::run_search(&index, &filters)).await?;
+    if let Some(source) = source {
+        hits = blocking_value(move || apply_source_filter(hits, &source)).await?;
+    }
+    let total_matches = hits.len();
+    hits.truncate(SEARCH_HIT_LIMIT);
+    Ok(SearchHitsResponse {
+        hits,
+        total_matches,
+    })
+}
+
+/// Parse a natural-language query ("pdfs from last week over 5 MB")
+/// with the core parser and run it over the current scan index. The
+/// response's chips are the parser's own reading of the query, shown
+/// verbatim so the user can see — and correct — how it was understood.
+#[tauri::command]
+pub async fn search_files(
+    state: State<'_, ShellState>,
+    query: String,
+) -> CmdResult<SearchResponse> {
+    let parsed = search::parse_query(&query, now_ms());
+    let filters_json = serde_json::to_value(&parsed.filters)
+        .map_err(|e| format!("the parsed search could not be prepared: {e}"))?;
+    let result = execute_search(&state, parsed.filters).await?;
+    Ok(SearchResponse {
+        chips: parsed.chips,
+        filters: filters_json,
+        hits: result.hits,
+        total_matches: result.total_matches,
+    })
+}
+
+/// Re-run a search from filters the client adjusted (a chip removed
+/// in the "Understood as" row). The filters are the exact JSON
+/// `search_files` returned, deserialized back into the core's filter
+/// type — the shell never interprets them field by field.
+#[tauri::command]
+pub async fn run_search_filters(
+    state: State<'_, ShellState>,
+    filters: serde_json::Value,
+) -> CmdResult<SearchHitsResponse> {
+    let filters: search::SearchFilters = serde_json::from_value(filters)
+        .map_err(|e| format!("those search filters could not be read: {e}"))?;
+    execute_search(&state, filters).await
+}
+
+/// Look-alike photo groups under the scan root: perceptual hashes in
+/// the core group near-identical images (re-saves, resized copies,
+/// burst neighbours). Deliberately read-only in the UI — only exact
+/// copies go through the duplicate cleanup flow, where every copy is
+/// re-verified byte-for-byte; similar images have no such proof, so
+/// they are presented for review with Reveal actions only.
+#[tauri::command]
+pub async fn get_similar_images(
+    state: State<'_, ShellState>,
+) -> CmdResult<Vec<duplicates::SimilarGroup>> {
+    let root_path = state.scan_root();
+    blocking_value(move || duplicates::find_similar_images(Path::new(&root_path))).await
+}
+
+// ---------------------------------------------------------------------------
 // Assistant
 // ---------------------------------------------------------------------------
 
@@ -1105,13 +1298,21 @@ pub fn reveal_in_explorer(state: State<'_, ShellState>, path: String) -> CmdResu
     if !is_inside_root(&path, &root) {
         return Err("Only locations inside the scanned root can be revealed.".to_string());
     }
-    let validated = PathBuf::from(&path);
+    reveal_path_in_explorer(&PathBuf::from(&path))
+}
 
+/// Open the platform file manager with `path` selected (or its parent
+/// folder opened, where selection is unavailable). Shared by
+/// `reveal_in_explorer` — which gates webview-supplied paths with the
+/// containment check above — and the tray's Recent downloads submenu,
+/// whose paths come from the core's own scan of the user's Downloads
+/// folder rather than from the webview.
+pub(crate) fn reveal_path_in_explorer(path: &Path) -> CmdResult<()> {
     #[cfg(target_os = "windows")]
     {
         std::process::Command::new("explorer.exe")
             .arg("/select,")
-            .arg(&validated)
+            .arg(path)
             .spawn()
             .map_err(|e| format!("could not open Explorer: {e}"))?;
     }
@@ -1119,19 +1320,18 @@ pub fn reveal_in_explorer(state: State<'_, ShellState>, path: String) -> CmdResu
     {
         std::process::Command::new("open")
             .arg("-R")
-            .arg(&validated)
+            .arg(path)
             .spawn()
             .map_err(|e| format!("could not open Finder: {e}"))?;
     }
     #[cfg(all(unix, not(target_os = "macos")))]
     {
-        let target = if validated.is_dir() {
-            validated.clone()
+        let target = if path.is_dir() {
+            path.to_path_buf()
         } else {
-            validated
-                .parent()
+            path.parent()
                 .map(|p| p.to_path_buf())
-                .unwrap_or(validated.clone())
+                .unwrap_or_else(|| path.to_path_buf())
         };
         std::process::Command::new("xdg-open")
             .arg(&target)

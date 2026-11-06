@@ -16,13 +16,20 @@ import type {
   EmptyRecycleBinProgress,
   EnvironmentInfo,
   HistoryEntry,
+  MediaInfo,
   PageId,
+  ProvenanceGroup,
+  RecentFile,
   Recommendation,
   RecycleBinItem,
   ScanComparison,
   ScanProgress,
   ScanSummary,
+  SearchFilters,
+  SearchHitsResponse,
+  SearchResponse,
   SecretFinding,
+  SimilarGroup,
   ToolReport,
 } from "./types";
 
@@ -207,6 +214,70 @@ export async function getApplications(): Promise<AppEntry[]> {
   if (!inDesktopApp()) return [];
   try {
     return await invoke<AppEntry[]>("get_applications");
+  } catch {
+    return [];
+  }
+}
+
+/* ---------- Downloads & provenance ---------- */
+
+/** The newest files in the Downloads folder (at most 25), each with
+    its recorded download source when Windows stored one. */
+export async function getRecentDownloads(): Promise<RecentFile[]> {
+  if (!inDesktopApp()) return [];
+  try {
+    return await invoke<RecentFile[]>("get_recent_downloads");
+  } catch {
+    return [];
+  }
+}
+
+/** Downloads grouped by their recorded source. Empty on platforms
+    without zone data — provenance is never guessed. */
+export async function getDownloadProvenance(): Promise<ProvenanceGroup[]> {
+  if (!inDesktopApp()) return [];
+  try {
+    return await invoke<ProvenanceGroup[]>("get_download_provenance");
+  } catch {
+    return [];
+  }
+}
+
+/** EXIF metadata for one image file; null when none is readable. */
+export async function getMediaInfo(path: string): Promise<MediaInfo | null> {
+  if (!inDesktopApp()) return null;
+  try {
+    return await invoke<MediaInfo | null>("get_media_info", { path });
+  } catch {
+    return null;
+  }
+}
+
+/* ---------- Natural-language search ---------- */
+
+/**
+ * Parse a natural-language query and run it over the current scan
+ * index. Throws the shell's error string (e.g. no scan yet) so the
+ * page can show it — unlike the list loaders, a failed search must
+ * not look like an empty result.
+ */
+export async function searchFiles(query: string): Promise<SearchResponse> {
+  requireDesktop();
+  return invoke<SearchResponse>("search_files", { query });
+}
+
+/** Re-run a search from filters the client adjusted (a chip removed). */
+export async function runSearchFilters(filters: SearchFilters): Promise<SearchHitsResponse> {
+  requireDesktop();
+  return invoke<SearchHitsResponse>("run_search_filters", { filters });
+}
+
+/** Look-alike photo groups under the scan root (perceptual hashing
+    in the core). Read-only data: similar images are review-only. */
+export async function getSimilarImages(): Promise<SimilarGroup[]> {
+  if (!inDesktopApp()) return [];
+  try {
+    return await invoke<SimilarGroup[]>("get_similar_images");
   } catch {
     return [];
   }

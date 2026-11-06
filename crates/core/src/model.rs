@@ -136,6 +136,11 @@ pub struct FileEntry {
     pub name: String,
     pub bytes: u64,
     pub category: Category,
+    /// Last-modified time, milliseconds since the Unix epoch (0 when the
+    /// platform metadata carried no usable mtime). `serde(default)` keeps
+    /// snapshots written before this field existed loadable.
+    #[serde(default)]
+    pub modified_ms: i64,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

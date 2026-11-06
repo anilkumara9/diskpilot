@@ -42,6 +42,10 @@ pub struct Settings {
     /// field existed loading unchanged.
     #[serde(default)]
     pub exclusions: Vec<String>,
+    /// Natural-language searches the user bookmarked from the Storage
+    /// page, oldest first. Same `#[serde(default)]` treatment.
+    #[serde(default)]
+    pub saved_searches: Vec<String>,
 }
 
 impl Default for Settings {
@@ -52,6 +56,7 @@ impl Default for Settings {
             assistant_enabled: false,
             assistant_provider: "anthropic".to_string(),
             exclusions: Vec::new(),
+            saved_searches: Vec::new(),
         }
     }
 }
@@ -215,6 +220,12 @@ pub fn run() {
             commands::get_history,
             commands::find_duplicates,
             commands::remove_duplicate_copies,
+            commands::get_recent_downloads,
+            commands::get_download_provenance,
+            commands::get_media_info,
+            commands::search_files,
+            commands::run_search_filters,
+            commands::get_similar_images,
             commands::get_docker_overview,
             commands::docker_preview_action,
             commands::docker_execute_action,

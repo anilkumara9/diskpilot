@@ -144,9 +144,9 @@ right-aligned and tabular, with an optional 2 px meter under the value.
 
 Sidebar header: logo mark (indigo rounded square with a white gauge
 glyph) + "DiskPilot" at 13 px semibold. Groups: Overview; **Analyze** —
-Storage, Duplicates, Applications, Developer Tools, Docker, Assistant
-(only when enabled in Settings); **Clean up** — Cleanup (with a
-trailing count of actionable recommendations), History. The footer,
+Storage, Duplicates, Applications, Developer Tools, Docker, Downloads,
+Assistant (only when enabled in Settings); **Clean up** — Cleanup
+(with a trailing count of actionable recommendations), History. The footer,
 above a hairline, shows scan status (not scanned yet / scanning with an
 indeterminate bar and the current path in 11 px mono / scanned
 <relative time> with the root path) and the Settings nav button.

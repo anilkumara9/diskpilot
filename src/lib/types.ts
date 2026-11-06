@@ -307,6 +307,118 @@ export interface AppSettings {
       or a wildcard like `*.iso`). Older settings files without the
       field load with an empty list. */
   exclusions: string[];
+  /** Natural-language searches bookmarked from the Storage page.
+      Older settings files without the field load with an empty list. */
+  savedSearches: string[];
+}
+
+/* ---------- Downloads & provenance (core `provenance` module) ---------- */
+
+/** The source Windows recorded for a downloaded file, from its
+    Zone.Identifier zone data. URLs are null when the stream did not
+    record them; the label is always present. */
+export interface DownloadSource {
+  zoneId: number | null;
+  hostUrl: string | null;
+  referrerUrl: string | null;
+  label: string;
+}
+
+/** One recent file in the Downloads folder. */
+export interface RecentFile {
+  path: string;
+  name: string;
+  bytes: number;
+  modifiedMs: number;
+  source: DownloadSource | null;
+}
+
+export interface ProvenanceFile {
+  path: string;
+  bytes: number;
+  modifiedMs: number;
+}
+
+/** All downloads in the folder that share one recorded source. */
+export interface ProvenanceGroup {
+  label: string;
+  host: string | null;
+  files: ProvenanceFile[];
+  totalBytes: number;
+}
+
+/* ---------- Natural-language search (core `search` module) ---------- */
+
+/** Which dimension of the query a chip describes. Exactly one chip
+    is produced per dimension, so removing a chip clears exactly one
+    dimension of the filters. */
+export type ChipKind = "kind" | "size" | "date" | "source" | "term";
+
+export interface QueryChip {
+  kind: ChipKind;
+  label: string;
+}
+
+/** The structured form of a parsed query, mirroring the core's
+    SearchFilters exactly (serde camelCase). `search_files` returns
+    this object; the client may drop one dimension (chip removal) and
+    send it back to `run_search_filters` unchanged otherwise. */
+export interface SearchFilters {
+  kinds: string[];
+  minBytes: number | null;
+  maxBytes: number | null;
+  modifiedAfterMs: number | null;
+  modifiedBeforeMs: number | null;
+  source: string | null;
+  terms: string[];
+}
+
+export interface SearchHit {
+  path: string;
+  name: string;
+  bytes: number;
+  category: Category;
+  modifiedMs: number;
+}
+
+/** `search_files` response: chips + echoed filters + first hits. */
+export interface SearchResponse {
+  chips: QueryChip[];
+  filters: SearchFilters;
+  hits: SearchHit[];
+  totalMatches: number;
+}
+
+/** `run_search_filters` response. */
+export interface SearchHitsResponse {
+  hits: SearchHit[];
+  totalMatches: number;
+}
+
+/* ---------- Similar images & media info ---------- */
+
+export interface SimilarImage {
+  path: string;
+  bytes: number;
+  width: number;
+  height: number;
+}
+
+/** A set of look-alike images. Files are largest first — the first
+    entry is the keeper the core designates. */
+export interface SimilarGroup {
+  files: SimilarImage[];
+  wastedBytes: number;
+}
+
+/** EXIF metadata for one image file; every field is nullable because
+    files routinely carry partial metadata. */
+export interface MediaInfo {
+  width: number | null;
+  height: number | null;
+  make: string | null;
+  model: string | null;
+  takenAtMs: number | null;
 }
 
 /** One category's change between the previous scan and the current
@@ -374,6 +486,7 @@ export type PageId =
   | "applications"
   | "developer"
   | "docker"
+  | "downloads"
   | "assistant"
   | "cleanup"
   | "history"

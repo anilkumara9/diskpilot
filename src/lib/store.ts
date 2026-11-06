@@ -18,6 +18,7 @@ const DEFAULT_SETTINGS: AppSettings = {
   assistantEnabled: false,
   assistantProvider: "anthropic",
   exclusions: [],
+  savedSearches: [],
 };
 
 export type StatusBannerState = { kind: "error" | "info" | "success"; message: string } | null;

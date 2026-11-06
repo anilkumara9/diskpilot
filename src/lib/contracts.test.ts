@@ -7,9 +7,13 @@ import type {
   DockerActionResult,
   EmptyRecycleBinProgress,
   EnvironmentInfo,
+  ProvenanceGroup,
+  RecentFile,
   RecycleBinItem,
   ScanComparison,
   ScanProgress,
+  SearchResponse,
+  SimilarGroup,
 } from "./types";
 
 describe("shell contract shapes", () => {
@@ -78,6 +82,82 @@ describe("shell contract shapes", () => {
       "previousBytes",
     ]);
     expect(comparison.totalBytesDelta).toBeLessThan(0);
+  });
+
+  it("downloads provenance shapes match the core provenance module", () => {
+    const recent: RecentFile = {
+      path: "C:\\Users\\me\\Downloads\\deck.pdf",
+      name: "deck.pdf",
+      bytes: 2048,
+      modifiedMs: 1700000000000,
+      source: {
+        zoneId: 3,
+        hostUrl: "https://mail.google.com/attachment",
+        referrerUrl: null,
+        label: "Gmail",
+      },
+    };
+    expect(Object.keys(recent).sort()).toEqual(["bytes", "modifiedMs", "name", "path", "source"]);
+    const group: ProvenanceGroup = {
+      label: "Gmail",
+      host: "mail.google.com",
+      files: [{ path: recent.path, bytes: 2048, modifiedMs: 1700000000000 }],
+      totalBytes: 2048,
+    };
+    expect(group.files[0].modifiedMs).toBe(1700000000000);
+    const noSource: RecentFile = { ...recent, source: null };
+    expect(noSource.source).toBeNull();
+  });
+
+  it("search response echoes filters in the core SearchFilters shape", () => {
+    const response: SearchResponse = {
+      chips: [
+        { kind: "kind", label: "PDFs" },
+        { kind: "date", label: "Last week" },
+        { kind: "size", label: "> 5 MB" },
+      ],
+      filters: {
+        kinds: ["pdf"],
+        minBytes: 5_000_000,
+        maxBytes: null,
+        modifiedAfterMs: 1700000000000,
+        modifiedBeforeMs: null,
+        source: null,
+        terms: [],
+      },
+      hits: [
+        {
+          path: "C:\\Users\\me\\deck.pdf",
+          name: "deck.pdf",
+          bytes: 6_100_000,
+          category: "userData",
+          modifiedMs: 1700000000000,
+        },
+      ],
+      totalMatches: 1,
+    };
+    expect(Object.keys(response.filters).sort()).toEqual([
+      "kinds",
+      "maxBytes",
+      "minBytes",
+      "modifiedAfterMs",
+      "modifiedBeforeMs",
+      "source",
+      "terms",
+    ]);
+    expect(response.chips.map((c) => c.kind)).toEqual(["kind", "date", "size"]);
+  });
+
+  it("similar image groups are largest-first with a wasted total", () => {
+    const group: SimilarGroup = {
+      files: [
+        { path: "C:\\Users\\me\\a.jpg", bytes: 3000, width: 4000, height: 3000 },
+        { path: "C:\\Users\\me\\b.jpg", bytes: 1200, width: 2000, height: 1500 },
+      ],
+      wastedBytes: 1200,
+    };
+    expect(group.files[0].bytes).toBeGreaterThan(group.files[1].bytes);
+    expect(group.wastedBytes).toBe(1200);
   });
 
   it("environment, scan progress and assistant shapes match the shell", () => {

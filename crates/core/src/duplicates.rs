@@ -105,7 +105,7 @@ pub fn hash_full(path: &Path) -> Option<String> {
 /// Subdirectories are walked in parallel (the same shape as the scanner's
 /// walk); the resulting order is unspecified, exactly as directory read
 /// order was in the serial version.
-fn collect_files(root: &Path) -> Vec<PathBuf> {
+pub(crate) fn collect_files(root: &Path) -> Vec<PathBuf> {
     let Ok(read) = std::fs::read_dir(root) else {
         return Vec::new();
     };
@@ -211,5 +211,225 @@ pub fn verify_identical(a: &Path, b: &Path) -> bool {
     match (hash_full(a), hash_full(b)) {
         (Some(ha), Some(hb)) => ha == hb,
         _ => false,
+    }
+}
+
+// ------------------------------------------------- look-alike images ----
+//
+// Exact duplicates are a solved problem above (SHA-256). This section
+// finds LOOK-ALIKE images — bursts, edits, re-exports — with a perceptual
+// difference hash (dHash): decode, grayscale, shrink to 9x8, and record
+// the horizontal gradient as 64 bits. Two images are look-alikes when
+// their hashes differ in at most SIMILARITY_THRESHOLD bits.
+
+/// Extensions treated as images for the look-alike search.
+const IMAGE_EXTENSIONS: [&str; 6] = ["jpg", "jpeg", "png", "gif", "bmp", "webp"];
+/// Images larger than this are not decoded for hashing.
+const MAX_IMAGE_BYTES: u64 = 25 * 1024 * 1024;
+/// Maximum Hamming distance between two dHashes in one look-alike group.
+pub const SIMILARITY_THRESHOLD: u32 = 5;
+
+/// Perceptual difference hash of one image: 64 bits of horizontal
+/// gradient over a 9x8 grayscale shrink. `None` for files over 25 MB,
+/// undecodable files, and non-images.
+pub fn dhash(path: &Path) -> Option<u64> {
+    let len = std::fs::metadata(path).ok()?.len();
+    if len == 0 || len > MAX_IMAGE_BYTES {
+        return None;
+    }
+    let img = image::open(path).ok()?;
+    let small = img
+        .resize_exact(9, 8, image::imageops::FilterType::Triangle)
+        .to_luma8();
+    let mut hash: u64 = 0;
+    for y in 0..8u32 {
+        for x in 0..8u32 {
+            let left = small.get_pixel(x, y)[0];
+            let right = small.get_pixel(x + 1, y)[0];
+            hash = (hash << 1) | u64::from(left > right);
+        }
+    }
+    Some(hash)
+}
+
+/// Hamming distance between two dHashes.
+pub fn dhash_distance(a: u64, b: u64) -> u32 {
+    (a ^ b).count_ones()
+}
+
+/// One image in a look-alike group.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SimilarImage {
+    pub path: String,
+    pub bytes: u64,
+    pub width: u32,
+    pub height: u32,
+}
+
+/// A set of look-alike images. The keeper is the largest file; everything
+/// else is counted as wasted.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SimilarGroup {
+    /// Files, largest first (the first entry is the keeper).
+    pub files: Vec<SimilarImage>,
+    pub wasted_bytes: u64,
+}
+
+fn is_image_path(path: &Path) -> bool {
+    path.extension()
+        .and_then(|e| e.to_str())
+        .map(|e| IMAGE_EXTENSIONS.contains(&e.to_lowercase().as_str()))
+        .unwrap_or(false)
+}
+
+/// Find groups of look-alike images under `root`. Grouping is by
+/// connected components over the "distance ≤ threshold" relation, so a
+/// chain of near-copies lands in one group. Exact duplicates (distance 0)
+/// are included too — the SHA-256 finder remains the authority for
+/// byte-identical files, but showing them here as well keeps one image
+/// from appearing unrelated across the two views. Comparison is
+/// O(n²) over candidate images, which is fine for photo-library sizes
+/// but noted for very large trees.
+pub fn find_similar_images(root: &Path) -> Vec<SimilarGroup> {
+    let candidates: Vec<PathBuf> = collect_files(root)
+        .into_iter()
+        .filter(|p| is_image_path(p))
+        .collect();
+    let hashed: Vec<(SimilarImage, u64)> = candidates
+        .into_par_iter()
+        .filter_map(|path| {
+            let hash = dhash(&path)?;
+            let md = std::fs::metadata(&path).ok()?;
+            let (width, height) = match crate::media_meta::media_info(&path) {
+                Some(info) => match (info.width, info.height) {
+                    (Some(w), Some(h)) => (w, h),
+                    _ => image::image_dimensions(&path).ok()?,
+                },
+                None => image::image_dimensions(&path).ok()?,
+            };
+            Some((
+                SimilarImage {
+                    path: path.to_string_lossy().to_string(),
+                    bytes: md.len(),
+                    width,
+                    height,
+                },
+                hash,
+            ))
+        })
+        .collect();
+
+    // Union-find over pairwise distances.
+    let n = hashed.len();
+    let mut parent: Vec<usize> = (0..n).collect();
+    fn find(parent: &mut [usize], mut x: usize) -> usize {
+        while parent[x] != x {
+            parent[x] = parent[parent[x]];
+            x = parent[x];
+        }
+        x
+    }
+    for i in 0..n {
+        for j in i + 1..n {
+            if dhash_distance(hashed[i].1, hashed[j].1) <= SIMILARITY_THRESHOLD {
+                let (a, b) = (find(&mut parent, i), find(&mut parent, j));
+                if a != b {
+                    parent[a] = b;
+                }
+            }
+        }
+    }
+    let mut components: HashMap<usize, Vec<SimilarImage>> = HashMap::new();
+    for (i, (img, _)) in hashed.into_iter().enumerate() {
+        let root_idx = find(&mut parent, i);
+        components.entry(root_idx).or_default().push(img);
+    }
+    let mut groups: Vec<SimilarGroup> = components
+        .into_values()
+        .filter(|files| files.len() >= 2)
+        .map(|mut files| {
+            files.sort_by_key(|f| std::cmp::Reverse(f.bytes));
+            let total: u64 = files.iter().map(|f| f.bytes).sum();
+            let largest = files.first().map(|f| f.bytes).unwrap_or(0);
+            SimilarGroup {
+                wasted_bytes: total - largest,
+                files,
+            }
+        })
+        .collect();
+    groups.sort_by_key(|g| std::cmp::Reverse(g.wasted_bytes));
+    groups
+}
+
+#[cfg(test)]
+mod similar_tests {
+    use super::*;
+    use image::{ImageBuffer, Rgba};
+
+    /// 36x32 image whose rows alternate a strong left-to-right gradient
+    /// direction, so the dHash is well-defined and stable.
+    fn gradient_image(flip: bool) -> ImageBuffer<Rgba<u8>, Vec<u8>> {
+        ImageBuffer::from_fn(36, 32, |x, y| {
+            let rising = (y / 4) % 2 == 0;
+            let t = if rising { x } else { 35 - x };
+            let mut v = (t * 7) as u8;
+            if flip {
+                v = 255 - v;
+            }
+            Rgba([v, v, v, 255])
+        })
+    }
+
+    #[test]
+    fn identical_near_and_different_images() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        gradient_image(false).save(root.join("a.png")).unwrap();
+        gradient_image(false).save(root.join("b.png")).unwrap();
+        // Near copy: one pixel changed in a flat-ish region.
+        let mut near = gradient_image(false);
+        near.put_pixel(10, 9, Rgba([200, 200, 200, 255]));
+        near.save(root.join("c.png")).unwrap();
+        gradient_image(true)
+            .save(root.join("different.png"))
+            .unwrap();
+        // A text file is not an image candidate even with a big size.
+        std::fs::write(root.join("notes.txt"), vec![7u8; 4096]).unwrap();
+
+        let ha = dhash(&root.join("a.png")).unwrap();
+        let hb = dhash(&root.join("b.png")).unwrap();
+        assert_eq!(dhash_distance(ha, hb), 0);
+        let hc = dhash(&root.join("c.png")).unwrap();
+        assert!(
+            dhash_distance(ha, hc) <= SIMILARITY_THRESHOLD,
+            "near copy distance {} should group",
+            dhash_distance(ha, hc)
+        );
+        let hd = dhash(&root.join("different.png")).unwrap();
+        assert!(dhash_distance(ha, hd) > SIMILARITY_THRESHOLD);
+
+        let groups = find_similar_images(root);
+        assert_eq!(groups.len(), 1);
+        let group = &groups[0];
+        let names: Vec<&str> = group
+            .files
+            .iter()
+            .map(|f| f.path.rsplit('/').next().unwrap())
+            .collect();
+        assert_eq!(group.files.len(), 3);
+        assert!(names.contains(&"a.png") && names.contains(&"b.png") && names.contains(&"c.png"));
+        assert!(group.wasted_bytes > 0);
+        assert_eq!((group.files[0].width, group.files[0].height), (36, 32));
+    }
+
+    #[test]
+    fn dhash_rejects_non_images_and_missing_files() {
+        let dir = tempfile::tempdir().unwrap();
+        let text = dir.path().join("x.png");
+        std::fs::write(&text, b"not really a png").unwrap();
+        assert_eq!(dhash(&text), None);
+        assert_eq!(dhash(&dir.path().join("missing.png")), None);
     }
 }

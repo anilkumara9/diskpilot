@@ -1,9 +1,10 @@
 import { useEffect, useMemo, useState } from "react";
-import { Copy, FolderOpen, ShieldCheck } from "lucide-react";
+import { Copy, FolderOpen, Images, ShieldCheck } from "lucide-react";
 import * as api from "@/lib/api";
 import { useAppStore } from "@/lib/store";
-import { displayPath, formatBytes, formatDate } from "@/lib/format";
-import type { CleanupFailure, CleanupResult, DuplicateGroup } from "@/lib/types";
+import { basename, displayPath, formatBytes, formatCount, formatDate } from "@/lib/format";
+import type { CleanupFailure, CleanupResult, DuplicateGroup, SimilarGroup } from "@/lib/types";
+import { cn } from "@/lib/utils";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/input";
@@ -28,7 +29,51 @@ interface ReviewGroup {
   bytes: number;
 }
 
-export function DuplicatesPage() {
+export type DuplicatesMode = "exact" | "similar";
+
+/** Segmented control switching the exact-copies and look-alikes
+    views; same pattern as the Storage tabs. Rendered in each view's
+    header actions so the page title stays on top. */
+export function DuplicatesModeSwitch({
+  mode,
+  onChange,
+}: {
+  mode: DuplicatesMode;
+  onChange: (mode: DuplicatesMode) => void;
+}) {
+  const options: { id: DuplicatesMode; label: string }[] = [
+    { id: "exact", label: "Exact copies" },
+    { id: "similar", label: "Look-alike photos" },
+  ];
+  return (
+    <div role="tablist" aria-label="Duplicate views" className="flex gap-1 rounded-md bg-panel-raised p-1">
+      {options.map((option) => (
+        <button
+          key={option.id}
+          role="tab"
+          aria-selected={mode === option.id}
+          onClick={() => onChange(option.id)}
+          className={cn(
+            "h-6 rounded-[5px] px-3 text-[12px] font-medium transition-colors duration-120",
+            mode === option.id
+              ? "bg-panel text-foreground shadow-[0_1px_3px_rgba(0,0,0,0.14)] ring-1 ring-border"
+              : "text-muted hover:text-foreground",
+          )}
+        >
+          {option.label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+function ExactDuplicatesView({
+  mode,
+  onModeChange,
+}: {
+  mode: DuplicatesMode;
+  onModeChange: (mode: DuplicatesMode) => void;
+}) {
   const homeDir = useAppStore((s) => s.env?.homeDir);
   const setBanner = useAppStore((s) => s.setBanner);
   const [groups, setGroups] = useState<DuplicateGroup[] | null>(null);
@@ -185,10 +230,13 @@ export function DuplicatesPage() {
           subtitle="Files with identical size are confirmed with SHA-256 before they are grouped. Hidden folders, AppData, dependency folders, and package caches are skipped; hard links count once."
           showScanControl={false}
           actions={
-            <Button variant="primary" disabled={selected.size === 0} onClick={openReview}>
-              <ShieldCheck className="size-4" aria-hidden="true" />
-              Review cleanup{selected.size > 0 ? ` · ${formatBytes(selectedBytes)}` : ""}
-            </Button>
+            <>
+              <DuplicatesModeSwitch mode={mode} onChange={onModeChange} />
+              <Button variant="primary" disabled={selected.size === 0} onClick={openReview}>
+                <ShieldCheck className="size-4" aria-hidden="true" />
+                Review cleanup{selected.size > 0 ? ` · ${formatBytes(selectedBytes)}` : ""}
+              </Button>
+            </>
           }
         />
         {error ? <p role="alert" className="pb-3 text-[12px] text-critical">{error}</p> : null}
@@ -339,5 +387,143 @@ export function DuplicatesPage() {
         </Dialog>
       ) : null}
     </div>
+  );
+}
+
+/**
+ * Look-alike photos: groups the core found by perceptual hashing.
+ * Deliberately READ-ONLY. Similar is not identical — there is no
+ * byte-for-byte proof to re-verify before a removal, so this view
+ * never offers one; the exact-copies flow is the only duplicate
+ * cleanup path. The keeper (the core returns files largest first;
+ * the first entry is its designated keeper) is marked for guidance,
+ * and every row can be revealed in Explorer.
+ */
+function SimilarImagesView({
+  mode,
+  onModeChange,
+}: {
+  mode: DuplicatesMode;
+  onModeChange: (mode: DuplicatesMode) => void;
+}) {
+  const homeDir = useAppStore((s) => s.env?.homeDir);
+  const [groups, setGroups] = useState<SimilarGroup[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [revealError, setRevealError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let live = true;
+    api
+      .getSimilarImages()
+      .then((rows) => {
+        if (live) setGroups(rows);
+      })
+      .catch((err: unknown) => {
+        if (live) setError(err instanceof Error ? err.message : "Look-alike photos could not be loaded.");
+      });
+    return () => {
+      live = false;
+    };
+  }, []);
+
+  const wastedTotal = useMemo(
+    () => (groups ?? []).reduce((acc, g) => acc + g.wastedBytes, 0),
+    [groups],
+  );
+
+  const reveal = async (path: string) => {
+    setRevealError(null);
+    try {
+      await api.revealInExplorer(path);
+    } catch (err) {
+      setRevealError(err instanceof Error ? err.message : "Could not open this location in Explorer.");
+    }
+  };
+
+  return (
+    <div className="h-full overflow-y-auto px-6 py-6">
+      <div className="max-w-[880px]">
+        <PageHeader
+          title="Duplicates"
+          subtitle="Photos that look alike — re-saves, resized copies, and near-identical shots — grouped by comparing image content rather than bytes."
+          showScanControl={false}
+          actions={<DuplicatesModeSwitch mode={mode} onChange={onModeChange} />}
+        />
+        {error ? <p role="alert" className="pb-3 text-[12px] text-critical">{error}</p> : null}
+        {revealError ? <p role="alert" className="pb-3 text-[12px] text-critical">{revealError}</p> : null}
+
+        {groups === null ? (
+          <SkeletonRows rows={6} />
+        ) : groups.length === 0 ? (
+          <EmptyState
+            icon={Images}
+            className="min-h-[360px]"
+            title="No look-alike photos"
+            description="Groups of near-identical photos under the scanned folder appear here — resized copies, re-saves, and burst neighbours. Run a scan if you have not yet."
+          />
+        ) : (
+          <>
+            <p className="pb-2 text-[12px] text-muted">
+              {groups.length} group{groups.length === 1 ? "" : "s"} · up to{" "}
+              <span className="font-medium tabular text-foreground">{formatBytes(wastedTotal)}</span>{" "}
+              in extra copies. The largest copy in each group is marked as the keeper.
+            </p>
+            {groups.map((group, groupIndex) => (
+              <Section
+                key={group.files[0]?.path ?? groupIndex}
+                title={`${group.files.length} look-alike photos`}
+                description={`Up to ${formatBytes(group.wastedBytes)} in extra copies`}
+              >
+                <ul className="divide-y divide-border rounded-[10px] border border-border px-3">
+                  {group.files.map((file, fileIndex) => {
+                    const isKeeper = fileIndex === 0;
+                    return (
+                      <li key={file.path} className="flex items-center gap-3 py-2">
+                        <span className="w-[64px] shrink-0">
+                          {isKeeper ? <MarkerTag tone="accent">Keeper</MarkerTag> : null}
+                        </span>
+                        <div className="min-w-0 flex-1">
+                          <p className="truncate text-[13px] text-foreground" title={file.path}>
+                            {basename(file.path)}
+                          </p>
+                          <p className="mono-path mt-0.5 truncate text-subtle" title={file.path}>
+                            {displayPath(file.path, homeDir)}
+                          </p>
+                        </div>
+                        <span className="shrink-0 text-[12px] tabular text-muted">
+                          {formatCount(file.width)} × {formatCount(file.height)}
+                        </span>
+                        <span className="w-[92px] shrink-0 text-right text-[13px] tabular text-foreground">
+                          {formatBytes(file.bytes)}
+                        </span>
+                        <Button variant="ghost" size="sm" onClick={() => void reveal(file.path)}>
+                          <FolderOpen className="size-3.5" aria-hidden="true" />
+                          Reveal
+                        </Button>
+                      </li>
+                    );
+                  })}
+                </ul>
+              </Section>
+            ))}
+            <p className="mt-4 text-[12px] leading-4 text-muted">
+              Look-alike photos are shown for review only. They are similar, not identical, so
+              DiskPilot does not offer to remove them here — reveal a copy in Explorer to manage
+              it yourself. Verified identical files are on the Exact copies tab, where every
+              copy is re-verified byte-for-byte before anything moves.
+            </p>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
+export function DuplicatesPage() {
+  const [mode, setMode] = useState<DuplicatesMode>("exact");
+  return mode === "exact" ? (
+    <ExactDuplicatesView mode={mode} onModeChange={setMode} />
+  ) : (
+    <SimilarImagesView mode={mode} onModeChange={setMode} />
   );
 }

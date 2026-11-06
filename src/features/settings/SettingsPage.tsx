@@ -1,8 +1,9 @@
 import { useEffect, useState } from "react";
-import { Check, FolderOpen, KeyRound, ShieldAlert, Trash2 } from "lucide-react";
+import { Check, FolderOpen, KeyRound, ShieldAlert, Trash2, X } from "lucide-react";
 import * as api from "@/lib/api";
 import { useAppStore } from "@/lib/store";
 import { displayPath } from "@/lib/format";
+import { removeSavedSearch } from "@/lib/search";
 import { exclusionsToText, parseExclusions, sameExclusions } from "@/lib/settings";
 import type { AssistantProvider, ThemePreference } from "@/lib/types";
 import { PageHeader } from "@/components/layout/PageHeader";
@@ -176,6 +177,37 @@ export function ExclusionsSettings() {
   );
 }
 
+export function SavedSearchesSettings() {
+  const savedSearches = useAppStore((s) => s.settings.savedSearches);
+  const updateSettings = useAppStore((s) => s.updateSettings);
+
+  if (savedSearches.length === 0) {
+    return (
+      <p className="text-[12px] leading-4 text-muted">
+        No saved searches yet. Run a search on the Storage page and choose “Save search” to keep
+        it here and above the search box.
+      </p>
+    );
+  }
+  return (
+    <ul className="divide-y divide-border rounded-[10px] border border-border px-3">
+      {savedSearches.map((saved) => (
+        <li key={saved} className="flex items-center gap-2 py-2">
+          <span className="min-w-0 flex-1 truncate text-[13px] text-foreground">{saved}</span>
+          <Button
+            variant="ghost"
+            size="icon"
+            aria-label={`Remove saved search ${saved}`}
+            onClick={() => void updateSettings({ savedSearches: removeSavedSearch(savedSearches, saved) })}
+          >
+            <X className="size-4" aria-hidden="true" />
+          </Button>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
 export function SettingsPage() {
   const settings = useAppStore((s) => s.settings);
   const env = useAppStore((s) => s.env);
@@ -215,6 +247,13 @@ export function SettingsPage() {
             </p>
           </div>
           <ExclusionsSettings />
+        </Section>
+
+        <Section
+          title="Saved searches"
+          description="Plain-language searches bookmarked from the Storage page. They always run against the latest scan."
+        >
+          <SavedSearchesSettings />
         </Section>
 
         <Section title="Appearance">

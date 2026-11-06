@@ -11,6 +11,7 @@ import { DuplicatesPage } from "@/features/duplicates/DuplicatesPage";
 import { ApplicationsPage } from "@/features/applications/ApplicationsPage";
 import { DeveloperToolsPage } from "@/features/developer/DeveloperToolsPage";
 import { DockerPage } from "@/features/docker/DockerPage";
+import { DownloadsPage } from "@/features/downloads/DownloadsPage";
 import { AssistantPage } from "@/features/assistant/AssistantPage";
 import { RecommendationsPage } from "@/features/recommendations/RecommendationsPage";
 import { HistoryPage } from "@/features/history/HistoryPage";
@@ -24,6 +25,7 @@ const PAGE_COMPONENTS: Record<PageId, () => React.JSX.Element> = {
   applications: ApplicationsPage,
   developer: DeveloperToolsPage,
   docker: DockerPage,
+  downloads: DownloadsPage,
   assistant: AssistantPage,
   cleanup: RecommendationsPage,
   history: HistoryPage,

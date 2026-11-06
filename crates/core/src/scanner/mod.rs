@@ -329,6 +329,7 @@ impl Scanner {
                     name: name.clone(),
                     bytes: counted,
                     category: class.category,
+                    modified_ms: mtime_ms(&md),
                 };
                 index.files.push(entry);
                 children.push(IndexChild {
@@ -487,6 +488,18 @@ struct Agg {
     bytes: u64,
     files: u64,
     dirs: u64,
+}
+
+/// Milliseconds since the Unix epoch for a metadata mtime; 0 when the
+/// platform reports no mtime or one before the epoch.
+fn mtime_ms(md: &std::fs::Metadata) -> i64 {
+    match md.modified() {
+        Ok(t) => match t.duration_since(std::time::UNIX_EPOCH) {
+            Ok(d) => d.as_millis().min(i64::MAX as u128) as i64,
+            Err(_) => 0,
+        },
+        Err(_) => 0,
+    }
 }
 
 fn counted_bytes(md: &std::fs::Metadata, shared: &Arc<Mutex<Shared>>) -> u64 {

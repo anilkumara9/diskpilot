@@ -4,6 +4,7 @@ import {
   Box,
   Code2,
   Copy,
+  Download,
   FolderTree,
   Gauge,
   History,
@@ -32,6 +33,7 @@ function analyzeEntries(assistantEnabled: boolean): NavEntry[] {
     { id: "applications", label: "Applications", icon: AppWindow },
     { id: "developer", label: "Developer Tools", icon: Code2 },
     { id: "docker", label: "Docker", icon: Box },
+    { id: "downloads", label: "Downloads", icon: Download },
   ];
   if (assistantEnabled) entries.push({ id: "assistant", label: "Assistant", icon: Bot });
   return entries;

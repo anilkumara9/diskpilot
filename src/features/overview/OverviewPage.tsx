@@ -204,8 +204,8 @@ export function SinceLastScan({ comparison }: { comparison: ScanComparison }) {
         ? `${formatBytes(total)} more than the last scan`
         : "No change in total size since the last scan";
   return (
-    <div className="flex flex-wrap items-center gap-x-10 gap-y-3 rounded-[10px] border border-border bg-panel-raised px-4 py-3.5">
-      <div className="min-w-[120px]">
+    <div className="grid items-center gap-x-10 gap-y-3 rounded-[10px] border border-border bg-panel-raised px-4 py-3 sm:grid-cols-[minmax(120px,auto)_minmax(120px,auto)_minmax(0,1fr)]">
+      <div>
         <p className="text-[12px] text-muted">Total measured</p>
         <p
           className={`mt-0.5 text-[20px] font-semibold leading-6 tabular ${
@@ -215,13 +215,13 @@ export function SinceLastScan({ comparison }: { comparison: ScanComparison }) {
           {formatSignedBytes(total)}
         </p>
       </div>
-      <div className="min-w-[120px]">
+      <div>
         <p className="text-[12px] text-muted">Files</p>
         <p className="mt-0.5 text-[20px] font-semibold leading-6 tabular text-foreground">
           {formatSignedCount(comparison.fileCountDelta)}
         </p>
       </div>
-      <p className="min-w-0 flex-1 text-[12px] leading-4 text-muted">
+      <p className="max-w-[440px] text-[12px] leading-4 text-muted">
         {headline}. Per-category changes are shown in “Where space goes” below.
       </p>
     </div>
