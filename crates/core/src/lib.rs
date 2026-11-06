@@ -20,6 +20,7 @@ pub mod explorer;
 pub mod forecast;
 pub mod games;
 pub mod history;
+pub mod live_apply;
 pub mod media;
 pub mod media_meta;
 pub mod mft;

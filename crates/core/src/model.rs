@@ -196,6 +196,21 @@ pub struct ScanSummary {
     /// written before this field existed loadable (as `None`).
     #[serde(default)]
     pub drive_free_bytes: Option<u64>,
+    /// Whether the USN live index is actively keeping this scan's
+    /// in-memory index fresh (a journal checkpoint exists for the
+    /// root's volume, the setting is on, and the last poll
+    /// succeeded). Scans themselves never set this — the shell
+    /// decorates the summary it serves from its live-index state,
+    /// so a persisted snapshot always carries `false`.
+    /// `serde(default)` keeps older snapshots loadable.
+    #[serde(default)]
+    pub live_index_active: bool,
+    /// Whether the live index has declared this scan's index stale
+    /// (the journal reset, wrapped, or produced a change that could
+    /// not be applied exactly) and only a fresh scan reconciles it.
+    /// Same decoration rule as `live_index_active`.
+    #[serde(default)]
+    pub index_stale: bool,
     pub total_bytes: u64,
     pub file_count: u64,
     pub dir_count: u64,

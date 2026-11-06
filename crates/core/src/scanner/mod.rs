@@ -290,6 +290,43 @@ impl Scanner {
         (summary, index)
     }
 
+    /// Recompute the summary for an existing index after in-place
+    /// updates — the live index applying USN journal changes to the
+    /// files a scan produced. Aggregates are re-derived from the
+    /// index itself and everything goes through the same
+    /// [`Scanner::finish_summary`] as a real scan, so the result is
+    /// indistinguishable from a fresh scan of the updated tree —
+    /// except its provenance: start/finish times, duration, engine
+    /// and the scan's errors/skips are the original scan's, carried
+    /// over from `previous`. A live refresh is not a new scan and
+    /// must not impersonate one.
+    pub fn summarize_existing(&self, index: &DirIndex, previous: &ScanSummary) -> ScanSummary {
+        let agg = Agg {
+            bytes: index.files.iter().map(|f| f.bytes).sum(),
+            files: index.files.len() as u64,
+            dirs: index.dir_sizes.len().saturating_sub(1) as u64,
+        };
+        let engine: &'static str = match previous.scan_engine.as_deref() {
+            Some("mft") => "mft",
+            _ => "walker",
+        };
+        let mut summary = self.finish_summary(
+            index,
+            &agg,
+            FinishCtx {
+                started_ms: previous.started_at_ms,
+                start: Instant::now(),
+                engine,
+            },
+            previous.errors.clone(),
+            previous.skipped.clone(),
+        );
+        summary.finished_at_ms = previous.finished_at_ms;
+        summary.duration_ms = previous.duration_ms;
+        summary.drive_free_bytes = previous.drive_free_bytes;
+        summary
+    }
+
     /// One directory of the virtual walk: the twin of `walk_dir`,
     /// sourcing entries from the pre-built children map instead of
     /// `read_dir`. Keep the two in step — classification, exclusion
@@ -473,6 +510,10 @@ impl Scanner {
             // from here. A failure to query the drive is not a scan
             // failure — the field simply stays `None`.
             drive_free_bytes: fs2::free_space(&self.root).ok(),
+            // Live-index status is the shell's to decorate at serve
+            // time; a scan itself is neither live nor stale.
+            live_index_active: false,
+            index_stale: false,
             total_bytes: agg.bytes,
             file_count: agg.files,
             dir_count: agg.dirs,
