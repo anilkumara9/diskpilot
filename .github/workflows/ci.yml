@@ -62,6 +62,8 @@ jobs:
       # artifacts compile end to end. Nothing is published from CI.
       - name: Build installers (MSI + NSIS, no publish)
         run: npm run app:build
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
 
   core-linux:
     name: Core crate tests (Linux)
