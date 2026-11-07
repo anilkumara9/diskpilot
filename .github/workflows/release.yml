@@ -75,7 +75,7 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          $installers = Get-ChildItem -Recurse "src-tauri/target/release/bundle" -Include *.msi, *.exe
+          $installers = Get-ChildItem -Recurse "target/release/bundle" -Include *.msi, *.exe
           if (-not $installers) { throw "No installers found under the bundle directory" }
           $lines = foreach ($file in $installers) {
             $hash = (Get-FileHash -Algorithm SHA256 $file.FullName).Hash.ToLower()
